@@ -1,13 +1,10 @@
-# Python
-venv/
-__pycache__/
-*.log
-.env
+# fichiers générés
+backend/scripts/excel/
+backend/scripts/images/
 
-# Node
-node_modules/
-backend/node_modules/
-
-# Autres
-.amazonq/
-nul
+# sécurité générale
+*.xlsx
+*.png
+*.jpg
+*.jpeg
+*.csv
