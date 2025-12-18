@@ -1,10 +1,22 @@
-# fichiers générés
+# Python
+__pycache__/
+*.pyc
+*.env
+
+# Node
+node_modules/
+dist/
+build/
+
+# Fichiers générés / logs / Excel
 backend/scripts/excel/
 backend/scripts/images/
-
-# sécurité générale
 *.xlsx
 *.png
-*.jpg
-*.jpeg
 *.csv
+*.log
+# Fichiers temporaires / fantômes
+nul
+backend/scripts/nul
+.amazonq/
+
