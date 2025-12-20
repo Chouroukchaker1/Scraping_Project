@@ -28,7 +28,7 @@ if sys.platform == 'win32':
     sys.stderr.reconfigure(encoding='utf-8')
 
 # Configuration MongoDB
-MONGO_URI = "mongodb://localhost:27017/banque_mondiale"
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/banque_mondiale")
 DB_NAME = "worldbank_db"
 COLLECTION_NAME = "tenders_worldbank"
 PENDING_COLLECTION_NAME = "pending_tenders_worldbank"

@@ -57,7 +57,7 @@ load_dotenv()
 # ================================================
 
 # Configuration MongoDB
-MONGO_URI = "mongodb://localhost:27017/marmoucha"
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/marmoucha")
 DB_NAME = "marmoucha"
 COLLECTION_NAME = "tenders_marmoucha"
 PENDING_COLLECTION_NAME = "pending_tenders_marmoucha"
@@ -71,8 +71,8 @@ TENDER_UPDATE_ENDPOINT = f"{API_BASE_URL}/tenders"
 TENDERS_ENDPOINT = f"{API_BASE_URL}/tenders"
 PROMOTER_ENDPOINT = f"{API_BASE_URL}/promoter"
 
-EMAIL = "rania.fathallah@tunipages.tn"
-API_PASSWORD = "2F90WJZ7AN7g"
+EMAIL = "maryam.marmouch@tunipages.tn"
+API_PASSWORD = "Marmouch2345!@"
 DEFAULT_SOURCE_ID = "817"
 DEFAULT_PROMOTER_ID = "223472"
 DEFAULT_AVIS_ID = "2"
@@ -386,8 +386,10 @@ class TUNEPSScraper:
                 options.add_experimental_option("excludeSwitches", ["enable-automation"])
                 options.add_experimental_option('useAutomationExtension', False)
                 
+                # Use system ChromeDriver from environment variable or default path
+                chromedriver_path = os.getenv('CHROMEDRIVER_PATH', '/usr/bin/chromedriver')
                 self.driver = webdriver.Chrome(
-                    service=Service(ChromeDriverManager().install()),
+                    service=Service(chromedriver_path),
                     options=options
                 )
                 

@@ -26,7 +26,7 @@ const reactBuildExists = fs.existsSync(REACT_BUILD_DIR);
 // ==================== MIDDLEWARE ====================
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors({
-  origin: ['http://localhost:3000', 'http://localhost:3001', 'http://127.0.0.1:3000', 'http://localhost:5000', 'http://localhost:5003', 'http://localhost:5006'],
+  origin: ['http://localhost:3000', 'http://localhost:3001', 'http://127.0.0.1:3000', 'http://localhost:5000', 'http://localhost:5003', 'http://localhost:5006', 'http://localhost:8080'],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true
@@ -75,7 +75,7 @@ app.use('/api/pnud', createProxyMiddleware({
 
 // HAICOP : Proxy vers le serveur Flask
 app.use('/api/haicop', createProxyMiddleware({
-  target: 'http://localhost:5009',
+  target: 'http://localhost:5011',
   changeOrigin: true,
   pathRewrite: { '^/api/haicop': '' },
   onError: (err, req, res) => {
@@ -103,11 +103,92 @@ app.use('/api/banque', createProxyMiddleware({
   }
 }));
 
+// TUNEPS AO : Proxy vers le serveur Flask
+app.use('/api/tuneps_ao', createProxyMiddleware({
+  target: 'http://localhost:5005',
+  changeOrigin: true,
+  pathRewrite: { '^/api/tuneps_ao': '' },
+  onError: (err, req, res) => {
+    console.error('❌ Proxy TUNEPS AO error:', err.message);
+    res.status(502).json({
+      success: false,
+      message: 'Scraper TUNEPS AO non disponible',
+      error: err.message
+    });
+  }
+}));
+
+// ARMP : Proxy vers le serveur Flask
+app.use('/api/armp', createProxyMiddleware({
+  target: 'http://localhost:5007',
+  changeOrigin: true,
+  pathRewrite: { '^/api/armp': '' },
+  onError: (err, req, res) => {
+    console.error('❌ Proxy ARMP error:', err.message);
+    res.status(502).json({
+      success: false,
+      message: 'Scraper ARMP non disponible',
+      error: err.message
+    });
+  }
+}));
+
+// BENIN : Proxy vers le serveur Flask
+app.use('/api/benin', createProxyMiddleware({
+  target: 'http://localhost:5012',
+  changeOrigin: true,
+  pathRewrite: { '^/api/benin': '' },
+  onError: (err, req, res) => {
+    console.error('❌ Proxy BENIN error:', err.message);
+    res.status(502).json({
+      success: false,
+      message: 'Scraper BENIN non disponible',
+      error: err.message
+    });
+  }
+}));
+
+// EXPERTISE FRANCE : Proxy vers le serveur Flask
+app.use('/api/expertise', createProxyMiddleware({
+  target: 'http://localhost:5013',
+  changeOrigin: true,
+  pathRewrite: { '^/api/expertise': '' },
+  onError: (err, req, res) => {
+    console.error('❌ Proxy EXPERTISE error:', err.message);
+    res.status(502).json({
+      success: false,
+      message: 'Scraper EXPERTISE FRANCE non disponible',
+      error: err.message
+    });
+  }
+}));
+
+// GIZ : Proxy vers le serveur Flask
+app.use('/api/giz', createProxyMiddleware({
+  target: 'http://localhost:5014',
+  changeOrigin: true,
+  pathRewrite: { '^/api/giz': '' },
+  onError: (err, req, res) => {
+    console.error('❌ Proxy GIZ error:', err.message);
+    res.status(502).json({
+      success: false,
+      message: 'Scraper GIZ non disponible',
+      error: err.message
+    });
+  }
+}));
+
 // ==================== SCRAPERS PYTHON ====================
 let pythonProcess = null;
 let pnudPythonProcess = null;
 let haicopPythonProcess = null;
 let banquePythonProcess = null;
+let tunepsAoPythonProcess = null;
+let armpPythonProcess = null;
+let beninPythonProcess = null;
+let expertisePythonProcess = null;
+let gizPythonProcess = null;
+let tunepsPythonProcess = null;
 
 function startBoampPythonScraper() {
   if (pythonProcess && !pythonProcess.killed) {
@@ -268,6 +349,242 @@ function startBanquePythonScraper() {
   console.log(`✅ Scraper BANQUE lancé (PID: ${banquePythonProcess.pid})`);
 }
 
+function startTunepsAoPythonScraper() {
+  if (tunepsAoPythonProcess && !tunepsAoPythonProcess.killed) {
+    console.log(`✅ Scraper TUNEPS AO déjà en cours (PID: ${tunepsAoPythonProcess.pid})`);
+    return;
+  }
+
+  const scriptPath = path.join(__dirname, 'scripts', 'tuneps_ao.py');
+
+  if (!fs.existsSync(scriptPath)) {
+    console.error('❌ tuneps_ao.py non trouvé !');
+    return;
+  }
+
+  console.log('🚀 Démarrage du scraper TUNEPS AO...');
+
+  const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+
+  tunepsAoPythonProcess = spawn(pythonCmd, [scriptPath], {
+    cwd: path.join(__dirname, 'scripts')
+  });
+
+  tunepsAoPythonProcess.stdout.on('data', (data) => {
+    const output = data.toString().trim();
+    console.log(`[TUNEPS AO STDOUT] ${output}`);
+    fs.appendFileSync('tuneps_ao_server.log', `[${new Date().toISOString()}] ${output}\n`);
+  });
+
+  tunepsAoPythonProcess.stderr.on('data', (data) => {
+    const output = data.toString().trim();
+    console.error(`[TUNEPS AO STDERR] ${output}`);
+    fs.appendFileSync('tuneps_ao_error.log', `[${new Date().toISOString()}] ${output}\n`);
+  });
+
+  tunepsAoPythonProcess.on('close', (code) => {
+    console.log(`❌ Scraper TUNEPS AO terminé avec code ${code}`);
+    tunepsAoPythonProcess = null;
+    if (code !== 0) setTimeout(startTunepsAoPythonScraper, 5000);
+  });
+
+  console.log(`✅ Scraper TUNEPS AO lancé (PID: ${tunepsAoPythonProcess.pid})`);
+}
+
+function startArmpPythonScraper() {
+  if (armpPythonProcess && !armpPythonProcess.killed) {
+    console.log(`✅ Scraper ARMP déjà en cours (PID: ${armpPythonProcess.pid})`);
+    return;
+  }
+
+  const scriptPath = path.join(__dirname, 'scripts', 'armp_flask.py');
+
+  if (!fs.existsSync(scriptPath)) {
+    console.error('❌ armp_flask.py non trouvé !');
+    return;
+  }
+
+  console.log('🚀 Démarrage du scraper ARMP...');
+
+  const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+
+  armpPythonProcess = spawn(pythonCmd, [scriptPath], {
+    cwd: path.join(__dirname, 'scripts')
+  });
+
+  armpPythonProcess.stdout.on('data', (data) => {
+    const output = data.toString().trim();
+    console.log(`[ARMP STDOUT] ${output}`);
+    fs.appendFileSync('armp_server.log', `[${new Date().toISOString()}] ${output}\n`);
+  });
+
+  armpPythonProcess.stderr.on('data', (data) => {
+    const output = data.toString().trim();
+    console.error(`[ARMP STDERR] ${output}`);
+    fs.appendFileSync('armp_error.log', `[${new Date().toISOString()}] ${output}\n`);
+  });
+
+  armpPythonProcess.on('close', (code) => {
+    console.log(`❌ Scraper ARMP terminé avec code ${code}`);
+    armpPythonProcess = null;
+    if (code !== 0) setTimeout(startArmpPythonScraper, 5000);
+  });
+
+  console.log(`✅ Scraper ARMP lancé (PID: ${armpPythonProcess.pid})`);
+}
+
+function startTunepsPythonScraper() {
+  if (tunepsPythonProcess && !tunepsPythonProcess.killed) {
+    console.log(`✅ Scraper TUNEPS déjà en cours (PID: ${tunepsPythonProcess.pid})`);
+    return;
+  }
+
+  const scriptPath = path.join(__dirname, 'scripts', 'tuneps.py');
+
+  if (!fs.existsSync(scriptPath)) {
+    console.error('❌ tuneps.py non trouvé !');
+    return;
+  }
+
+  console.log('🚀 Démarrage du scraper TUNEPS...');
+
+  const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+
+  tunepsPythonProcess = spawn(pythonCmd, [scriptPath], {
+    cwd: path.join(__dirname, 'scripts')
+  });
+
+  tunepsPythonProcess.stdout.on('data', (data) => {
+    console.log(`[TUNEPS STDOUT] ${data.toString().trim()}`);
+  });
+
+  tunepsPythonProcess.stderr.on('data', (data) => {
+    console.error(`[TUNEPS STDERR] ${data.toString().trim()}`);
+  });
+
+  tunepsPythonProcess.on('close', (code) => {
+    console.log(`❌ Scraper TUNEPS terminé avec code ${code}`);
+    tunepsPythonProcess = null;
+    if (code !== 0) setTimeout(startTunepsPythonScraper, 5000);
+  });
+
+  console.log(`✅ Scraper TUNEPS lancé (PID: ${tunepsPythonProcess.pid})`);
+}
+
+function startBeninPythonScraper() {
+  if (beninPythonProcess && !beninPythonProcess.killed) {
+    console.log(`✅ Scraper BENIN déjà en cours (PID: ${beninPythonProcess.pid})`);
+    return;
+  }
+
+  const scriptPath = path.join(__dirname, 'scripts', 'benin.py');
+
+  if (!fs.existsSync(scriptPath)) {
+    console.error('❌ benin.py non trouvé !');
+    return;
+  }
+
+  console.log('🚀 Démarrage du scraper BENIN...');
+
+  const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+
+  beninPythonProcess = spawn(pythonCmd, [scriptPath], {
+    cwd: path.join(__dirname, 'scripts')
+  });
+
+  beninPythonProcess.stdout.on('data', (data) => {
+    console.log(`[BENIN STDOUT] ${data.toString().trim()}`);
+  });
+
+  beninPythonProcess.stderr.on('data', (data) => {
+    console.error(`[BENIN STDERR] ${data.toString().trim()}`);
+  });
+
+  beninPythonProcess.on('close', (code) => {
+    console.log(`❌ Scraper BENIN terminé avec code ${code}`);
+    beninPythonProcess = null;
+    if (code !== 0) setTimeout(startBeninPythonScraper, 5000);
+  });
+
+  console.log(`✅ Scraper BENIN lancé (PID: ${beninPythonProcess.pid})`);
+}
+
+function startExpertisePythonScraper() {
+  if (expertisePythonProcess && !expertisePythonProcess.killed) {
+    console.log(`✅ Scraper EXPERTISE déjà en cours (PID: ${expertisePythonProcess.pid})`);
+    return;
+  }
+
+  const scriptPath = path.join(__dirname, 'scripts', 'expertise.py');
+
+  if (!fs.existsSync(scriptPath)) {
+    console.error('❌ expertise.py non trouvé !');
+    return;
+  }
+
+  console.log('🚀 Démarrage du scraper EXPERTISE FRANCE...');
+
+  const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+
+  expertisePythonProcess = spawn(pythonCmd, [scriptPath], {
+    cwd: path.join(__dirname, 'scripts')
+  });
+
+  expertisePythonProcess.stdout.on('data', (data) => {
+    console.log(`[EXPERTISE STDOUT] ${data.toString().trim()}`);
+  });
+
+  expertisePythonProcess.stderr.on('data', (data) => {
+    console.error(`[EXPERTISE STDERR] ${data.toString().trim()}`);
+  });
+
+  expertisePythonProcess.on('close', (code) => {
+    console.log(`❌ Scraper EXPERTISE terminé avec code ${code}`);
+    expertisePythonProcess = null;
+    if (code !== 0) setTimeout(startExpertisePythonScraper, 5000);
+  });
+
+  console.log(`✅ Scraper EXPERTISE lancé (PID: ${expertisePythonProcess.pid})`);
+}
+
+function startGizPythonScraper() {
+  if (gizPythonProcess && !gizPythonProcess.killed) {
+    console.log(`✅ Scraper GIZ déjà en cours (PID: ${gizPythonProcess.pid})`);
+    return;
+  }
+
+  const scriptPath = path.join(__dirname, 'scripts', 'giz.py');
+
+  if (!fs.existsSync(scriptPath)) {
+    console.error('❌ giz.py non trouvé !');
+    return;
+  }
+
+  console.log('🚀 Démarrage du scraper GIZ...');
+
+  const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+
+  gizPythonProcess = spawn(pythonCmd, [scriptPath], {
+    cwd: path.join(__dirname, 'scripts')
+  });
+
+  gizPythonProcess.stdout.on('data', (data) => {
+    console.log(`[GIZ STDOUT] ${data.toString().trim()}`);
+  });
+
+  gizPythonProcess.stderr.on('data', (data) => {
+    console.error(`[GIZ STDERR] ${data.toString().trim()}`);
+  });
+
+  gizPythonProcess.on('close', (code) => {
+    console.log(`❌ Scraper GIZ terminé avec code ${code}`);
+    gizPythonProcess = null;
+    if (code !== 0) setTimeout(startGizPythonScraper, 5000);
+  });
+
+  console.log(`✅ Scraper GIZ lancé (PID: ${gizPythonProcess.pid})`);
+}
+
 // ==================== HEALTH & INFO ====================
 app.get('/health', async (req, res) => {
   const health = {
@@ -389,6 +706,12 @@ app.listen(PORT, '0.0.0.0', async () => {
   startPnudPythonScraper();
   startHaicopPythonScraper();
   startBanquePythonScraper();
+  startTunepsAoPythonScraper();
+  startTunepsPythonScraper();
+  startArmpPythonScraper();
+  startBeninPythonScraper();
+  startExpertisePythonScraper();
+  startGizPythonScraper();
 
   console.log(`
 🎯 API AUTHENTIFICATION PRÊTE !
@@ -401,9 +724,15 @@ Endpoints:
 📊 Ports actifs:
 • Backend Node.js: ${PORT}
 • BOAMP: 5003
+• TUNEPS: 5001
+• TUNEPS AO: 5005
 • PNUD: 5006
-• HAICOP: 5009
+• ARMP: 5007
 • BANQUE: 5010
+• HAICOP: 5011
+• BENIN: 5012
+• EXPERTISE FRANCE: 5013
+• GIZ: 5014
 
   `);
 });
@@ -411,7 +740,7 @@ Endpoints:
 // Gestion propre de l'arrêt
 process.on('SIGINT', () => {
   console.log('\n⚠️ Arrêt du serveur demandé...');
-  [pythonProcess, pnudPythonProcess, haicopPythonProcess, banquePythonProcess].forEach(proc => {
+  [pythonProcess, pnudPythonProcess, haicopPythonProcess, banquePythonProcess, tunepsAoPythonProcess, armpPythonProcess].forEach(proc => {
     if (proc) {
       console.log(`Arrêt PID: ${proc.pid}...`);
       proc.kill();
@@ -421,3 +750,4 @@ process.on('SIGINT', () => {
 });
 
 module.exports = app;
+// ====== TUNEPS SCRAPER ======

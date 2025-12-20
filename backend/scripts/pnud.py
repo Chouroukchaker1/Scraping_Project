@@ -43,10 +43,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # MongoDB Configuration
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/marwa_pnud_js")
-DB_NAME = os.getenv("DB_NAME", "appel_offre_pnud_BASE_marwa_pnud_js")
-COLLECTION_NAME = "tenderspbase"
-PENDING_COLLECTION_NAME = "pending_tenderspbase"
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/tunip")
+DB_NAME = os.getenv("DB_NAME", "tunip")
+COLLECTION_NAME = os.getenv("PNUD_COLLECTION_NAME", "tenders_pnud")
+PENDING_COLLECTION_NAME = os.getenv("PNUD_PENDING_COLLECTION_NAME", "pending_tenders_pnud")
 
 # API Configuration
 API_BASE_URL = os.getenv("API_BASE_URL", "https://be.appeloffres.net/api")
@@ -1127,13 +1127,28 @@ class PNUDScraper:
                         # Créer offre
                         publication_date = self.normaliser_date_api(details['posted'] or 'N/A')
                         nature_en = map_nature_to_english(details['nature'])
-                        
+
+                        # ⚠️ VÉRIFICATION: Date de publication doit être valide
+                        # Ignorer les offres avec dates invalides, vides ou N/A
+                        dates_valides = (
+                            publication_date not in ['N/A', '', None, 'None'] and
+                            len(str(publication_date).strip()) > 1 and
+                            publication_date != '-- / -- / ----'
+                        )
+
+                        if not dates_valides:
+                            logger.warning(f"⛔ {reference} ignoré: Date de publication invalide ({publication_date})")
+                            continue
+
+                        # ✅ Date valide: publicationDate = startBiddingDate (toujours égales pour PNUD)
+                        logger.info(f"✅ Dates valides pour {reference}: Publication = Lancement = {publication_date}")
+
                         offre = OffrePNUD(
                             reference=reference,
                             description=details['title'],
                             description_fr=description_fr,  # ✅ TOUJOURS EN FRANÇAIS
                             publicationDate=publication_date,
-                            startBiddingDate=publication_date,
+                            startBiddingDate=publication_date,  # ✅ Toujours égale à publicationDate
                             expirationDate=self.normaliser_date_api(details['deadline'] or 'N/A'),
                             promoter=details['promoter'],
                             country=details['country'],
@@ -1146,7 +1161,7 @@ class PNUDScraper:
                             sourceId=self.default_source_id,
                             image_path=details['image_path']
                         )
-                        
+
                         # Valider les données
                         is_valid, error_msg = self.validate_tender_data(offre)
                         if not is_valid:

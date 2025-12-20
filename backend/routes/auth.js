@@ -1,3 +1,4 @@
+// routes/auth.js
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
@@ -5,34 +6,126 @@ const User = require('../models/User');
 
 const router = express.Router();
 
-// REGISTER public pour USER
+// REGISTER - Public
 router.post('/register', async (req, res) => {
-  const { name, email, password } = req.body;
-  if (!name || !email || !password) return res.status(400).json({ message: 'Tous les champs sont requis' });
+  try {
+    const { name, email, password } = req.body;
+    
+    // Validation
+    if (!name || !email || !password) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Tous les champs sont requis' 
+      });
+    }
 
-  const existing = await User.findOne({ email });
-  if (existing) return res.status(400).json({ message: 'Utilisateur déjà existant' });
+    // Vérifier si l'utilisateur existe déjà
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Un utilisateur avec cet email existe déjà' 
+      });
+    }
 
-  const hashedPassword = await bcrypt.hash(password, 10);
-  const newUser = new User({ name, email, password: hashedPassword, role: 'USER' });
-  await newUser.save();
+    // Hasher le mot de passe
+    const hashedPassword = await bcrypt.hash(password, 10);
 
-  res.status(201).json({ message: 'Utilisateur créé avec succès', user: { name, email, role: 'USER' } });
+    // Créer l'utilisateur
+    const user = new User({
+      name,
+      email,
+      password: hashedPassword,
+      role: 'USER'
+    });
+
+    await user.save();
+
+    // Créer le token JWT
+    const token = jwt.sign(
+      { id: user._id, role: user.role },
+      process.env.JWT_SECRET || 'votre_secret_jwt',
+      { expiresIn: '1d' }
+    );
+
+    res.status(201).json({
+      success: true,
+      message: 'Utilisateur créé avec succès',
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role
+      }
+    });
+  } catch (error) {
+    console.error('Register error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Erreur serveur',
+      error: error.message 
+    });
+  }
 });
 
-// LOGIN
+// LOGIN - Public
 router.post('/login', async (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password) return res.status(400).json({ message: 'Tous les champs sont requis' });
+  try {
+    const { email, password } = req.body;
+    
+    // Validation
+    if (!email || !password) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Email et mot de passe requis' 
+      });
+    }
 
-  const user = await User.findOne({ email });
-  if (!user) return res.status(400).json({ message: 'Utilisateur non trouvé' });
+    // Trouver l'utilisateur
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(401).json({ 
+        success: false,
+        message: 'Email ou mot de passe incorrect' 
+      });
+    }
 
-  const isMatch = await bcrypt.compare(password, user.password);
-  if (!isMatch) return res.status(400).json({ message: 'Mot de passe incorrect' });
+    // Vérifier le mot de passe
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+    if (!isPasswordValid) {
+      return res.status(401).json({ 
+        success: false,
+        message: 'Email ou mot de passe incorrect' 
+      });
+    }
 
-  const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: '1d' });
-  res.json({ token, user: { name: user.name, email: user.email, role: user.role } });
+    // Créer le token JWT
+    const token = jwt.sign(
+      { id: user._id, role: user.role },
+      process.env.JWT_SECRET || 'votre_secret_jwt',
+      { expiresIn: '1d' }
+    );
+
+    res.json({
+      success: true,
+      message: 'Connexion réussie',
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role
+      }
+    });
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Erreur serveur',
+      error: error.message 
+    });
+  }
 });
 
 module.exports = router;

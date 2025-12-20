@@ -1,0 +1,662 @@
+import requests
+from bs4 import BeautifulSoup
+import pandas as pd
+from datetime import datetime, timedelta
+import time
+import re
+import os
+import pymongo
+from flask import Flask, render_template_string, request, redirect, url_for, flash
+from werkzeug.utils import secure_filename
+import json
+from jinja2 import Template
+from urllib.parse import unquote
+from pymongo.errors import DuplicateKeyError
+
+# MongoDB Configuration
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/expertisefrande")
+DB_NAME = os.getenv("DB_NAME", "appel_offre_pnud_BAaa")
+COLLECTION_NAME = "tendersexper"
+PENDING_COLLECTION_NAME = "pending_tendersexper"
+
+# API Configuration
+API_BASE_URL = os.getenv("API_BASE_URL", "https://be-stg.appeloffres.net/api")
+LOGIN_ENDPOINT = f"{API_BASE_URL}/auth/login"
+TENDER_ENDPOINT = f"{API_BASE_URL}/tender"
+PROMOTER_ENDPOINT = f"{API_BASE_URL}/promoter"
+
+EMAIL = os.getenv("API_EMAIL", "chouroukchaker6@gmail.com")
+PASSWORD = os.getenv("API_PASSWORD", "Chourouk2022*")
+DEFAULT_SOURCE_ID = int(os.getenv("DEFAULT_SOURCE_ID", "1694"))
+DEFAULT_PROMOTER_ID = int(os.getenv("DEFAULT_PROMOTER_ID", "224346"))
+DEFAULT_AVIS_ID = int(os.getenv("DEFAULT_AVIS_ID", "11"))
+DEFAULT_CURRENCY_ID = int(os.getenv("DEFAULT_CURRENCY_ID", "111"))
+DEFAULT_COUNTRY_ID = int(os.getenv("DEFAULT_COUNTRY_ID", "219"))
+DEFAULT_REGION_ID = int(os.getenv("DEFAULT_REGION_ID", "27"))
+DEFAULT_ACTIVITY_ID = int(os.getenv("DEFAULT_ACTIVITY_ID", "461"))
+
+# Paths
+OUTPUT_DIR = "output"
+EXCEL_DIR = "excelpnud"
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+os.makedirs(EXCEL_DIR, exist_ok=True)
+
+# Country Mapping (exemple basique - ajoutez les mappings nécessaires)
+COUNTRY_MAPPING = {
+    'France': 'FR',
+    'Tunisie': 'TN',
+    'Maroc': 'MA',
+    'Algérie': 'DZ',
+    # Ajoutez d'autres pays au besoin, e.g., basés sur 'Localisation' dans les données
+    'Non trouvé': 'XX'  # Par défaut
+}
+
+# Connexion MongoDB
+client = pymongo.MongoClient(MONGO_URI)
+db = client[DB_NAME]
+tenders_collection = db[COLLECTION_NAME]
+pending_collection = db[PENDING_COLLECTION_NAME]
+
+# Token global pour API (sera mis à jour après login)
+api_token = None
+
+# User-Agent commun
+USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+
+def parse_date_to_iso(date_str):
+    """Parse dd/mm/yyyy to ISO format"""
+    if date_str == "Non trouvé" or not date_str:
+        return datetime.now().isoformat()
+    try:
+        dt = datetime.strptime(date_str, "%d/%m/%Y")
+        return dt.isoformat()
+    except ValueError:
+        return datetime.now().isoformat()
+
+def login_to_api():
+    """Se connecte à l'API et retourne le token"""
+    global api_token
+    try:
+        login_data = {
+            'email': EMAIL,
+            'password': PASSWORD
+        }
+        print(f"🔑 Tentative de login avec email: {EMAIL}")
+        print(f"🔗 Login URL: {LOGIN_ENDPOINT}")
+        headers = {
+            'User-Agent': USER_AGENT,
+            'Content-Type': 'application/json'
+        }
+        # Utiliser json= pour application/json
+        response = requests.post(LOGIN_ENDPOINT, json=login_data, headers=headers)
+        print(f"Login response status: {response.status_code}")
+        print(f"Login response headers: {dict(response.headers)}")  # Debug headers
+        print(f"Login response text: {response.text[:500]}...")  # Debug partial response
+        if response.status_code == 200:
+            data = response.json()
+            print(f"Login response data keys: {list(data.keys())}")  # Debug keys
+            # Essayer plusieurs champs possibles pour le token
+            api_token = (
+                data.get('accessToken') or
+                data.get('access_token') or
+                data.get('token') or
+                data.get('data', {}).get('accessToken') or
+                data.get('data', {}).get('access_token') or
+                data.get('data', {}).get('token') or
+                response.headers.get('x-access-token') or
+                response.headers.get('Authorization')
+            )
+            if isinstance(api_token, str) and api_token.startswith('Bearer '):
+                api_token = api_token.split(' ')[1]  # Extraire juste le token
+            print(f"✓ Connexion API réussie. Token length: {len(api_token) if api_token else 0}")
+            if not api_token:
+                print("⚠ Aucune token trouvée dans la réponse. Vérifiez les logs ci-dessus.")
+            return bool(api_token)
+        else:
+            print(f"❌ Erreur connexion API: {response.status_code} - {response.text}")
+            return False
+    except Exception as e:
+        print(f"❌ Exception lors de la connexion API: {e}")
+        return False
+
+def send_tender_to_api(tender_data):
+    """Envoie les données de l'offre à l'API avec retry sur token expiry et payload standardisé"""
+    max_retries = 3
+    for attempt in range(max_retries):
+        if not api_token:
+            if not login_to_api():
+                return False
+        
+        headers = {
+            'Authorization': f'Bearer {api_token}',
+            'Content-Type': 'application/json',
+            'User-Agent': USER_AGENT
+        }
+        
+        # Parse dates
+        publication_date_str = tender_data.get('Mis en ligne le', '')
+        publication_date = parse_date_to_iso(publication_date_str)
+        start_bidding_date = (datetime.fromisoformat(publication_date) + timedelta(days=1)).isoformat()
+        expiration_date = (datetime.fromisoformat(publication_date) + timedelta(days=7)).isoformat()
+        opening_bids_date = expiration_date  # Same as expiration for simplicity
+        
+        # Utiliser la description comme titre
+        title_value = tender_data.get('Description', tender_data.get('Titre', ''))
+        
+        api_payload = {
+            # Champs fournis
+            'title': title_value,
+            'reference': tender_data.get('Référence', ''),
+            'description': tender_data.get('Description', ''),
+            
+            # Dates in ISO
+            'publicationDate': publication_date,
+            'startBiddingDate': start_bidding_date,
+            'expirationDate': expiration_date,
+            'openingBidsDate': opening_bids_date,
+            
+            # IDs comme nombres
+            'avisId': DEFAULT_AVIS_ID,
+            'sourceId': DEFAULT_SOURCE_ID,
+            'promoterId': DEFAULT_PROMOTER_ID,
+            
+            # Required fields
+            'type': 'national',
+            'nature': 'public',  # Ajouté pour résoudre l'erreur 422: nature required
+            'isEnabled': True,
+            'images': [],
+            'specificationsReceivingAddress': tender_data.get('URL', 'Non spécifié'),  # Lien extrait pour Retrait du cahier des charges
+            'fundingSourceType': 'national',
+            'fundingSource': 'Expertise France',
+            'currencyId': DEFAULT_CURRENCY_ID,
+            'isMultiCurrency': False,
+            'batches': [
+                {
+                    'activitiesIds': [],
+                    'title': title_value,  # Title du lot = même que le titre (qui est la description)
+                    'deposit': '0'
+                }
+            ],
+            'addresses': [
+                {
+                    'countryId': DEFAULT_COUNTRY_ID,
+                    'regionId': DEFAULT_REGION_ID
+                }
+            ],
+            
+            # Other fields with defaults
+            'specificationsPrice': '0',
+            'offerValidityPeriode': 30,
+            'costEstimateMin': None,
+            'costEstimateMax': None,
+        }
+        
+        print(f"📤 Tentative {attempt + 1}/{max_retries} - Payload keys: {list(api_payload.keys())}")
+        print(f"🔗 Endpoint: {TENDER_ENDPOINT}")
+        print(f"📦 Payload sample: {{k: v[:50] + '...' if len(str(v)) > 50 else v for k, v in list(api_payload.items())[:3]}}")
+        print(f"🔍 Valeur de 'nature': '{api_payload['nature']}'")
+        
+        response = requests.post(TENDER_ENDPOINT, json=api_payload, headers=headers)
+        print(f"POST response status: {response.status_code}")
+        print(f"Response headers: {dict(response.headers)}")
+        print(f"Response text: {response.text}")
+        
+        if response.status_code in [200, 201]:
+            print("✓ Envoi API réussi")
+            return True
+        elif response.status_code == 401:
+            print(f"⚠ Token expiré/invalide (attempt {attempt + 1}), tentative de re-login...")
+            if login_to_api():
+                time.sleep(1)
+                continue
+            else:
+                print("❌ Re-login échoué")
+                return False
+        else:
+            print(f"❌ Erreur envoi API: {response.status_code} - {response.text}")
+            try:
+                err_data = response.json()
+                print(f"Erreur détaillée: {err_data}")
+            except:
+                pass
+            if attempt < max_retries - 1:
+                time.sleep(2 ** attempt)
+                continue
+            return False
+    
+    print(f"❌ Échec après {max_retries} tentatives")
+    return False
+
+def save_to_mongo(offers, is_pending=True):
+    """Sauvegarde les offres en MongoDB (pending ou final)"""
+    collection = pending_collection if is_pending else tenders_collection
+    for offer in offers:
+        if '_id' not in offer:
+            timestamp_ms = int(datetime.now().timestamp() * 1000)
+            safe_ref = re.sub(r'[^\w\-_.]', '_', offer.get('Référence', 'unknown'))
+            offer['_id'] = f"{timestamp_ms}_{safe_ref}"
+        offer['extraction_date'] = datetime.now().isoformat()
+        if 'Localisation' in offer:
+            offer['country_code'] = COUNTRY_MAPPING.get(offer['Localisation'], 'XX')
+        collection.insert_one(offer)
+    print(f"✓ {len(offers)} offres sauvegardées en MongoDB ({'pending' if is_pending else 'final'})")
+
+def extract_offer_data(offer_url):
+    """
+    Extrait les données détaillées d'une offre d'emploi
+    """
+    try:
+        headers = {
+            'User-Agent': USER_AGENT
+        }
+        response = requests.get(offer_url, headers=headers)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        offer_data = {}
+        
+        offer_data['Promoteur'] = "Expertise France"
+        offer_data['Avis'] = "Avis de candidature"
+        
+        title_tag = soup.find('h1')
+        if title_tag:
+            offer_data['Titre'] = title_tag.get_text(strip=True)
+        else:
+            offer_data['Titre'] = "Non trouvé"
+        
+        date_publication = "Non trouvé"
+        all_text = soup.get_text()
+        
+        date_patterns = [
+            r'Mis en ligne le\s*:\s*(\d{2}/\d{2}/\d{4})',
+            r'Mis en ligne le\s+:\s+(\d{2}/\d{2}/\d{4})',
+            r'Mis\s+en\s+ligne\s+le\s*:\s*(\d{2}/\d{2}/\d{4})',
+        ]
+        
+        for pattern in date_patterns:
+            match = re.search(pattern, all_text, re.IGNORECASE)
+            if match:
+                date_publication = match.group(1)
+                break
+        
+        if date_publication == "Non trouvé":
+            all_paragraphs = soup.find_all('p')
+            for p in all_paragraphs:
+                p_text = p.get_text()
+                if 'Mis en ligne' in p_text:
+                    date_match = re.search(r'(\d{2}/\d{2}/\d{4})', p_text)
+                    if date_match:
+                        date_publication = date_match.group(1)
+                        break
+        
+        if date_publication == "Non trouvé":
+            html_str = str(soup)
+            match = re.search(r'Mis en ligne le[:\s]+(\d{2}/\d{2}/\d{4})', html_str, re.IGNORECASE)
+            if match:
+                date_publication = match.group(1)
+        
+        offer_data['Mis en ligne le'] = date_publication
+        
+        reference = "Non trouvé"
+        ref_patterns = [
+            r'RÉF\.\s*([A-Z0-9/]+)',
+            r'REF\.\s*([A-Z0-9/]+)',
+            r'Réf\.\s*([A-Z0-9/]+)',
+            r'RÉF\s*:\s*([A-Z0-9/]+)',
+        ]
+        
+        for pattern in ref_patterns:
+            match = re.search(pattern, all_text, re.IGNORECASE)
+            if match:
+                reference = match.group(1)
+                break
+        
+        offer_data['Référence'] = reference
+        
+        # EXTRACTION DE LA DURÉE - MÉTHODE AMÉLIORÉE
+        duree = "Non trouvé"
+        
+        duree_elem = soup.find('p', class_='field-vac_duree')
+        if duree_elem:
+            duree_text = duree_elem.get_text(strip=True)
+            duree_text = re.sub(r'^Durée\s*:?\s*', '', duree_text, flags=re.IGNORECASE)
+            if duree_text and len(duree_text) > 0:
+                duree = duree_text
+                print(f"  ✓ Durée extraite (méthode 1 - class): {duree}")
+        
+        if duree == "Non trouvé":
+            duree_div = soup.find('div', class_=re.compile(r'.*duree.*', re.IGNORECASE))
+            if duree_div:
+                duree_text = duree_div.get_text(strip=True)
+                duree_text = re.sub(r'^Durée\s*:?\s*', '', duree_text, flags=re.IGNORECASE)
+                if duree_text and len(duree_text) > 0 and len(duree_text) < 200:
+                    duree = duree_text
+                    print(f"  ✓ Durée extraite (méthode 2 - div): {duree}")
+        
+        if duree == "Non trouvé":
+            all_p = soup.find_all('p')
+            for i in range(len(all_p)):
+                p_text = all_p[i].get_text(strip=True)
+                if re.match(r'^Durée\s*:?\s*$', p_text, re.IGNORECASE):
+                    if i + 1 < len(all_p):
+                        next_p = all_p[i + 1]
+                        duree_text = next_p.get_text(strip=True)
+                        if duree_text and len(duree_text) < 200:
+                            duree = duree_text
+                            print(f"  ✓ Durée extraite (méthode 3 - sequential): {duree}")
+                            break
+                elif p_text.lower().startswith('durée'):
+                    duree_text = re.sub(r'^Durée\s*:?\s*', '', p_text, flags=re.IGNORECASE)
+                    if duree_text and len(duree_text) < 200:
+                        duree = duree_text
+                        print(f"  ✓ Durée extraite (méthode 3b - same p): {duree}")
+                        break
+        
+        if duree == "Non trouvé":
+            duree_patterns = [
+                r'Durée\s*:?\s*\n?\s*([^\n<]+?)(?=\n[A-ZÀ-Ú]|\n\n|<|Type|Date|Domaine|Localisation|$)',
+                r'DURÉE\s*:?\s*\n?\s*([^\n<]+?)(?=\n[A-ZÀ-Ú]|\n\n|<|Type|Date|Domaine|$)',
+                r'<p[^>]*>Durée</p>\s*<[^>]*>([^<]+)</[^>]*>',
+            ]
+            
+            html_str = str(soup)
+            for pattern in duree_patterns:
+                duree_match = re.search(pattern, html_str, re.IGNORECASE | re.DOTALL)
+                if duree_match:
+                    duree_text = duree_match.group(1).strip()
+                    duree_text = re.sub(r'<[^>]+>', '', duree_text)
+                    duree_text = re.sub(r'(Retour|Postuler|›|‹)+', '', duree_text)
+                    duree_text = re.sub(r'\s+', ' ', duree_text).strip()
+                    if duree_text and len(duree_text) < 200 and not duree_text.lower().startswith('durée'):
+                        duree = duree_text
+                        print(f"  ✓ Durée extraite (méthode 4 - regex): {duree}")
+                        break
+        
+        if duree == "Non trouvé":
+            spans = soup.find_all('span')
+            found_duree_label = False
+            for span in spans:
+                span_text = span.get_text(strip=True)
+                if span_text.lower() == 'durée':
+                    found_duree_label = True
+                elif found_duree_label and span_text and len(span_text) < 200:
+                    duree = span_text
+                    print(f"  ✓ Durée extraite (méthode 5 - span): {duree}")
+                    break
+        
+        offer_data['Durée'] = duree
+        
+        description_section = soup.find('div', class_='col-sm-8')
+        if description_section:
+            for element in description_section.find_all(['a', 'button']):
+                element.decompose()
+            
+            description_text = description_section.get_text(separator=' ', strip=True)
+            description_text = re.sub(r'\s+', ' ', description_text)
+            offer_data['Description'] = description_text[:1000] + "..." if len(description_text) > 1000 else description_text
+        else:
+            offer_data['Description'] = "Non trouvé"
+        
+        # Définir le titre comme étant la description
+        offer_data['Titre'] = offer_data['Description']
+        
+        localisation = "Non trouvé"
+        loc_patterns = [
+            r'Localisation\s*:\s*([^\n<]+)',
+            r'lieu\s*:\s*([^\n<]+)'
+        ]
+        for pattern in loc_patterns:
+            match = re.search(pattern, all_text, re.IGNORECASE)
+            if match:
+                localisation = match.group(1).strip()
+                break
+        offer_data['Localisation'] = localisation
+        
+        offer_data['URL'] = offer_url
+        
+        return offer_data
+        
+    except Exception as e:
+        print(f"❌ Erreur lors de l'extraction de {offer_url}: {str(e)}")
+        return None
+
+def get_offers_by_date(target_date, max_pages=5):
+    """
+    Récupère toutes les offres dont la date de mise en ligne correspond à target_date
+    Parcourt plusieurs pages pour trouver toutes les offres
+    """
+    base_url = "https://expertise-france.gestmax.fr/search"
+    
+    try:
+        headers = {
+            'User-Agent': USER_AGENT
+        }
+        
+        print(f"🎯 Recherche des offres mises en ligne le: {target_date}")
+        print(f"📄 Parcours de {max_pages} pages maximum...\n")
+        
+        all_offer_links = set()
+        
+        for page in range(1, max_pages + 1):
+            print(f"📄 Parcours de la page {page}...")
+            
+            params = {
+                'keywords': '',
+                'page': page
+            }
+            
+            response = requests.get(base_url, headers=headers, params=params)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.content, 'html.parser')
+            
+            voir_annonce_buttons = soup.find_all('a', string=re.compile(r'Voir l\'annonce', re.IGNORECASE))
+            
+            if not voir_annonce_buttons:
+                print(f"  ⚠ Aucune offre trouvée sur la page {page}. Arrêt.")
+                break
+            
+            page_links = 0
+            for button in voir_annonce_buttons:
+                href = button.get('href')
+                if href:
+                    if href.startswith('/'):
+                        href = 'https://expertise-france.gestmax.fr' + href
+                    if href not in all_offer_links:
+                        all_offer_links.add(href)
+                        page_links += 1
+            
+            print(f"  ✓ {page_links} nouvelles offres trouvées sur cette page")
+            time.sleep(1)
+        
+        print(f"\n✓ Total d'offres à vérifier: {len(all_offer_links)}")
+        print(f"🔍 Extraction et filtrage par date: {target_date}\n")
+        
+        matching_offers = []
+        
+        for i, link in enumerate(all_offer_links, 1):
+            print(f"🔍 Vérification {i}/{len(all_offer_links)}: ", end='')
+            offer_data = extract_offer_data(link)
+            
+            if offer_data:
+                mise_en_ligne = offer_data.get('Mis en ligne le', 'Non trouvé')
+                
+                if mise_en_ligne == target_date:
+                    matching_offers.append(offer_data)
+                    print(f"✅ CORRESPOND - Réf: {offer_data.get('Référence', 'N/A')} - Durée: {offer_data.get('Durée', 'N/A')}")
+                else:
+                    print(f"⏭️ Date: {mise_en_ligne} (ignoré)")
+            else:
+                print(f"❌ Erreur d'extraction")
+            
+            time.sleep(1.5)
+        
+        print(f"\n{'='*80}")
+        print(f"✅ RÉSULTAT: {len(matching_offers)} offre(s) trouvée(s) pour le {target_date}")
+        print(f"{'='*80}\n")
+        
+        if matching_offers:
+            save_to_mongo(matching_offers, is_pending=True)
+        
+        return matching_offers
+        
+    except Exception as e:
+        print(f"❌ Erreur lors de la récupération des offres: {str(e)}")
+        return []
+
+# Templates HTML intégrés (pour un seul fichier)
+INDEX_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>Validation Avis de Candidature - Expertise France</title>
+    <style> 
+        table { border-collapse: collapse; width: 100%; } 
+        th, td { border: 1px solid #ddd; padding: 8px; } 
+        th { background-color: #f2f2f2; } 
+        .form-container { margin: 20px 0; padding: 20px; border: 1px solid #ddd; background: #f9f9f9; }
+        button { background-color: #4CAF50; color: white; padding: 10px; border: none; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <h1>Offres en Attente de Validation</h1>
+    
+    <div class="form-container">
+        <h2>Lancer le Scraping Manuel</h2>
+        <form method="POST" action="/scrape">
+            <label>Date (JJ/MM/AAAA, vide pour aujourd'hui): </label>
+            <input type="text" name="target_date" placeholder="{{ current_date }}" value="{{ current_date }}"><br><br>
+            <label>Nombre de pages max (défaut: 5): </label>
+            <input type="number" name="max_pages" value="5" min="1" max="20"><br><br>
+            <button type="submit">Lancer Scraping</button>
+        </form>
+    </div>
+    
+    {% with messages = get_flashed_messages() %}
+        {% if messages %}
+            <ul>
+            {% for message in messages %}
+                <li style="color: green;">{{ message }}</li>
+            {% endfor %}
+            </ul>
+        {% endif %}
+    {% endwith %}
+    
+    {% if offers %}
+    <p>Nombre d'offres en attente: {{ offers|length }}</p>
+    <table>
+        <tr><th>Référence</th><th>Titre</th><th>Date</th><th>Actions</th></tr>
+        {% for offer in offers %}
+        <tr>
+            <td>{{ offer.get('Référence', 'N/A') }}</td>
+            <td>{{ offer.get('Titre', 'N/A')[:50] }}...</td>
+            <td>{{ offer.get('Mis en ligne le', 'N/A') }}</td>
+            <td><a href="/validate/{{ offer['_id'] }}">Valider</a></td>
+        </tr>
+        {% endfor %}
+    </table>
+    {% else %}
+    <p>Aucune offre en attente.</p>
+    <p><em>Utilisez le formulaire ci-dessus pour lancer le scraping et charger des données.</em></p>
+    {% endif %}
+</body>
+</html>
+"""
+
+VALIDATE_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>Validation - {{ offer.get('Titre', '') }}</title>
+</head>
+<body>
+    <h1>Valider: {{ offer.get('Titre', '') }}</h1>
+    <p><strong>Promoteur:</strong> {{ offer.get('Promoteur', '') }}</p>
+    <p><strong>Avis:</strong> {{ offer.get('Avis', '') }}</p>
+    <p><strong>Référence:</strong> {{ offer.get('Référence', '') }}</p>
+    <p><strong>Date:</strong> {{ offer.get('Mis en ligne le', '') }}</p>
+    <p><strong>Durée:</strong> {{ offer.get('Durée', '') }}</p>
+    <p><strong>Description:</strong><br>{{ offer.get('Description', '')[:500] }}...</p>
+    <p><strong>Localisation:</strong> {{ offer.get('Localisation', '') }} (Code: {{ offer.get('country_code', '') }})</p>
+    <p><strong>URL:</strong> <a href="{{ offer.get('URL', '') }}" target="_blank">Lien</a></p>
+    
+    <form method="POST">
+        <button type="submit" style="background-color: #4CAF50; color: white; padding: 10px; border: none; cursor: pointer;">Valider et Envoyer à l'API (stg-appeloffres.net)</button>
+    </form>
+    
+    <br><a href="/">Retour à la liste</a>
+</body>
+</html>
+"""
+
+# Flask App
+app = Flask(__name__)
+app.secret_key = 'super_secret_key'
+app.jinja_env.trim_blocks = True
+app.jinja_env.lstrip_blocks = True
+
+@app.route('/', methods=['GET'])
+def index():
+    current_date = datetime.now().strftime("%d/%m/%Y")
+    pending_offers = list(pending_collection.find().sort('_id', -1).limit(50))
+    return render_template_string(INDEX_TEMPLATE, offers=pending_offers, current_date=current_date)
+
+@app.route('/scrape', methods=['POST'])
+def scrape():
+    target_date_input = request.form.get('target_date', '').strip()
+    max_pages_input = request.form.get('max_pages', '5').strip()
+    
+    if not target_date_input:
+        target_date = datetime.now().strftime("%d/%m/%Y")
+    else:
+        try:
+            datetime.strptime(target_date_input, "%d/%m/%Y")
+            target_date = target_date_input
+        except ValueError:
+            flash("❌ Format de date invalide. Utilisation de la date d'aujourd'hui.")
+            target_date = datetime.now().strftime("%d/%m/%Y")
+    
+    try:
+        max_pages = int(max_pages_input)
+    except ValueError:
+        max_pages = 5
+    
+    offers = get_offers_by_date(target_date, max_pages)
+    num_offers = len(offers)
+    if num_offers > 0:
+        flash(f"✅ Scraping terminé: {num_offers} offre(s) ajoutée(s) en attente.")
+    else:
+        flash(f"ℹ️ Scraping terminé: Aucune offre trouvée pour {target_date}.")
+    
+    return redirect(url_for('index'))
+
+@app.route('/validate/<path:offer_id>', methods=['GET', 'POST'])
+def validate_offer(offer_id):
+    offer = pending_collection.find_one({'_id': offer_id})
+    if not offer:
+        flash("❌ Offre non trouvée.")
+        return redirect(url_for('index'))
+    
+    if request.method == 'POST':
+        success = send_tender_to_api(offer)
+        if success:
+            pending_collection.delete_one({'_id': offer_id})
+            try:
+                tenders_collection.insert_one(offer)
+            except DuplicateKeyError:
+                pass  # Déjà existant, ignorer
+            flash("✅ Offre validée et envoyée à l'API (stg-appeloffres.net) avec succès!")
+            return redirect(url_for('index'))
+        else:
+            flash("❌ Erreur lors de l'envoi à l'API. Vérifiez les logs du serveur.")
+            return render_template_string(VALIDATE_TEMPLATE, offer=offer)
+    
+    return render_template_string(VALIDATE_TEMPLATE, offer=offer)
+
+if __name__ == "__main__":
+    print("🚀 Démarrage du serveur Flask sur http://localhost:5005")
+    print("Accédez à http://localhost:5005 pour lancer le scraping manuellement et valider les offres.")
+    print("Logs détaillés pour debug API dans la console.")
+    print("Correction: Ajout de 'nature': 'public' pour résoudre l'erreur 422 (nature required). Enum backend bug ignoré.")
+    app.run(host='0.0.0.0', port=5005, debug=True, use_reloader=False)

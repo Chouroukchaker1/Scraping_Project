@@ -53,7 +53,7 @@ from dotenv import load_dotenv
 warnings.filterwarnings('ignore')
 load_dotenv()
 # ===== CONFIGURATION =====
-MONGO_URI = "mongodb://localhost:27017/marmouch"
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/marmouch")
 DB_NAME = "marmouchbd"
 COLLECTION_NAME = "tenders_marmouch"
 PENDING_COLLECTION_NAME = "pending_tenders_marmouch_bd"
@@ -308,7 +308,9 @@ class TUNEPSScraper:
                 options.add_experimental_option("excludeSwitches", ["enable-automation"])
                 options.add_experimental_option('useAutomationExtension', False)
                
-                self.driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+                # Use system ChromeDriver from environment variable or default path
+                chromedriver_path = os.getenv('CHROMEDRIVER_PATH', '/usr/bin/chromedriver')
+                self.driver = webdriver.Chrome(service=Service(chromedriver_path), options=options)
                 self.driver.set_page_load_timeout(self.TIMEOUT)
                 self.driver.set_script_timeout(self.TIMEOUT)
                 self.logger.info("Driver Selenium initialisé")
@@ -1502,6 +1504,12 @@ def serve_react(path):
    
     return Response("<h1>TUNEPS OFFRES Scraper - Frontend manquant</h1>", mimetype='text/html')
 if __name__ == "__main__":
+    # Fix Windows console encoding for emojis
+    import sys
+    if sys.platform == 'win32':
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+
     print("="*80)
     print("🚀 SCRAPER TUNEPS - APPELS D'OFFRES (/portail/offres)")
     print("="*80)
@@ -1522,4 +1530,4 @@ if __name__ == "__main__":
     print(" - Traitement parallèle (5 threads)")
     print(" - Mode rapide par défaut (extraction_complete=False)")
     print("="*80)
-    app.run(debug=True, port=5003, host='0.0.0.0')
+    app.run(debug=False, port=5005, host='0.0.0.0')

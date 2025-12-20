@@ -1,28 +1,28 @@
+// middleware/auth.js
 const jwt = require('jsonwebtoken');
-const { jwtSecret } = require('../config');
 
-function auth(requiredRoles = []) {
-  if (typeof requiredRoles === 'string') requiredRoles = [requiredRoles];
-
+const auth = (roles = []) => {
   return (req, res, next) => {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer '))
-      return res.status(401).json({ message: 'Missing token' });
+    const token = req.header('Authorization')?.replace('Bearer ', '');
 
-    const token = authHeader.split(' ')[1];
+    if (!token) {
+      return res.status(401).json({ message: 'Accès non autorisé. Token manquant.' });
+    }
+
     try {
-      const payload = jwt.verify(token, jwtSecret);
-      req.user = payload;
+      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'votre_secret_jwt');
+      req.user = decoded;
 
-      if (requiredRoles.length && !requiredRoles.includes(payload.role)) {
-        return res.status(403).json({ message: 'Forbidden - role' });
+      // Vérifier les rôles si spécifiés
+      if (roles.length > 0 && !roles.includes(decoded.role)) {
+        return res.status(403).json({ message: 'Accès interdit. Rôle insuffisant.' });
       }
 
       next();
-    } catch (err) {
-      return res.status(401).json({ message: 'Invalid token' });
+    } catch (error) {
+      return res.status(401).json({ message: 'Token invalide.' });
     }
   };
-}
+};
 
 module.exports = auth;

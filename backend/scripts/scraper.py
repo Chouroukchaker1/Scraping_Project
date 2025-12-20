@@ -73,10 +73,11 @@ DEFAULT_PROMOTER_ID = "223472"
 DEFAULT_AVIS_ID = "1"
 DEFAULT_PAYS_ID = "70"
 
-# Dossiers
-PDF_DIR = r"C:\Users\lenovo\extractionautomatic\backend\scripts\pdf_boamp_extraction"
-IMAGES_DIR = "images"
-OUTPUT_DIR = "output"
+# Dossiers (chemins relatifs pour Docker)
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PDF_DIR = os.path.join(SCRIPT_DIR, "pdf_boamp_extraction")
+IMAGES_DIR = os.path.join(SCRIPT_DIR, "images")
+OUTPUT_DIR = os.path.join(SCRIPT_DIR, "output")
 TEMPLATES_DIR = "templates"
 REACT_BUILD_DIR = "react-frontend/build"
 

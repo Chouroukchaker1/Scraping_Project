@@ -59,7 +59,7 @@ DB_NAME = os.getenv("DB_NAME", "appel_offres-scrp")
 COLLECTION_NAME = "tenders"
 PENDING_COLLECTION_NAME = "pending_tenders"
 # Configuration API (même que BOAMP)
-API_BASE_URL = os.getenv("API_BASE_URL", "https://bo-stg.appeloffres.net/api")
+API_BASE_URL = os.getenv("API_BASE_URL", "https://be-stg.appeloffres.net/api")
 LOGIN_ENDPOINT = f"{API_BASE_URL}/auth/login/"
 TENDER_ENDPOINT = f"{API_BASE_URL}/tender"
 PROMOTER_ENDPOINT = f"{API_BASE_URL}/promoter"

@@ -6,7 +6,7 @@ const path = require('path');
 
 // Configuration
 const PYTHON_SERVER_URL = 'http://localhost:5003';
-const PYTHON_API_TIMEOUT = 300000; // 5 minutes timeout pour les scrapings longs
+const PYTHON_API_TIMEOUT = 1800000; // 30 minutes timeout pour les scrapings longs (BOAMP peut traiter beaucoup d'offres)
 
 // Middleware pour gérer les erreurs axios
 const handlePythonApiError = (error, res) => {

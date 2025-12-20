@@ -261,8 +261,10 @@ class TunisieScraper:
         chrome_options.add_argument('user-agent=' + self.headers["User-Agent"])
         
         try:
+            # Use system ChromeDriver from environment variable or default path
+            chromedriver_path = os.getenv('CHROMEDRIVER_PATH', '/usr/bin/chromedriver')
             self.driver = webdriver.Chrome(
-                service=Service(ChromeDriverManager().install()), 
+                service=Service(chromedriver_path),
                 options=chrome_options
             )
             self.logger.info("✅ Driver Selenium initialisé")
@@ -935,6 +937,28 @@ def serve_react(path):
         else:
             return "Erreur: Build React manquant.", 500
 
+@app.route('/api/health', methods=['GET'])
+def health():
+    """Endpoint de santé pour vérifier que le serveur fonctionne"""
+    try:
+        # Vérifier MongoDB
+        pending_count = pending_tenders_collection.count_documents({})
+        validated_count = tenders_collection.count_documents({})
+        return jsonify({
+            "success": True,
+            "status": "healthy",
+            "pending_count": pending_count,
+            "validated_count": validated_count,
+            "message": "Service HAICOP opérationnel"
+        })
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "status": "error",
+            "error": str(e),
+            "message": "Erreur de connexion MongoDB"
+        }), 500
+
 @app.route('/api/scrape-tunisie', methods=['POST'])
 def scrape_tunisie():
     data = request.json
@@ -1203,7 +1227,7 @@ if __name__ == "__main__":
     print("   - Extraction complete garantie de toutes les donnees disponibles")
     print("   - Upload automatique de l'image fixe via /api/files/tender")
     print("=" * 80)
-    print(f"Serveur demarre sur: http://localhost:5009")
+    print(f"Serveur demarre sur: http://localhost:5011")
     print("=" * 80)
 
-    app.run(debug=True, port=5009, host='0.0.0.0')
+    app.run(debug=False, port=5011, host='0.0.0.0')

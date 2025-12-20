@@ -86,7 +86,7 @@ async function loginAppelOffres() {
         'Content-Type': 'application/json',
         'Accept': 'application/json'
       },
-      timeout: 30000
+      timeout: 1800000
     });
 
     if (response.status === 200 || response.status === 201) {
