@@ -570,6 +570,71 @@ def download_pdf(project_id):
         logger.error(f"Erreur download: {e}")
         return "Erreur", 500
 
+# API Endpoints pour le frontend React
+@app.route('/pending-all', methods=['GET'])
+@app.route('/api/pending-all', methods=['GET'])
+def api_pending_all():
+    """Retourne toutes les offres pending pour le frontend React"""
+    try:
+        # Convertir les tenders_cache en format compatible avec le frontend
+        offers = []
+        for tender in scraper.tenders_cache:
+            tender_dict = asdict(tender)
+            # Mapper les champs GIZ vers le format attendu par le frontend
+            transformed_offer = {
+                '_id': tender_dict.get('project_id', ''),
+                'reference': tender_dict.get('reference', ''),
+                'description': tender_dict.get('description', ''),
+                'promoter': 'GIZ',
+                'date_publication': tender_dict.get('date_publication', ''),
+                'date_limite': tender_dict.get('date_limite', ''),
+                'country': tender_dict.get('pays', ''),
+                'pdf_links': tender_dict.get('pdf_links', []),
+                # Garder aussi les champs originaux
+                'project_id': tender_dict.get('project_id', ''),
+                'title': tender_dict.get('description', ''),
+                'publication_date': tender_dict.get('date_publication', ''),
+                'deadline_date': tender_dict.get('date_limite', ''),
+                'tender_type': tender_dict.get('type', ''),
+                'tender_volume': '',
+                'project_url': tender_dict.get('lien_details', ''),
+                'autorite': tender_dict.get('autorite', ''),
+                'secteur_activite': tender_dict.get('secteur_activite', '')
+            }
+            offers.append(transformed_offer)
+
+        return jsonify({
+            "success": True,
+            "offres": offers,
+            "count": len(offers)
+        })
+    except Exception as e:
+        logger.error(f"Erreur API pending-all: {e}")
+        return jsonify({"success": False, "message": str(e)}), 500
+
+@app.route('/validated-all', methods=['GET'])
+@app.route('/api/validated-all', methods=['GET'])
+def api_validated_all():
+    """Retourne toutes les offres validées (GIZ n'a pas de système de validation MongoDB)"""
+    return jsonify({
+        "success": True,
+        "offres": [],
+        "count": 0
+    })
+
+@app.route('/health', methods=['GET'])
+@app.route('/api/health', methods=['GET'])
+def health():
+    """Health check endpoint"""
+    try:
+        return jsonify({
+            "status": "ok",
+            "pending": len(scraper.tenders_cache),
+            "validated": 0
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
 if __name__ == "__main__":
     logger.info("Démarrage serveur Flask GIZ")
-    app.run(debug=True, port=5002, host='0.0.0.0')
+    app.run(debug=True, port=5014, host='0.0.0.0', use_reloader=False)

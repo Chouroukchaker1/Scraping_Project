@@ -6,7 +6,8 @@ import time
 import re
 import os
 import pymongo
-from flask import Flask, render_template_string, request, redirect, url_for, flash
+from flask import Flask, render_template_string, request, redirect, url_for, flash, jsonify
+from flask_cors import CORS
 from werkzeug.utils import secure_filename
 import json
 from jinja2 import Template
@@ -424,37 +425,44 @@ def get_offers_by_date(target_date, max_pages=5):
     """
     Récupère toutes les offres dont la date de mise en ligne correspond à target_date
     Parcourt plusieurs pages pour trouver toutes les offres
+    Si target_date est vide ou "ALL", récupère toutes les offres sans filtre
     """
     base_url = "https://expertise-france.gestmax.fr/search"
-    
+
     try:
         headers = {
             'User-Agent': USER_AGENT
         }
-        
-        print(f"🎯 Recherche des offres mises en ligne le: {target_date}")
+
+        # Détermine si on filtre par date ou non
+        filter_by_date = target_date and target_date.upper() != "ALL"
+
+        if filter_by_date:
+            print(f"🎯 Recherche des offres mises en ligne le: {target_date}")
+        else:
+            print(f"🎯 Recherche de TOUTES les offres disponibles")
         print(f"📄 Parcours de {max_pages} pages maximum...\n")
-        
+
         all_offer_links = set()
-        
+
         for page in range(1, max_pages + 1):
             print(f"📄 Parcours de la page {page}...")
-            
+
             params = {
                 'keywords': '',
                 'page': page
             }
-            
+
             response = requests.get(base_url, headers=headers, params=params)
             response.raise_for_status()
             soup = BeautifulSoup(response.content, 'html.parser')
-            
+
             voir_annonce_buttons = soup.find_all('a', string=re.compile(r'Voir l\'annonce', re.IGNORECASE))
-            
+
             if not voir_annonce_buttons:
                 print(f"  ⚠ Aucune offre trouvée sur la page {page}. Arrêt.")
                 break
-            
+
             page_links = 0
             for button in voir_annonce_buttons:
                 href = button.get('href')
@@ -464,39 +472,51 @@ def get_offers_by_date(target_date, max_pages=5):
                     if href not in all_offer_links:
                         all_offer_links.add(href)
                         page_links += 1
-            
+
             print(f"  ✓ {page_links} nouvelles offres trouvées sur cette page")
             time.sleep(1)
-        
+
         print(f"\n✓ Total d'offres à vérifier: {len(all_offer_links)}")
-        print(f"🔍 Extraction et filtrage par date: {target_date}\n")
-        
+        if filter_by_date:
+            print(f"🔍 Extraction et filtrage par date: {target_date}\n")
+        else:
+            print(f"🔍 Extraction de toutes les offres\n")
+
         matching_offers = []
-        
+
         for i, link in enumerate(all_offer_links, 1):
-            print(f"🔍 Vérification {i}/{len(all_offer_links)}: ", end='')
+            print(f"🔍 Extraction {i}/{len(all_offer_links)}: ", end='')
             offer_data = extract_offer_data(link)
-            
+
             if offer_data:
                 mise_en_ligne = offer_data.get('Mis en ligne le', 'Non trouvé')
-                
-                if mise_en_ligne == target_date:
-                    matching_offers.append(offer_data)
-                    print(f"✅ CORRESPOND - Réf: {offer_data.get('Référence', 'N/A')} - Durée: {offer_data.get('Durée', 'N/A')}")
+
+                # Si on filtre par date, vérifier la correspondance
+                if filter_by_date:
+                    if mise_en_ligne == target_date:
+                        matching_offers.append(offer_data)
+                        print(f"✅ CORRESPOND - Réf: {offer_data.get('Référence', 'N/A')} - Date: {mise_en_ligne}")
+                    else:
+                        print(f"⏭️ Date: {mise_en_ligne} (ignoré)")
                 else:
-                    print(f"⏭️ Date: {mise_en_ligne} (ignoré)")
+                    # Sans filtre de date, prendre toutes les offres
+                    matching_offers.append(offer_data)
+                    print(f"✅ OK - Réf: {offer_data.get('Référence', 'N/A')} - Date: {mise_en_ligne}")
             else:
                 print(f"❌ Erreur d'extraction")
-            
+
             time.sleep(1.5)
-        
+
         print(f"\n{'='*80}")
-        print(f"✅ RÉSULTAT: {len(matching_offers)} offre(s) trouvée(s) pour le {target_date}")
+        if filter_by_date:
+            print(f"✅ RÉSULTAT: {len(matching_offers)} offre(s) trouvée(s) pour le {target_date}")
+        else:
+            print(f"✅ RÉSULTAT: {len(matching_offers)} offre(s) extraite(s) au total")
         print(f"{'='*80}\n")
-        
+
         if matching_offers:
             save_to_mongo(matching_offers, is_pending=True)
-        
+
         return matching_offers
         
     except Exception as e:
@@ -592,6 +612,7 @@ VALIDATE_TEMPLATE = """
 
 # Flask App
 app = Flask(__name__)
+CORS(app)  # Enable CORS for all routes
 app.secret_key = 'super_secret_key'
 app.jinja_env.trim_blocks = True
 app.jinja_env.lstrip_blocks = True
@@ -637,7 +658,7 @@ def validate_offer(offer_id):
     if not offer:
         flash("❌ Offre non trouvée.")
         return redirect(url_for('index'))
-    
+
     if request.method == 'POST':
         success = send_tender_to_api(offer)
         if success:
@@ -651,12 +672,140 @@ def validate_offer(offer_id):
         else:
             flash("❌ Erreur lors de l'envoi à l'API. Vérifiez les logs du serveur.")
             return render_template_string(VALIDATE_TEMPLATE, offer=offer)
-    
+
     return render_template_string(VALIDATE_TEMPLATE, offer=offer)
 
+# API Endpoints pour le frontend React
+@app.route('/pending-all', methods=['GET'])
+@app.route('/api/pending-all', methods=['GET'])
+def api_pending_all():
+    """Retourne toutes les offres pending pour le frontend React"""
+    try:
+        pending_offers = list(pending_collection.find().sort('_id', -1))
+        # Convertir ObjectId en string pour JSON et mapper les champs
+        transformed_offers = []
+        for offer in pending_offers:
+            if '_id' in offer and not isinstance(offer['_id'], str):
+                offer['_id'] = str(offer['_id'])
+
+            # Mapper les champs Expertise vers le format attendu par le frontend
+            transformed_offer = {
+                '_id': offer.get('_id'),
+                'reference': offer.get('Référence', ''),
+                'description': offer.get('Description', offer.get('Titre', '')),
+                'promoter': offer.get('Promoteur', 'Expertise France'),
+                'date_publication': offer.get('Mis en ligne le', ''),
+                'duree': offer.get('Durée', ''),
+                'localisation': offer.get('Localisation', ''),
+                'url': offer.get('URL', ''),
+                # Garder aussi les champs originaux
+                'Référence': offer.get('Référence', ''),
+                'Titre': offer.get('Titre', ''),
+                'Description': offer.get('Description', ''),
+                'Promoteur': offer.get('Promoteur', ''),
+                'Avis': offer.get('Avis', ''),
+                'Mis en ligne le': offer.get('Mis en ligne le', ''),
+                'Durée': offer.get('Durée', ''),
+                'Localisation': offer.get('Localisation', ''),
+                'URL': offer.get('URL', ''),
+                'country_code': offer.get('country_code', ''),
+                'extraction_date': offer.get('extraction_date', '')
+            }
+            transformed_offers.append(transformed_offer)
+
+        return jsonify({
+            "success": True,
+            "offres": transformed_offers,
+            "count": len(transformed_offers)
+        })
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
+
+@app.route('/validated-all', methods=['GET'])
+@app.route('/api/validated-all', methods=['GET'])
+def api_validated_all():
+    """Retourne toutes les offres validées"""
+    try:
+        validated_offers = list(tenders_collection.find().sort('_id', -1))
+        for offer in validated_offers:
+            if '_id' in offer and not isinstance(offer['_id'], str):
+                offer['_id'] = str(offer['_id'])
+        return jsonify({
+            "success": True,
+            "offres": validated_offers,
+            "count": len(validated_offers)
+        })
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
+
+@app.route('/health', methods=['GET'])
+@app.route('/api/health', methods=['GET'])
+def health():
+    """Health check endpoint"""
+    try:
+        pending_count = pending_collection.count_documents({})
+        validated_count = tenders_collection.count_documents({})
+        return jsonify({
+            "status": "ok",
+            "pending": pending_count,
+            "validated": validated_count
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/scrape', methods=['POST'])
+def api_scrape():
+    """Lance le scraping via API"""
+    try:
+        data = request.get_json() or {}
+        target_date = data.get('target_date', datetime.now().strftime("%d/%m/%Y"))
+        max_pages = int(data.get('max_pages', 5))
+
+        offers = get_offers_by_date(target_date, max_pages)
+        return jsonify({
+            "success": True,
+            "message": f"{len(offers)} offres extraites",
+            "count": len(offers)
+        })
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
+
+@app.route('/api/validate/<path:offer_id>', methods=['POST'])
+def api_validate(offer_id):
+    """Valide une offre via API"""
+    try:
+        offer = pending_collection.find_one({'_id': offer_id})
+        if not offer:
+            return jsonify({"success": False, "message": "Offre non trouvée"}), 404
+
+        success = send_tender_to_api(offer)
+        if success:
+            pending_collection.delete_one({'_id': offer_id})
+            try:
+                tenders_collection.insert_one(offer)
+            except DuplicateKeyError:
+                pass
+            return jsonify({"success": True, "message": "Offre validée"})
+        else:
+            return jsonify({"success": False, "message": "Erreur envoi API"}), 500
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
+
+@app.route('/api/delete/<path:offer_id>', methods=['DELETE'])
+def api_delete(offer_id):
+    """Supprime une offre pending"""
+    try:
+        result = pending_collection.delete_one({'_id': offer_id})
+        if result.deleted_count > 0:
+            return jsonify({"success": True, "message": "Offre supprimée"})
+        else:
+            return jsonify({"success": False, "message": "Offre non trouvée"}), 404
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
+
 if __name__ == "__main__":
-    print("🚀 Démarrage du serveur Flask sur http://localhost:5005")
-    print("Accédez à http://localhost:5005 pour lancer le scraping manuellement et valider les offres.")
+    print("🚀 Démarrage du serveur Flask sur http://localhost:5013")
+    print("Accédez à http://localhost:5013 pour lancer le scraping manuellement et valider les offres.")
     print("Logs détaillés pour debug API dans la console.")
     print("Correction: Ajout de 'nature': 'public' pour résoudre l'erreur 422 (nature required). Enum backend bug ignoré.")
-    app.run(host='0.0.0.0', port=5005, debug=True, use_reloader=False)
+    app.run(host='0.0.0.0', port=5013, debug=True, use_reloader=False)

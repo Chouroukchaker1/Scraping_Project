@@ -13,6 +13,7 @@ Améliorations:
 """
 
 from flask import Flask, render_template_string, request, jsonify, redirect, url_for, flash
+from flask_cors import CORS
 import os
 import json
 from datetime import datetime
@@ -450,6 +451,7 @@ class MarchesPublicsBeninScraper:
 
 # Flask App
 app = Flask(__name__)
+CORS(app)  # Enable CORS for all routes
 app.secret_key = 'super_secret_key'  # Pour les flashes
 
 # Variable globale pour stocker les données (chargée depuis MongoDB)
@@ -633,60 +635,169 @@ def data():
     if not current_data:
         flash('Aucune donnée disponible. Lancez le scraping d\'abord.', 'info')
         return redirect(url_for('index'))
- 
+
     # Paramètres de pagination et filtrage
     page = int(request.args.get('page', 1))
     per_page = 10
     search_query = request.args.get('search', '').lower()
     sort_col = request.args.get('sort', 'Date_limite_depot')
     sort_dir = request.args.get('dir', 'desc')
- 
+
     # Convertir en DataFrame
     df = pd.DataFrame(current_data)
- 
+
     # Colonnes d'affichage
     display_columns = ['Date_limite_depot', 'Delai', 'Ref', 'Description', 'Date_publication',
                        'Date_ouverture_offres', 'Autorite_contractante', 'Lieu_acquisition', 'Lien_PDF']
     existing_columns = [col for col in display_columns if col in df.columns]
     df_display = df[existing_columns].copy()
- 
+
     # Recherche basique
     if search_query:
         mask = df_display.astype(str).apply(lambda row: row.str.contains(search_query, na=False).any(), axis=1)
         df_display = df_display[mask]
- 
+
     # Tri
     if sort_col in df_display.columns:
         ascending = sort_dir == 'asc'
         df_display = df_display.sort_values(by=sort_col, ascending=ascending)
- 
+
     # Pagination
     total = len(df_display)
     total_pages = (total + per_page - 1) // per_page
     start_idx = (page - 1) * per_page
     end_idx = start_idx + per_page
     paginated_df = df_display.iloc[start_idx:end_idx]
- 
+
     if paginated_df.empty:
         return render_template_string(DATA_TEMPLATE, tables=[], total=0, columns=existing_columns,
                                       current_page=1, total_pages=1, prev_page=None, next_page=None,
                                       search_query=search_query, sort_col=sort_col, sort_dir=sort_dir)
- 
+
     # Rendre le lien PDF cliquable - Utilise .loc pour éviter le warning
     if 'Lien_PDF' in paginated_df.columns:
         paginated_df.loc[:, 'Lien_PDF'] = paginated_df['Lien_PDF'].apply(
             lambda x: f'<a href="{x}" target="_blank">Télécharger PDF</a>' if x and x != 'Lien non trouvé' else 'N/A'
         )
- 
+
     table_html = paginated_df.to_html(classes='data', table_id='appels_table', escape=False, index=False)
- 
+
     prev_page = page - 1 if page > 1 else None
     next_page = page + 1 if page < total_pages else None
- 
+
     return render_template_string(DATA_TEMPLATE, tables=[table_html], total=total, columns=existing_columns,
                                   current_page=page, total_pages=total_pages, prev_page=prev_page, next_page=next_page,
                                   search_query=search_query, sort_col=sort_col, sort_dir=sort_dir)
 
+# API Endpoints pour le frontend React
+@app.route('/pending-all', methods=['GET'])
+@app.route('/api/pending-all', methods=['GET'])
+@app.route('/api/pending', methods=['GET'])
+def api_pending():
+    """Retourne toutes les offres pour le frontend React"""
+    try:
+        load_data()
+        # Convertir ObjectId MongoDB en string pour JSON et adapter les champs pour le frontend
+        offers = []
+        for offer in current_data:
+            if '_id' in offer and hasattr(offer['_id'], 'binary'):
+                offer['_id'] = str(offer['_id'])
+
+            # Mapper les champs Benin vers le format attendu par le frontend
+            transformed_offer = {
+                '_id': offer.get('_id'),
+                'reference': offer.get('Ref', ''),
+                'description': offer.get('Description', ''),
+                'promoter': offer.get('Autorite_contractante', 'Marchés Publics Bénin'),
+                'date_publication': offer.get('Date_publication', ''),
+                'date_limite': offer.get('Date_limite_depot', ''),
+                'date_ouverture': offer.get('Date_ouverture_offres', ''),
+                'delai': offer.get('Delai', ''),
+                'lieu_acquisition': offer.get('Lieu_acquisition', ''),
+                'lien_pdf': offer.get('Lien_PDF', ''),
+                # Garder aussi les champs originaux au cas où
+                'Ref': offer.get('Ref', ''),
+                'Description': offer.get('Description', ''),
+                'Autorite_contractante': offer.get('Autorite_contractante', ''),
+                'Date_publication': offer.get('Date_publication', ''),
+                'Date_limite_depot': offer.get('Date_limite_depot', ''),
+                'Date_ouverture_offres': offer.get('Date_ouverture_offres', ''),
+                'Delai': offer.get('Delai', ''),
+                'Lieu_acquisition': offer.get('Lieu_acquisition', ''),
+                'Lien_PDF': offer.get('Lien_PDF', '')
+            }
+            offers.append(transformed_offer)
+
+        return jsonify({
+            "success": True,
+            "offres": offers,
+            "count": len(offers)
+        })
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
+
+@app.route('/validated-all', methods=['GET'])
+@app.route('/api/validated-all', methods=['GET'])
+def api_validated_all():
+    """Retourne toutes les offres validées (benin n'a pas de système de validation)"""
+    return jsonify({
+        "success": True,
+        "offres": [],
+        "count": 0
+    })
+
+@app.route('/health', methods=['GET'])
+@app.route('/api/health', methods=['GET'])
+def health():
+    """Health check endpoint"""
+    try:
+        load_data()
+        return jsonify({
+            "status": "ok",
+            "pending": len(current_data),
+            "validated": 0
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/scrape', methods=['POST'])
+def api_scrape():
+    """Lance le scraping via API"""
+    try:
+        data = request.get_json() or {}
+        max_pages = int(data.get('max_pages', 3))
+
+        scraper = MarchesPublicsBeninScraper(headless=True)
+        appels_offres = scraper.scrape_all_pages(max_pages=max_pages)
+
+        if appels_offres:
+            save_data(appels_offres)
+            return jsonify({
+                "success": True,
+                "message": f"{len(appels_offres)} offres extraites",
+                "count": len(appels_offres)
+            })
+        else:
+            return jsonify({
+                "success": False,
+                "message": "Aucune donnée extraite"
+            }), 404
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
+
+@app.route('/api/delete/<path:offer_id>', methods=['DELETE'])
+def api_delete(offer_id):
+    """Supprime une offre"""
+    try:
+        result = collection.delete_one({'_id': offer_id})
+        if result.deleted_count > 0:
+            load_data()  # Recharger les données
+            return jsonify({"success": True, "message": "Offre supprimée"})
+        else:
+            return jsonify({"success": False, "message": "Offre non trouvée"}), 404
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
+
 if __name__ == '__main__':
     load_data()  # Charge initial au démarrage
-    app.run(debug=True, host='0.0.0.0', port=5009)
+    app.run(debug=True, host='0.0.0.0', port=5012)
