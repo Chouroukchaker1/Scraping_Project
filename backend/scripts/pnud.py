@@ -1493,15 +1493,34 @@ def delete_tender(reference):
     try:
         if not scraper.mongo_connected:
             return jsonify({"success": False, "message": "MongoDB non connecté"}), 500
-        
+
         result = scraper.pending_tenders_collection.delete_one({"reference": reference})
-        
+
         if result.deleted_count > 0:
             return jsonify({"success": True, "message": "Offre supprimée avec succès"})
         else:
             return jsonify({"success": False, "message": "Offre non trouvée"}), 404
     except Exception as e:
         logger.error(f"❌ Erreur suppression {reference}: {e}")
+        return jsonify({"success": False, "message": str(e)}), 500
+
+@app.route('/api/delete_all', methods=['DELETE', 'POST'])
+def delete_all_tenders():
+    """Supprime toutes les offres en attente"""
+    try:
+        if not scraper.mongo_connected:
+            return jsonify({"success": False, "message": "MongoDB non connecté"}), 500
+
+        result = scraper.pending_tenders_collection.delete_many({})
+
+        logger.info(f"🗑️ {result.deleted_count} offres supprimées")
+        return jsonify({
+            "success": True,
+            "message": f"{result.deleted_count} offres supprimées avec succès",
+            "deleted_count": result.deleted_count
+        })
+    except Exception as e:
+        logger.error(f"❌ Erreur suppression toutes offres: {e}")
         return jsonify({"success": False, "message": str(e)}), 500
 
 @app.route('/api/post_pending', methods=['POST'])
