@@ -37,6 +37,22 @@ DB_NAME = os.getenv("DB_NAME", "tunip")
 COLLECTION_NAME = "tenders_armp"  # Collection validées
 PENDING_COLLECTION_NAME = "pending_tenders_armp"  # Collection en attente
 
+# API AppelOffres Configuration
+API_BASE_URL = os.getenv("API_BASE_URL", "https://be.appeloffres.net/api")
+LOGIN_ENDPOINT = f"{API_BASE_URL}/auth/login/"
+TENDER_ENDPOINT = f"{API_BASE_URL}/tender"
+PROMOTER_ENDPOINT = f"{API_BASE_URL}/promoter"
+FILES_ENDPOINT = f"{API_BASE_URL}/files/tender"
+
+# ARMP utilise le compte de Mariem Bousalem
+EMAIL = os.getenv("API_EMAIL", "mariem.bousalem@tunipages.tn")
+API_PASSWORD = os.getenv("API_PASSWORD", "L96BhA6ODugl")
+
+# ARMP source_id = 410
+DEFAULT_SOURCE_ID_ARMP = 410
+DEFAULT_AVIS_ID = int(os.getenv("DEFAULT_AVIS_ID", "1"))
+PAYS_MADAGASCAR = 123  # Madagascar country_id
+
 # Paths
 OUTPUT_DIR = "output"
 EXCEL_DIR = "excel_armp"
@@ -96,6 +112,7 @@ class ARMPFlaskScraper:
     def __init__(self):
         self.base_url = "http://www.armp.mg/marches_publics/"
         self.session = requests.Session()
+        self.session_appeloffres = requests.Session()  # Session séparée pour API
 
         # Headers pour simuler un navigateur réel
         self.session.headers.update({
@@ -114,6 +131,10 @@ class ARMPFlaskScraper:
         self.tenders_collection = None
         self.pending_tenders_collection = None
         self.mongo_connected = self.connect_to_mongodb()
+
+        # API AppelOffres
+        self.access_token = None
+        self.promoters_cache = {}  # Cache des promoteurs {nom: id}
 
         # Cache
         self.existing_offres_set = set()
@@ -534,6 +555,224 @@ class ARMPFlaskScraper:
             duration = time.time() - self.processing_start_time if self.processing_start_time else 0
             logger.info(f"⏱️ Durée totale: {duration:.2f}s")
 
+    # ========== FONCTIONS API APPELOFFRES ==========
+
+    def normaliser_date_api(self, date_str: str) -> str:
+        """Normalise une date pour l'API (format ISO 8601)"""
+        if not date_str or date_str == "N/A":
+            return datetime.now(timezone.utc).isoformat()
+
+        try:
+            date_str = date_str.strip()
+
+            # Si déjà en format ISO, retourner tel quel
+            if re.match(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}', date_str):
+                return date_str
+
+            # Format: "2026-05-12 10 H 00" ou "2025-04-28"
+            # Extraire juste la partie date YYYY-MM-DD
+            date_match = re.match(r'(\d{4}-\d{2}-\d{2})', date_str)
+            if date_match:
+                date_part = date_match.group(1)
+                date_obj = datetime.strptime(date_part, "%Y-%m-%d")
+                date_obj = date_obj.replace(hour=0, minute=0, second=0, tzinfo=timezone.utc)
+                iso_date = date_obj.isoformat()
+                logger.debug(f"✅ Date normalisée: {date_str} → {iso_date}")
+                return iso_date
+
+            # Si aucun format reconnu, retourner date actuelle
+            logger.warning(f"⚠️ Format de date non reconnu: '{date_str}', utilisation de la date actuelle")
+            return datetime.now(timezone.utc).isoformat()
+
+        except Exception as e:
+            logger.error(f"❌ Erreur normalisation date '{date_str}': {e}")
+            return datetime.now(timezone.utc).isoformat()
+
+    def get_api_token(self):
+        """Obtenir le token d'authentification de l'API AppelOffres"""
+        if self.access_token:
+            return True
+
+        try:
+            login_data = {"email": EMAIL, "password": API_PASSWORD}
+            response = self.session_appeloffres.post(
+                LOGIN_ENDPOINT,
+                json=login_data,
+                headers={"Content-Type": "application/json"},
+                timeout=15
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                self.access_token = data.get("accessToken")
+                if self.access_token:
+                    logger.info(f"✅ Token API obtenu avec succès pour {EMAIL}")
+                    return True
+
+            logger.error(f"❌ Échec authentification API: {response.status_code}")
+            return False
+        except Exception as e:
+            logger.error(f"❌ Erreur lors de l'authentification API: {e}")
+            return False
+
+    def find_or_create_promoter(self, promoter_name: str):
+        """Trouve ou crée un promoteur dans l'API"""
+        logger.info(f"🔍 find_or_create_promoter appelé pour: '{promoter_name}'")
+
+        if not promoter_name or promoter_name.strip() == "":
+            promoter_name = "Non spécifié"
+
+        # Vérifier le cache
+        if promoter_name in self.promoters_cache:
+            logger.info(f"💾 Promoteur '{promoter_name}' trouvé dans cache")
+            return self.promoters_cache[promoter_name]
+
+        try:
+            # Rechercher le promoteur
+            logger.info(f"🔎 Recherche du promoteur '{promoter_name}' via API...")
+            search_headers = {
+                "Authorization": f"Bearer {self.access_token}",
+                "Content-Type": "application/json"
+            }
+
+            search_response = self.session_appeloffres.get(
+                f"{PROMOTER_ENDPOINT}?name={promoter_name}",
+                headers=search_headers,
+                timeout=10
+            )
+
+            logger.info(f"📡 Search response status: {search_response.status_code}")
+
+            if search_response.status_code == 200:
+                promoters = search_response.json()
+                logger.info(f"📋 Found {len(promoters) if promoters else 0} promoters")
+                if promoters and len(promoters) > 0:
+                    promoter_id = promoters[0].get('id')
+                    self.promoters_cache[promoter_name] = promoter_id
+                    logger.info(f"✅ Promoteur '{promoter_name}' trouvé: ID {promoter_id}")
+                    return promoter_id
+
+            # Créer le promoteur s'il n'existe pas
+            logger.info(f"🔨 Création du promoteur '{promoter_name}' via API...")
+            create_data = {
+                "name": promoter_name,
+                "description": f"Promoteur ARMP Madagascar: {promoter_name}",
+                "reference": re.sub(r'\W+', '_', promoter_name.upper())[:20],
+                "isEnabled": True,
+                "companyName": promoter_name,
+                "address": {
+                    "street": "ARMP Madagascar",
+                    "city": "Antananarivo",
+                    "country": "Madagascar",
+                    "postalCode": "101"
+                }
+            }
+            logger.info(f"📤 Data: {json.dumps(create_data, indent=2)}")
+            create_response = self.session_appeloffres.post(
+                PROMOTER_ENDPOINT,
+                json=create_data,
+                headers=search_headers,
+                timeout=10
+            )
+            logger.info(f"📥 Response status: {create_response.status_code}")
+
+            if create_response.status_code in [200, 201]:
+                promoter_data = create_response.json()
+                promoter_id = promoter_data.get('id')
+                self.promoters_cache[promoter_name] = promoter_id
+                logger.info(f"✅ Promoteur '{promoter_name}' créé: ID {promoter_id}")
+                return promoter_id
+
+            logger.error(f"❌ Impossible de créer le promoteur '{promoter_name}'")
+            logger.error(f"Status: {create_response.status_code}, Response: {create_response.text[:500]}")
+            return None
+
+        except Exception as e:
+            logger.error(f"❌ Erreur find_or_create_promoter: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return None
+
+    def send_to_appeloffres(self, offre: OffreARMP):
+        """Envoie une offre validée vers l'API AppelOffres"""
+        logger.info(f"📨 send_to_appeloffres appelé pour: {offre.reference}")
+        logger.info(f"   Promoteur: '{offre.promoteur}'")
+
+        if not self.get_api_token():
+            logger.error(f"❌ Impossible d'envoyer {offre.reference}: échec authentification")
+            return False
+
+        logger.info(f"🏢 Appel de find_or_create_promoter pour '{offre.promoteur}'...")
+        promoter_id = self.find_or_create_promoter(offre.promoteur)
+        logger.info(f"🏢 Résultat: promoter_id = {promoter_id}")
+
+        if promoter_id is None:
+            logger.error(f"❌ Impossible d'envoyer {offre.reference}: échec promoteur")
+            return False
+
+        # Préparer les données pour l'API
+        tender_data = {
+            "sourceId": DEFAULT_SOURCE_ID_ARMP,
+            "avisId": DEFAULT_AVIS_ID,
+            "reference": offre.reference,
+            "description": offre.description,
+            "description_fr": offre.description,  # Description en français
+            "publicationDate": self.normaliser_date_api(offre.date_debut),
+            "startBiddingDate": self.normaliser_date_api(offre.date_debut),  # Date de début des soumissions
+            "expirationDate": self.normaliser_date_api(offre.date_limite),
+            "promoterId": promoter_id,
+            "type": "national",  # national ou international
+            "nature": "public",
+            "isMultiCurrency": False,
+            "fundingSourceType": "national",  # national, international ou other
+            "images": [],  # Images vides
+            "country": "Madagascar",  # Nom du pays
+            "process": "Appel d'offres",  # Type de procédure
+            "addresses": [{"countryId": PAYS_MADAGASCAR}],
+            "batches": [{
+                "activitiesIds": [],
+                "title": offre.description[:100] if offre.description else "Description non disponible",
+                "deposit": "0"
+            }],
+            "specificationsReceivingAddress": offre.cahier_charge_url if offre.cahier_charge_url else "Non disponible"
+        }
+
+        # Nettoyer les valeurs None
+        tender_data = {k: v for k, v in tender_data.items() if v is not None and v != ""}
+
+        logger.info(f"📦 Tender data à envoyer: {json.dumps(tender_data, indent=2, ensure_ascii=False)[:1000]}")
+
+        try:
+            headers = {
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "Authorization": f"Bearer {self.access_token}",
+            }
+
+            logger.info(f"🚀 Envoi vers {TENDER_ENDPOINT}...")
+            response = self.session_appeloffres.post(
+                TENDER_ENDPOINT,
+                json=tender_data,
+                headers=headers,
+                timeout=30
+            )
+            logger.info(f"📥 Réponse reçue: {response.status_code}")
+
+            if response.status_code in [200, 201]:
+                logger.info(f"✅ Offre {offre.reference} envoyée à AppelOffres avec succès")
+                return True
+            else:
+                logger.error(f"❌ Échec envoi {offre.reference}: {response.status_code}")
+                try:
+                    error_detail = response.json()
+                    logger.error(f"❌ Détails erreur: {error_detail}")
+                except:
+                    logger.error(f"❌ Réponse: {response.text[:500]}")
+                return False
+        except Exception as e:
+            logger.error(f"❌ Erreur envoi {offre.reference}: {e}")
+            return False
+
     def save_to_pending(self, offre: OffreARMP):
         """Sauvegarde une offre dans la collection pending"""
         if not self.mongo_connected:
@@ -552,7 +791,7 @@ class ARMPFlaskScraper:
             logger.error(f"❌ Erreur sauvegarde {offre.reference}: {e}")
 
     def validate_offre(self, reference: str):
-        """Valide une offre (passe de pending à validé)"""
+        """Valide une offre ET l'envoie vers l'API AppelOffres"""
         if not self.mongo_connected:
             return {"success": False, "message": "MongoDB non connecté"}
 
@@ -567,7 +806,17 @@ class ARMPFlaskScraper:
             pending_doc['validationDate'] = datetime.now(timezone.utc).isoformat()
             pending_doc.pop('_id', None)
 
-            # Insérer dans la collection validée
+            # Créer l'objet OffreARMP
+            offre = OffreARMP(**pending_doc)
+
+            # Envoyer vers l'API AppelOffres
+            api_success = self.send_to_appeloffres(offre)
+
+            if not api_success:
+                logger.warning(f"⚠️ Offre {reference} validée en local mais échec envoi API")
+                return {"success": False, "message": "Échec de l'envoi vers l'API AppelOffres"}
+
+            # Si l'envoi API réussit, sauvegarder dans validated
             self.tenders_collection.insert_one(pending_doc)
 
             # Supprimer de pending
@@ -577,10 +826,13 @@ class ARMPFlaskScraper:
             self.existing_offres_set.add(reference)
             self.pending_offres_cache = [o for o in self.pending_offres_cache if o.reference != reference]
 
-            logger.info(f"✅ Offre {reference} validée avec succès")
-            return {"success": True, "message": "Offre validée avec succès"}
+            logger.info(f"✅ Offre {reference} validée et envoyée à AppelOffres avec succès")
+            return {"success": True, "message": "Offre validée et envoyée avec succès"}
 
         except PyMongoError as e:
+            logger.error(f"❌ Erreur validation {reference}: {e}")
+            return {"success": False, "message": str(e)}
+        except Exception as e:
             logger.error(f"❌ Erreur validation {reference}: {e}")
             return {"success": False, "message": str(e)}
 

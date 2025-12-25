@@ -19,12 +19,12 @@ from typing import Optional, List, Dict
 load_dotenv()
 
 # Configuration API appeloffres.net
-API_BASE_URL = os.getenv("API_BASE_URL", "https://be-stg.appeloffres.net/api")
+API_BASE_URL = os.getenv("API_BASE_URL", "https://be.appeloffres.net/api")
 LOGIN_ENDPOINT = f"{API_BASE_URL}/auth/login/"
 TENDER_ENDPOINT = f"{API_BASE_URL}/tender"
 PROMOTER_ENDPOINT = f"{API_BASE_URL}/promoter"
-EMAIL = os.getenv("API_EMAIL", "chouroukchaker6@gmail.com")
-PASSWORD = os.getenv("API_PASSWORD", "Chourouk2022*")
+EMAIL = os.getenv("API_EMAIL", "oumayma.dahmani@tunipages.tn")
+PASSWORD = os.getenv("API_PASSWORD", "Ah0F553KKu0A")
 DEFAULT_SOURCE_ID = os.getenv("DEFAULT_SOURCE_ID", "1760")
 DEFAULT_PROMOTER_ID = os.getenv("DEFAULT_PROMOTER_ID", "223472")
 DEFAULT_AVIS_ID = os.getenv("DEFAULT_AVIS_ID", "1")
@@ -497,6 +497,15 @@ document.getElementById('sendAll').onclick = sendAll;
 def index():
     return render_template_string(HTML_TEMPLATE)
 
+def background_scrape_giz(date_debut, date_fin):
+    """Scraping en arrière-plan"""
+    import threading
+    try:
+        tenders = scraper.scrape_and_process(date_debut, date_fin, [])
+        print(f"✅ Scraping GIZ terminé: {len(tenders)} offres extraites")
+    except Exception as e:
+        print(f"❌ Erreur scraping GIZ en arrière-plan: {e}")
+
 @app.route('/scrape', methods=['POST'])
 def scrape():
     try:
@@ -513,6 +522,35 @@ def scrape():
         })
     except Exception as e:
         logger.error(f"Erreur scrape: {e}")
+        return jsonify({"success": False, "message": str(e)}), 500
+
+@app.route('/api/scrape', methods=['POST'])
+def api_scrape():
+    """Lance le scraping via API avec plage de dates (en arrière-plan)"""
+    import threading
+    try:
+        data = request.get_json() or {}
+        start_date = data.get('start', datetime.now().strftime("%Y-%m-%d"))
+        end_date = data.get('end', datetime.now().strftime("%Y-%m-%d"))
+
+        # Valider le format de date YYYY-MM-DD
+        try:
+            datetime.strptime(start_date, "%Y-%m-%d")
+            datetime.strptime(end_date, "%Y-%m-%d")
+        except:
+            return jsonify({"success": False, "message": "Format de date invalide"}), 400
+
+        # Lancer le scraping en arrière-plan (utiliser YYYY-MM-DD directement)
+        thread = threading.Thread(target=background_scrape_giz, args=(start_date, end_date))
+        thread.daemon = True
+        thread.start()
+
+        return jsonify({
+            "success": True,
+            "message": f"Scraping GIZ lancé pour la période du {start_date} au {end_date}",
+            "count": 0
+        })
+    except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 500
 
 @app.route('/update/<project_id>', methods=['POST'])

@@ -21,13 +21,13 @@ COLLECTION_NAME = "tendersexper"
 PENDING_COLLECTION_NAME = "pending_tendersexper"
 
 # API Configuration
-API_BASE_URL = os.getenv("API_BASE_URL", "https://be-stg.appeloffres.net/api")
+API_BASE_URL = os.getenv("API_BASE_URL", "https://be.appeloffres.net/api")
 LOGIN_ENDPOINT = f"{API_BASE_URL}/auth/login"
 TENDER_ENDPOINT = f"{API_BASE_URL}/tender"
 PROMOTER_ENDPOINT = f"{API_BASE_URL}/promoter"
 
-EMAIL = os.getenv("API_EMAIL", "chouroukchaker6@gmail.com")
-PASSWORD = os.getenv("API_PASSWORD", "Chourouk2022*")
+EMAIL = os.getenv("API_EMAIL", "rabeb.gaaloul@tunipages.tn")
+PASSWORD = os.getenv("API_PASSWORD", "8\\J&k4ed8#")
 DEFAULT_SOURCE_ID = int(os.getenv("DEFAULT_SOURCE_ID", "1694"))
 DEFAULT_PROMOTER_ID = int(os.getenv("DEFAULT_PROMOTER_ID", "224346"))
 DEFAULT_AVIS_ID = int(os.getenv("DEFAULT_AVIS_ID", "11"))
@@ -753,19 +753,51 @@ def health():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
+def background_scrape(start_date, end_date, max_pages):
+    """Fonction pour scraper en arrière-plan"""
+    import threading
+    try:
+        start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+        end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+
+        total_offers = []
+        current_dt = start_dt
+        while current_dt <= end_dt:
+            target_date = current_dt.strftime("%d/%m/%Y")
+            offers = get_offers_by_date(target_date, max_pages)
+            total_offers.extend(offers)
+            current_dt += timedelta(days=1)
+
+        print(f"✅ Scraping terminé: {len(total_offers)} offres extraites du {start_date} au {end_date}")
+    except Exception as e:
+        print(f"❌ Erreur scraping en arrière-plan: {e}")
+
 @app.route('/api/scrape', methods=['POST'])
 def api_scrape():
-    """Lance le scraping via API"""
+    """Lance le scraping via API avec plage de dates (en arrière-plan)"""
+    import threading
     try:
         data = request.get_json() or {}
-        target_date = data.get('target_date', datetime.now().strftime("%d/%m/%Y"))
+        start_date = data.get('start', datetime.now().strftime("%Y-%m-%d"))
+        end_date = data.get('end', datetime.now().strftime("%Y-%m-%d"))
         max_pages = int(data.get('max_pages', 5))
 
-        offers = get_offers_by_date(target_date, max_pages)
+        # Valider le format de date
+        try:
+            datetime.strptime(start_date, "%Y-%m-%d")
+            datetime.strptime(end_date, "%Y-%m-%d")
+        except:
+            return jsonify({"success": False, "message": "Format de date invalide"}), 400
+
+        # Lancer le scraping en arrière-plan
+        thread = threading.Thread(target=background_scrape, args=(start_date, end_date, max_pages))
+        thread.daemon = True
+        thread.start()
+
         return jsonify({
             "success": True,
-            "message": f"{len(offers)} offres extraites",
-            "count": len(offers)
+            "message": f"Scraping lancé pour la période du {start_date} au {end_date}",
+            "count": 0
         })
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 500
