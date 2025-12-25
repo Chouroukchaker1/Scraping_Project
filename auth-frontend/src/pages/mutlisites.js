@@ -100,6 +100,24 @@ function MultiSitesPage() {
       color: "#9333EA",
       gradient: "linear-gradient(135deg, #9333EA 0%, #7E22CE 100%)",
       path: "/giz"
+    },
+    {
+      id: 11,
+      name: "ReliefWeb",
+      description: "Opportunités d'emploi humanitaires",
+      icon: Globe,
+      color: "#F59E0B",
+      gradient: "linear-gradient(135deg, #F59E0B 0%, #D97706 100%)",
+      path: "/relief"
+    },
+    {
+      id: 12,
+      name: "MediaCongo",
+      description: "Opportunités et médias RDC",
+      icon: Globe,
+      color: "#10B981",
+      gradient: "linear-gradient(135deg, #10B981 0%, #059669 100%)",
+      path: "/mediacongo"
     }
   ];
 

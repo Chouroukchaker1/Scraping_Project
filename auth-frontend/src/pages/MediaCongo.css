@@ -1,0 +1,90 @@
+/* MediaCongo.css - Styles pour la page MediaCongoWeb */
+
+.mediacongo-container {
+  min-height: 100vh;
+  background: linear-gradient(135deg, #F0FDF4 0%, #FFFFFF 100%);
+  padding: 2rem;
+}
+
+.mediacongo-header {
+  background: linear-gradient(135deg, #10B981 0%, #059669 100%);
+  border-radius: 20px;
+  padding: 2rem;
+  margin-bottom: 2rem;
+  color: white;
+  box-shadow: 0 8px 24px rgba(245, 158, 11, 0.3);
+}
+
+/* Animations */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.fade-in {
+  animation: fadeIn 0.3s ease-in-out;
+}
+
+/* Responsive styles */
+@media (max-width: 768px) {
+  .mediacongo-container {
+    padding: 1rem;
+  }
+
+  .mediacongo-header {
+    padding: 1.5rem;
+  }
+
+  table {
+    font-size: 0.85rem;
+  }
+
+  th, td {
+    padding: 0.75rem !important;
+  }
+}
+
+/* Table hover effects */
+tbody tr {
+  transition: all 0.2s ease;
+}
+
+tbody tr:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08) !important;
+}
+
+/* Button hover effects */
+button {
+  transition: all 0.2s ease;
+}
+
+button:hover {
+  transform: translateY(-2px);
+}
+
+button:active {
+  transform: translateY(0);
+}
+
+/* Input focus effects */
+input:focus {
+  outline: none;
+  border-color: #10B981 !important;
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.1);
+}

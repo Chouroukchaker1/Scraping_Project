@@ -329,6 +329,166 @@ app.use('/api/giz', createProxyMiddleware({
   }
 }));
 
+// RELIEF: Custom endpoints
+app.post('/api/relief/api/scrape', async (req, res) => {
+  try {
+    const axios = require('axios');
+    console.log('📤 Forwarding RELIEF scrape request:', req.body);
+
+    const response = await axios.post('http://localhost:5015/api/scrape', req.body, {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 120000
+    });
+
+    console.log('✅ RELIEF scrape response:', response.data);
+    res.json(response.data);
+  } catch (error) {
+    console.error('❌ RELIEF scrape error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.post('/api/relief/api/validate/:reference', async (req, res) => {
+  try {
+    const axios = require('axios');
+    const reference = req.params.reference;
+    console.log('📤 Forwarding RELIEF validate request:', reference);
+
+    const response = await axios.post(`http://localhost:5015/api/validate/${encodeURIComponent(reference)}`, req.body, {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 30000
+    });
+
+    console.log('✅ RELIEF validate response:', response.data);
+    res.json(response.data);
+  } catch (error) {
+    console.error('❌ RELIEF validate error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: error.response?.data?.message || error.message
+    });
+  }
+});
+
+app.post('/api/relief/api/delete_all', async (req, res) => {
+  try {
+    const axios = require('axios');
+    console.log('📤 Forwarding RELIEF delete_all request');
+
+    const response = await axios.post('http://localhost:5015/api/delete_all', req.body, {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 10000
+    });
+
+    console.log('✅ RELIEF delete_all response:', response.data);
+    res.json(response.data);
+  } catch (error) {
+    console.error('❌ RELIEF delete_all error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// RELIEF: Proxy pour les autres endpoints
+app.use('/api/relief', createProxyMiddleware({
+  target: 'http://localhost:5015',
+  changeOrigin: true,
+  pathRewrite: { '^/api/relief': '/api' },
+  onError: (err, req, res) => {
+    console.error('❌ Proxy RELIEF error:', err.message);
+    res.status(502).json({
+      success: false,
+      message: 'Scraper RELIEF non disponible',
+      error: err.message
+    });
+  }
+}));
+
+// MEDIACONGO: Custom endpoints
+app.post('/api/mediacongo/api/scrape', async (req, res) => {
+  try {
+    const axios = require('axios');
+    console.log('📤 Forwarding MEDIACONGO scrape request:', req.body);
+
+    const response = await axios.post('http://localhost:5016/api/scrape', req.body, {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 120000
+    });
+
+    console.log('✅ MEDIACONGO scrape response:', response.data);
+    res.json(response.data);
+  } catch (error) {
+    console.error('❌ MEDIACONGO scrape error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.post('/api/mediacongo/api/validate/:reference', async (req, res) => {
+  try {
+    const axios = require('axios');
+    const reference = req.params.reference;
+    console.log('📤 Forwarding MEDIACONGO validate request:', reference);
+
+    const response = await axios.post(`http://localhost:5016/api/validate/${encodeURIComponent(reference)}`, req.body, {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 30000
+    });
+
+    console.log('✅ MEDIACONGO validate response:', response.data);
+    res.json(response.data);
+  } catch (error) {
+    console.error('❌ MEDIACONGO validate error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: error.response?.data?.message || error.message
+    });
+  }
+});
+
+app.post('/api/mediacongo/api/delete_all', async (req, res) => {
+  try {
+    const axios = require('axios');
+    console.log('📤 Forwarding MEDIACONGO delete_all request');
+
+    const response = await axios.post('http://localhost:5016/api/delete_all', req.body, {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 10000
+    });
+
+    console.log('✅ MEDIACONGO delete_all response:', response.data);
+    res.json(response.data);
+  } catch (error) {
+    console.error('❌ MEDIACONGO delete_all error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// MEDIACONGO: Proxy pour les autres endpoints
+app.use('/api/mediacongo', createProxyMiddleware({
+  target: 'http://localhost:5016',
+  changeOrigin: true,
+  pathRewrite: { '^/api/mediacongo': '/api' },
+  onError: (err, req, res) => {
+    console.error('❌ Proxy MEDIACONGO error:', err.message);
+    res.status(502).json({
+      success: false,
+      message: 'Scraper MEDIACONGO non disponible',
+      error: err.message
+    });
+  }
+}));
+
 // ==================== SCRAPERS PYTHON ====================
 let pythonProcess = null;
 let pnudPythonProcess = null;
@@ -340,6 +500,8 @@ let beninPythonProcess = null;
 let expertisePythonProcess = null;
 let gizPythonProcess = null;
 let tunepsPythonProcess = null;
+let reliefPythonProcess = null;
+let mediacongoPythonProcess = null;
 
 function startBoampPythonScraper() {
   if (pythonProcess && !pythonProcess.killed) {
@@ -731,6 +893,80 @@ function startGizPythonScraper() {
   console.log(`✅ Scraper GIZ lancé (PID: ${gizPythonProcess.pid})`);
 }
 
+function startReliefPythonScraper() {
+  if (reliefPythonProcess && !reliefPythonProcess.killed) {
+    console.log(`✅ Scraper RELIEF déjà en cours (PID: ${reliefPythonProcess.pid})`);
+    return;
+  }
+
+  const scriptPath = path.join(__dirname, 'scripts', 'relief.py');
+  if (!fs.existsSync(scriptPath)) {
+    console.error('❌ relief.py non trouvé !');
+    return;
+  }
+
+  console.log('🚀 Démarrage du scraper RELIEF...');
+  const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+
+  reliefPythonProcess = spawn(pythonCmd, [scriptPath], {
+    cwd: path.join(__dirname, 'scripts'),
+    stdio: ['pipe', 'pipe', 'pipe']
+  });
+
+  reliefPythonProcess.stdout.on('data', (data) => {
+    console.log(`[RELIEF STDOUT] ${data.toString().trim()}`);
+  });
+
+  reliefPythonProcess.stderr.on('data', (data) => {
+    console.error(`[RELIEF STDERR] ${data.toString().trim()}`);
+  });
+
+  reliefPythonProcess.on('close', (code) => {
+    console.log(`❌ Scraper RELIEF terminé avec code ${code}`);
+    reliefPythonProcess = null;
+    if (code !== 0) setTimeout(startReliefPythonScraper, 5000);
+  });
+
+  console.log(`✅ Scraper RELIEF lancé (PID: ${reliefPythonProcess.pid})`);
+}
+
+function startMediaCongoPythonScraper() {
+  if (mediacongoPythonProcess && !mediacongoPythonProcess.killed) {
+    console.log(`✅ Scraper MEDIACONGO déjà en cours (PID: ${mediacongoPythonProcess.pid})`);
+    return;
+  }
+
+  const scriptPath = path.join(__dirname, 'scripts', 'mediacongo.py');
+  if (!fs.existsSync(scriptPath)) {
+    console.error('❌ mediacongo.py non trouvé !');
+    return;
+  }
+
+  console.log('🚀 Démarrage du scraper MEDIACONGO...');
+  const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+
+  mediacongoPythonProcess = spawn(pythonCmd, [scriptPath], {
+    cwd: path.join(__dirname, 'scripts'),
+    stdio: ['pipe', 'pipe', 'pipe']
+  });
+
+  mediacongoPythonProcess.stdout.on('data', (data) => {
+    console.log(`[MEDIACONGO STDOUT] ${data.toString().trim()}`);
+  });
+
+  mediacongoPythonProcess.stderr.on('data', (data) => {
+    console.error(`[MEDIACONGO STDERR] ${data.toString().trim()}`);
+  });
+
+  mediacongoPythonProcess.on('close', (code) => {
+    console.log(`❌ Scraper MEDIACONGO terminé avec code ${code}`);
+    mediacongoPythonProcess = null;
+    if (code !== 0) setTimeout(startMediaCongoPythonScraper, 5000);
+  });
+
+  console.log(`✅ Scraper MEDIACONGO lancé (PID: ${mediacongoPythonProcess.pid})`);
+}
+
 // ==================== HEALTH & INFO ====================
 app.get('/health', async (req, res) => {
   const health = {
@@ -860,6 +1096,8 @@ app.listen(PORT, '0.0.0.0', async () => {
   startBeninPythonScraper();
   startExpertisePythonScraper();
   startGizPythonScraper();
+  startReliefPythonScraper();
+  startMediaCongoPythonScraper();
 
   console.log(`
 API AUTHENTIFICATION PRÊTE !
@@ -881,6 +1119,8 @@ Ports actifs:
 • BENIN: 5012
 • EXPERTISE FRANCE: 5013
 • GIZ: 5014
+• RELIEF: 5015
+• MEDIACONGO: 5016
   `);
 });
 
@@ -890,7 +1130,7 @@ process.on('SIGINT', () => {
   [
     pythonProcess, pnudPythonProcess, haicopPythonProcess, banquePythonProcess,
     tunepsAoPythonProcess, armpPythonProcess, beninPythonProcess,
-    expertisePythonProcess, gizPythonProcess, tunepsPythonProcess
+    expertisePythonProcess, gizPythonProcess, tunepsPythonProcess, reliefPythonProcess
   ].forEach(proc => {
     if (proc && !proc.killed) {
       console.log(`Arrêt PID: ${proc.pid}...`);

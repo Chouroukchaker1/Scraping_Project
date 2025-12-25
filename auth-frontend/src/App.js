@@ -14,6 +14,8 @@ import Armp from "./pages/armp";
 import Benin from "./pages/benin";
 import Expertise from "./pages/expertise";
 import Giz from "./pages/giz";
+import Relief from "./pages/relief";
+import MediaCongo from "./pages/mediacongo";
 
 import PrivateRoute from "./components/PrivateRoute";
 import Navbar from "./components/Navbar";
@@ -59,6 +61,8 @@ function App() {
         <Route path="/benin" element={<PrivateRoute><ProtectedPage><Benin /></ProtectedPage></PrivateRoute>} />
         <Route path="/expertise" element={<PrivateRoute><ProtectedPage><Expertise /></ProtectedPage></PrivateRoute>} />
         <Route path="/giz" element={<PrivateRoute><ProtectedPage><Giz /></ProtectedPage></PrivateRoute>} />
+        <Route path="/relief" element={<PrivateRoute><ProtectedPage><Relief /></ProtectedPage></PrivateRoute>} />
+        <Route path="/mediacongo" element={<PrivateRoute><ProtectedPage><MediaCongo /></ProtectedPage></PrivateRoute>} />
         <Route path="/multi-sites" element={<PrivateRoute><ProtectedPage><MultiSites /></ProtectedPage></PrivateRoute>} />
 
 
