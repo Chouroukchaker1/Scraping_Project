@@ -1,0 +1,57 @@
+/* src/pages/Haicop.css */
+.spinning {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Styles spécifiques HAICOP */
+.urgent {
+  color: #dc2626;
+  font-weight: 600;
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+/* Badge Tunisie */
+.tunisia-flag {
+  background: linear-gradient(135deg, #e70013 0%, #ffffff 50%, #e70013 100%);
+  color: #0055a4;
+  font-weight: 700;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .table-container {
+    overflow-x: auto;
+  }
+  
+  table {
+    min-width: 800px;
+  }
+}
+
+/* Hover effects */
+button:not(:disabled):hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+}
+
+tr:hover {
+  background-color: #F8FAFC !important;
+}
