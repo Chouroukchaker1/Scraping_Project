@@ -35,8 +35,8 @@ TENDER_ENDPOINT = f"{API_BASE_URL}/tender"
 PROMOTER_ENDPOINT = f"{API_BASE_URL}/promoter"
 FILES_ENDPOINT = f"{API_BASE_URL}/files/tender"
 
-EMAIL = "ines.mtiri@tunipages.tn"
-PASSWORD = "InesMTIRI567@!"
+EMAIL = "mariem.bousalem@tunipages.tn"
+PASSWORD = "L96BhA6ODugl"
 DEFAULT_SOURCE_ID = 1464
 DEFAULT_AVIS_ID = 8
 
@@ -900,7 +900,7 @@ def get_pending():
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 500
 
-@app.route('/api/validate/<reference>', methods=['POST'])
+@app.route('/api/validate/<path:reference>', methods=['POST'])
 def validate_tender(reference):
     """Valide et envoie une offre à l'API"""
     try:
@@ -933,14 +933,14 @@ def validate_tender(reference):
             # Mettre à jour le statut
             tender_doc['status'] = 'validated'
             tender_doc['validationDate'] = datetime.now().isoformat()
-            
+
             # Sauvegarder dans la collection principale
-            if tenders_collection:
+            if tenders_collection is not None:
                 tenders_collection.insert_one(tender_doc)
-            
+
             # Supprimer de pending
             pending_collection.delete_one({"reference": reference})
-            
+
             return jsonify({
                 "success": True,
                 "message": "Offre validée et envoyée avec succès"
@@ -965,9 +965,10 @@ def login_to_api():
         )
         if response.status_code == 200:
             data = response.json()
-            return data.get('accessToken')
-    except:
-        pass
+            # Essayer différentes clés possibles pour le token
+            return data.get('access_token') or data.get('accessToken') or data.get('token')
+    except Exception as e:
+        print(f"❌ Erreur login API: {e}")
     return None
 
 def find_or_create_promoter(auth_token, promoter_name):
@@ -1038,15 +1039,16 @@ def prepare_tender_payload(tender_doc, promoter_id):
         "currencyId": 1,  # EUR par défaut
         "isMultiCurrency": False,
         "batches": tender_doc.get('batches', []),
-        "addresses": tender_doc.get('addresses', [])
+        "addresses": tender_doc.get('addresses', []),
+        "images": tender_doc.get('images', [])  # Ajouter le champ images (array vide par défaut)
     }
-    
+
     # Dates optionnelles
     if tender_doc.get('startBiddingDate'):
         payload['startBiddingDate'] = tender_doc['startBiddingDate']
     if tender_doc.get('openingBidsDate'):
         payload['openingBidsDate'] = tender_doc['openingBidsDate']
-    
+
     return payload
 
 @app.route('/api/validated', methods=['GET'])
@@ -1072,7 +1074,7 @@ def get_validated():
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 500
 
-@app.route('/api/delete/<reference>', methods=['DELETE'])
+@app.route('/api/delete/<path:reference>', methods=['DELETE'])
 def delete_tender(reference):
     """Supprime une offre pending"""
     try:

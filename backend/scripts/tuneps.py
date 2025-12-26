@@ -387,7 +387,13 @@ class TUNEPSScraper:
                 options.add_experimental_option('useAutomationExtension', False)
                 
                 # Use system ChromeDriver from environment variable or default path
-                chromedriver_path = os.getenv('CHROMEDRIVER_PATH', '/usr/bin/chromedriver')
+                # Try to load from saved path file first
+                saved_path_file = os.path.join(os.path.dirname(__file__), '.chromedriver_path')
+                default_path = '/usr/bin/chromedriver'
+                if os.path.exists(saved_path_file):
+                    with open(saved_path_file, 'r') as f:
+                        default_path = f.read().strip()
+                chromedriver_path = os.getenv('CHROMEDRIVER_PATH', default_path)
                 self.driver = webdriver.Chrome(
                     service=Service(chromedriver_path),
                     options=options

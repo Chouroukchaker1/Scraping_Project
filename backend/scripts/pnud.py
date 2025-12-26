@@ -55,8 +55,9 @@ TENDER_ENDPOINT = f"{API_BASE_URL}/tender"
 FILES_ENDPOINT = f"{API_BASE_URL}/files/tender"
 PROMOTER_ENDPOINT = f"{API_BASE_URL}/promoter"
 
-EMAIL = os.getenv("API_EMAIL", "marwa.aidoudi@tunipages.tn")
-PASSWORD = os.getenv("API_PASSWORD", "lopMP@!#")
+# PNUD utilise le compte de Marwa Idoudi (hardcodé, ne pas utiliser .env)
+EMAIL = "marwa.aidoudi@tunipages.tn"
+PASSWORD = "lopMP@!#"
 
 DEFAULT_SOURCE_ID_PNUD = int(os.getenv("DEFAULT_SOURCE_ID_PNUD", "1656"))
 DEFAULT_AVIS_ID = int(os.getenv("DEFAULT_AVIS_ID", "1"))
@@ -260,7 +261,7 @@ class PNUDScraper:
             return True
         
         try:
-            logger.info("🔑 Tentative de connexion API (nouvelle session ou >24h)")
+            logger.info(f"🔑 Tentative de connexion API avec compte: {EMAIL}")
             response = self.session_appeloffres.post(
                 LOGIN_ENDPOINT,
                 json={"email": EMAIL, "password": PASSWORD},

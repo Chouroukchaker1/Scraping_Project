@@ -58,8 +58,8 @@ const Offre = mongoose.models.Offre || mongoose.model('Offre', OffreSchema);
 // ===== CONFIGURATION API APPELOFFRES =====
 // IMPORTANT: Utiliser les mêmes credentials que tuneps.py (ceux qui fonctionnent!)
 const API_BASE_URL = 'https://be.appeloffres.net/api'; // Production, pas staging
-const API_EMAIL = 'rania.fathallah@tunipages.tn';
-const API_PASSWORD = '2F90WJZ7AN7g';
+const API_EMAIL = 'maryam.marmouch@tunipages.tn';
+const API_PASSWORD = 'Marmouch2345!@';
 const LOGIN_ENDPOINT = `${API_BASE_URL}/auth/login/`;
 const TENDER_ENDPOINT = `${API_BASE_URL}/tender`;
 const DEFAULT_SOURCE_ID = '817';

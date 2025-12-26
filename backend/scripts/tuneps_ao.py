@@ -58,20 +58,20 @@ DB_NAME = "marmouchbd"
 COLLECTION_NAME = "tenders_marmouch"
 PENDING_COLLECTION_NAME = "pending_tenders_marmouch_bd"
 # API Configuration
-API_BASE_URL = "https://be.appeloffres.net/api"
+API_BASE_URL = os.getenv("API_BASE_URL", "https://be.appeloffres.net/api")
 FILES_ENDPOINT = f"{API_BASE_URL}/files/tender"
 LOGIN_ENDPOINT = f"{API_BASE_URL}/auth/login/"
 TENDER_ENDPOINT = f"{API_BASE_URL}/tender"
 TENDER_UPDATE_ENDPOINT = f"{API_BASE_URL}/tenders"
 TENDERS_ENDPOINT = f"{API_BASE_URL}/tenders"
 PROMOTER_ENDPOINT = f"{API_BASE_URL}/promoter"
-EMAIL = "maryam.marmouch@tunipages.tn"
-API_PASSWORD = "Marmouch2345!@"
-DEFAULT_SOURCE_ID = "817"
-DEFAULT_PROMOTER_ID = "223472"
-DEFAULT_AVIS_ID = "2"
-DEFAULT_PAYS_ID = "219"
-DEFAULT_CURRENCY_ID = "111"
+EMAIL = os.getenv("API_EMAIL", "mariem.bousalem@tunipages.tn")
+API_PASSWORD = os.getenv("API_PASSWORD", "L96BhA6ODugl")
+DEFAULT_SOURCE_ID = os.getenv("DEFAULT_SOURCE_ID", "817")
+DEFAULT_PROMOTER_ID = os.getenv("DEFAULT_PROMOTER_ID", "223472")
+DEFAULT_AVIS_ID = os.getenv("DEFAULT_AVIS_ID", "2")
+DEFAULT_PAYS_ID = os.getenv("DEFAULT_PAYS_ID", "219")
+DEFAULT_CURRENCY_ID = os.getenv("DEFAULT_CURRENCY_ID", "111")
 # S3 Configuration
 S3_BUCKET = "tender-s3"
 S3_REGION = "de"
@@ -215,12 +215,12 @@ class TUNEPSScraper:
         self.default_promoter_id = DEFAULT_PROMOTER_ID
         # URL vers /offres
         self.BASE_URL = "https://www.tuneps.tn/portail/offres"
-       
+     
         self.TIMEOUT = 30
         self.WAIT_TIME = 1
         self.DELAY_BETWEEN_CONSULTATIONS = (1.0, 2.0)
-        self.DELAY_BETWEEN_PAGES = (1, 2)  # Réduit pour plus de vitesse
-        self.MAX_PAGES = 4  # Limite à 4 pages
+        self.DELAY_BETWEEN_PAGES = (1, 2) # Réduit pour plus de vitesse
+        self.MAX_EMPTY_PAGES = 3 # Stop after 3 empty pages
         self.MAX_RETRIES = 2
         self.DATE_CUTOFF_DAYS = 90
         # S3 Client
@@ -307,7 +307,7 @@ class TUNEPSScraper:
                 options.add_argument("--disable-blink-features=AutomationControlled")
                 options.add_experimental_option("excludeSwitches", ["enable-automation"])
                 options.add_experimental_option('useAutomationExtension', False)
-               
+             
                 # Use system ChromeDriver from environment variable or default path
                 chromedriver_path = os.getenv('CHROMEDRIVER_PATH', '/usr/bin/chromedriver')
                 self.driver = webdriver.Chrome(service=Service(chromedriver_path), options=options)
@@ -346,7 +346,7 @@ class TUNEPSScraper:
             date_str = self.clean_date_str(date_str)
             date_str = re.sub(r'h', ':', date_str)
             date_str = re.sub(r'\s+', ' ', date_str).strip()
-           
+         
             try:
                 dt = datetime.strptime(date_str, '%d/%m/%Y %H:%M')
             except ValueError:
@@ -354,7 +354,7 @@ class TUNEPSScraper:
                     dt = datetime.strptime(date_str, '%d/%m/%Y')
                 except ValueError:
                     dt = parse(date_str, fuzzy=True, tzinfos={None: tz.gettz('Africa/Tunis')})
-           
+         
             dt = dt.replace(tzinfo=tz.gettz('Africa/Tunis'))
             return dt.isoformat()
         except Exception as e:
@@ -385,7 +385,7 @@ class TUNEPSScraper:
     def get_or_create_promoter(self, promoter_name: str) -> str:
         if not promoter_name or promoter_name.strip() == "":
             promoter_name = "Promoteur TUNEPS Inconnu"
-       
+     
         clean_name = self.nettoyer_texte(promoter_name)
         if clean_name in self.promoter_cache:
             return self.promoter_cache[clean_name]
@@ -424,7 +424,7 @@ class TUNEPSScraper:
                 f"//table[.//th[contains(translate(text(), 'LOT', 'lot'), 'lot')]]",
                 f"//table[.//td[contains(translate(text(), 'LOT', 'lot'), 'lot')]]"
             ]
-           
+         
             table = None
             for xpath in table_xpaths:
                 try:
@@ -453,13 +453,13 @@ class TUNEPSScraper:
                     try:
                         cells = row.find_elements(By.CSS_SELECTOR, "td, mat-cell, .mat-cell")
                         row_data = [cell.text.strip() for cell in cells]
-                       
+                     
                         if any(row_data):
                             lot_dict = {}
                             for i, header in enumerate(headers):
                                 if i < len(row_data):
                                     header_lower = header.lower()
-                                   
+                                 
                                     # Mapping intelligent des colonnes
                                     if 'objet' in header_lower or 'title' in header_lower or 'désignation' in header_lower or 'description' in header_lower:
                                         lot_dict['title'] = row_data[i]
@@ -474,7 +474,7 @@ class TUNEPSScraper:
                                         lot_dict['numero_lot'] = row_data[i]
                                     else:
                                         lot_dict[header] = row_data[i]
-                           
+                         
                             if lot_dict.get('title') or lot_dict.get('objet') or lot_dict.get('description'):
                                 data.append(lot_dict)
                                 self.logger.info(f"✅ Lot extrait: title='{lot_dict.get('title', 'N/A')}', deposit='{lot_dict.get('deposit', '0')}'")
@@ -499,7 +499,7 @@ class TUNEPSScraper:
                 f"//td[contains(text(), '{label}')]/following-sibling::td[1]",
                 f"//th[contains(text(), '{label}')]/following-sibling::td[1]"
             ]
-           
+         
             for xpath in strategies:
                 try:
                     element = WebDriverWait(driver, timeout).until(
@@ -512,7 +512,7 @@ class TUNEPSScraper:
                         return value
                 except:
                     continue
-           
+         
             # Fallback JS
             try:
                 page_text = driver.execute_script("return document.body.innerText;")
@@ -524,7 +524,7 @@ class TUNEPSScraper:
                     return value
             except:
                 pass
-           
+         
             self.logger.warning(f"Aucune valeur trouvée pour '{label}'")
             return ""
         except Exception as e:
@@ -560,22 +560,22 @@ class TUNEPSScraper:
             for attempt in range(self.MAX_RETRIES):
                 try:
                     self.driver.get(url)
-                    time.sleep(1)  # Réduit pour vitesse
+                    time.sleep(1) # Réduit pour vitesse
                     WebDriverWait(self.driver, 10).until(
                         EC.presence_of_element_located(
                             (By.XPATH, "//*[contains(text(), 'N° référence') or contains(text(), 'Objet')]")
                         )
                     )
-                    time.sleep(0.5)  # Réduit
+                    time.sleep(0.5) # Réduit
                     # Extraction N° référence
                     n_ref = self.get_value_safe(self.driver, "N° référence", timeout=10)
                     num_offre = data.get("N° Offre", "")
-                   
+                 
                     if n_ref and re.search(r'\d+/\d{2,4}', n_ref.strip()):
                         full_reference = f"{n_ref} - {num_offre}" if num_offre else n_ref
                     else:
                         full_reference = num_offre
-                   
+                 
                     data["Reference"] = full_reference
                     self.logger.info(f"Référence complète: {full_reference}")
                     # Extraction dates
@@ -597,7 +597,7 @@ class TUNEPSScraper:
                         lots = json.loads(lots_json)
                         contenu['lots'] = lots
                         self.logger.info(f"✅ {len(lots)} lot(s) extrait(s)")
-                       
+                     
                         if not global_caution and lots:
                             first_lot_caution = lots[0].get("deposit", "0") or lots[0].get("Cautionnement provisoire", "0")
                             contenu['cautionnement_provisoire'] = first_lot_caution
@@ -639,10 +639,10 @@ class TUNEPSScraper:
         try:
             if not pdf_url or not reference:
                 return "", ""
-           
+         
             filename = f"{reference}.pdf"
             pdf_path = os.path.join(self.pdf_dir, filename)
-           
+         
             if os.path.exists(pdf_path):
                 file_size = os.path.getsize(pdf_path)
                 if file_size > 100:
@@ -657,7 +657,7 @@ class TUNEPSScraper:
                 with open(pdf_path, 'wb') as f:
                     for chunk in response.iter_content(chunk_size=8192):
                         f.write(chunk)
-               
+             
                 if os.path.exists(pdf_path):
                     file_size = os.path.getsize(pdf_path)
                     if file_size > 100:
@@ -665,7 +665,7 @@ class TUNEPSScraper:
                         return pdf_path, filename
                     else:
                         os.remove(pdf_path)
-           
+         
             return "", ""
         except Exception as e:
             self.logger.error(f"Erreur téléchargement PDF: {e}")
@@ -682,7 +682,7 @@ class TUNEPSScraper:
             tender_dict = offre.to_dict()
             tender_dict["status"] = "pending"
             result = pending_tenders_collection.insert_one(tender_dict)
-           
+         
             if result.inserted_id:
                 self.pending_set.add((offre.reference, desc_hash))
                 self.logger.info(f"✅ Offre sauvegardée en pending: {offre.reference}")
@@ -697,7 +697,7 @@ class TUNEPSScraper:
         start_bidding_ts = self.parse_date(offre.startBiddingDate)
         if start_bidding_ts is None:
             start_bidding_ts = publication_ts
-       
+     
         expiration_ts = self.parse_date(offre.expirationDate)
         opening_ts = self.parse_date(offre.ouverture_offres)
         if expiration_ts is None:
@@ -710,7 +710,7 @@ class TUNEPSScraper:
                 expiration_ts = exp_dt.isoformat()
         # Construction des batches
         batches = []
-       
+     
         def clean_deposit(dep_str):
             if not dep_str:
                 return "0"
@@ -724,7 +724,7 @@ class TUNEPSScraper:
                     lot.get("description") or
                     f"Lot {i}"
                 )
-               
+             
                 lot_deposit = (
                     lot.get("deposit") or
                     lot.get("Cautionnement provisoire") or
@@ -732,32 +732,32 @@ class TUNEPSScraper:
                     "0"
                 )
                 deposit = clean_deposit(lot_deposit)
-               
+             
                 batches.append({
                     "activitiesIds": [],
                     "title": lot_title,
                     "deposit": deposit
                 })
-               
+             
                 self.logger.info(f"✅ Batch {i}: title='{lot_title[:50]}...', deposit='{deposit}'")
-       
+     
         # Fallback: batch unique
         if not batches:
             raw_description = str(offre.description).strip()
             if not raw_description:
                 raw_description = f"Appel d'offres TUNEPS - Référence: {offre.reference}"
-           
+         
             global_deposit = clean_deposit(offre.cautionnement_provisoire)
-           
+         
             batches = [{
                 "activitiesIds": [],
                 "title": raw_description,
                 "deposit": global_deposit
             }]
-           
+         
             self.logger.info(f"Batch unique: title='{raw_description[:50]}...', deposit='{global_deposit}'")
         promoter_id = self.get_or_create_promoter(offre.promoter)
-       
+     
         source_id = int(self.default_source_id)
         currency_id = int(DEFAULT_CURRENCY_ID)
         avis_id = int(DEFAULT_AVIS_ID)
@@ -770,7 +770,7 @@ class TUNEPSScraper:
             lots_titles = [lot.get("title", lot.get("objet", lot.get("description", ""))) for lot in offre.lots if lot.get("title") or lot.get("objet") or lot.get("description")]
             if lots_titles:
                 title_parts.append(f"Lots: {', '.join(lots_titles[:3])}")
-       
+     
         title = " - ".join(title_parts)
         description = raw_description
         addresses = [{"countryId": DEFAULT_PAYS_ID}]
@@ -810,9 +810,9 @@ class TUNEPSScraper:
             "images": images
         }
         filtered_payload = {k: v for k, v in payload.items() if v is not None and v != ""}
-       
+     
         self.logger.info(f"📤 Payload API pour {offre.reference}: {len(batches)} lot(s)")
-       
+     
         return filtered_payload
     @tenacity.retry(stop=tenacity.stop_after_attempt(5), wait=tenacity.wait_exponential(multiplier=2, min=4, max=20))
     def post_tender_to_database(self, offre) -> dict:
@@ -831,13 +831,13 @@ class TUNEPSScraper:
                     to_remove = [(r, h) for r, h in self.pending_set if r == offre.reference]
                     for tup in to_remove:
                         self.pending_set.discard(tup)
-               
+             
                 self.validated_refs.add(offre.reference)
-               
+             
                 api_success = False
                 api_id = None
                 api_message = ""
-               
+             
                 try:
                     if not self.login_appeloffres():
                         api_message = "Échec connexion API"
@@ -849,14 +849,14 @@ class TUNEPSScraper:
                             headers=self.appeloffres_headers,
                             timeout=30
                         )
-                       
+                     
                         if response.status_code in [200, 201]:
                             api_data = response.json()
                             api_id = api_data.get("id")
                             api_success = True
                             api_message = f"Envoi API réussi - ID: {api_id}"
                             self.logger.info(f"✅ ENVOI API RÉUSSI: {offre.reference} - ID: {api_id}")
-                           
+                         
                             tenders_collection.update_one(
                                 {"_id": result.inserted_id},
                                 {"$set": {"api_id": api_id}}
@@ -890,10 +890,10 @@ class TUNEPSScraper:
         """Extraire toutes les lignes du tableau des offres avec extraction robuste de l'ID"""
         consultations = []
         driver = self.driver
-       
+     
         try:
-            time.sleep(0.5)  # Réduit pour vitesse
-           
+            time.sleep(0.5) # Réduit pour vitesse
+         
             # Forcer l'affichage de colonnes cachées
             script = """
             var style = document.createElement('style');
@@ -902,9 +902,9 @@ class TUNEPSScraper:
             """
             driver.execute_script(script)
             time.sleep(0.5)
-           
+         
             rows = driver.find_elements(By.CSS_SELECTOR, "table tbody tr, mat-row")
-           
+         
             if not rows:
                 return consultations
             self.logger.info(f"\n{len(rows)} lignes détectées")
@@ -922,7 +922,7 @@ class TUNEPSScraper:
                                 self.logger.info(f"✅ ID extrait depuis href: {id1}")
                     except:
                         pass
-                   
+                 
                     # ⭐ STRATÉGIE 2: Attributs data-*
                     if not id1:
                         try:
@@ -937,7 +937,7 @@ class TUNEPSScraper:
                                 }
                                 return attrs;
                             """, row)
-                           
+                         
                             for key, value in data_attrs.items():
                                 if value and str(value).isdigit() and len(str(value)) == 6:
                                     id1 = str(value)
@@ -945,11 +945,11 @@ class TUNEPSScraper:
                                     break
                         except:
                             pass
-                   
+                 
                     # ⭐ STRATÉGIE 3: Cellules visibles
                     all_cells = row.find_elements(By.CSS_SELECTOR, "td, mat-cell, .mat-cell")
                     all_texts = [cell.text.strip() for cell in all_cells]
-                   
+                 
                     js_texts = driver.execute_script("""
                         var row = arguments[0];
                         var cells = row.querySelectorAll('td, mat-cell, .mat-cell');
@@ -959,7 +959,7 @@ class TUNEPSScraper:
                         });
                         return values;
                     """, row)
-                   
+                 
                     # ⭐ STRATÉGIE 4: Colonnes cachées
                     if not id1:
                         try:
@@ -971,7 +971,7 @@ class TUNEPSScraper:
                                 "td[data-column='id']",
                                 "mat-cell[data-column='id']"
                             ]
-                           
+                         
                             for selector in selectors:
                                 try:
                                     id1_cell = row.find_element(By.CSS_SELECTOR, selector)
@@ -986,7 +986,7 @@ class TUNEPSScraper:
                                     continue
                         except:
                             pass
-                   
+                 
                     # ⭐ STRATÉGIE 5: Textes cellules
                     if not id1:
                         for text in all_texts + js_texts:
@@ -994,7 +994,7 @@ class TUNEPSScraper:
                                 id1 = text
                                 self.logger.info(f"✅ ID extrait depuis texte: {id1}")
                                 break
-                   
+                 
                     # ⭐ STRATÉGIE 6: N° Offre
                     num_offre = all_texts[0] if len(all_texts) > 0 else ""
                     if not id1 and num_offre:
@@ -1002,12 +1002,12 @@ class TUNEPSScraper:
                         if match:
                             id1 = match.group(1)
                             self.logger.info(f"✅ ID extrait depuis N° Offre: {id1}")
-                   
+                 
                     # Warnings si échec
                     if not id1:
                         self.logger.warning(f"⚠️ Ligne {idx+1}: Impossible d'extraire l'ID")
                         self.logger.warning(f" Cellules: {all_texts[:5]}")
-                   
+                 
                     basic_data = {
                         "N° Offre": num_offre,
                         "Acheteur public": all_texts[1] if len(all_texts) > 1 else "",
@@ -1016,9 +1016,9 @@ class TUNEPSScraper:
                         "Dernier Délai": all_texts[4] if len(all_texts) > 4 else "",
                         "_id1": id1
                     }
-                   
+                 
                     consultations.append(basic_data)
-                   
+                 
                 except Exception as e:
                     self.logger.error(f"Erreur ligne {idx+1}: {str(e)[:80]}")
                     continue
@@ -1034,7 +1034,7 @@ class TUNEPSScraper:
                 "button[aria-label*='suivant']",
                 "button[aria-label*='next']"
             ]
-           
+         
             next_button = None
             for selector in next_selectors:
                 try:
@@ -1049,9 +1049,9 @@ class TUNEPSScraper:
             if not next_button:
                 return False
             driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", next_button)
-            time.sleep(0.5)  # Réduit
+            time.sleep(0.5) # Réduit
             driver.execute_script("arguments[0].click();", next_button)
-           
+         
             WebDriverWait(driver, self.TIMEOUT).until(
                 EC.presence_of_all_elements_located((By.CSS_SELECTOR, "table tbody tr, mat-row"))
             )
@@ -1059,11 +1059,55 @@ class TUNEPSScraper:
             return True
         except:
             return False
+    def should_stop_scraping(self, rows_data, page_num):
+        """Condition d'arrêt basée sur dates anciennes (comme tuneps.py)"""
+        if not rows_data:
+            return False
+
+        cutoff_date = datetime.now().date() - timedelta(days=self.DATE_CUTOFF_DAYS)
+        all_old = True
+
+        for r in rows_data:
+            pub_date_str = r.get("Date Publication", "")
+            exp_date_str = r.get("Dernier Délai", "")
+
+            pub_date = None
+            date_formats = ["%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%d %m %Y"]
+
+            for fmt in date_formats:
+                try:
+                    pub_date = datetime.strptime(pub_date_str.strip().split()[0], fmt).date()
+                    break
+                except ValueError:
+                    continue
+
+            if pub_date and pub_date >= cutoff_date:
+                all_old = False
+                break
+
+            exp_date = None
+            for fmt in date_formats:
+                try:
+                    exp_date = datetime.strptime(exp_date_str.strip().split()[0], fmt).date()
+                    break
+                except ValueError:
+                    continue
+
+            if exp_date and exp_date >= cutoff_date:
+                all_old = False
+                break
+
+        if all_old:
+            self.logger.info(f"Arrêt scraping à page {page_num}: Toutes dates (pub/exp) > {self.DATE_CUTOFF_DAYS} jours anciennes ({cutoff_date})")
+            return True
+
+        return False
+
     def is_between_dates(self, date_str, start_date_str, end_date_str):
         try:
             if not date_str or date_str in ["N/A", ""]:
                 return False
-           
+
             date_formats = ["%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%d %m %Y"]
             pub_date = None
             for fmt in date_formats:
@@ -1079,7 +1123,7 @@ class TUNEPSScraper:
             if start_date and end_date:
                 return start_date <= pub_date <= end_date
             elif start_date:
-                return start_date <= pub_date
+                return pub_date >= start_date
             elif end_date:
                 return pub_date <= end_date
             else:
@@ -1092,9 +1136,9 @@ class TUNEPSScraper:
         reference = data.get("Reference", data.get("N° Offre", ""))
         url = data.get("URL_Detail", "")
         i = data.get("index", 0)
-       
+     
         self.logger.info(f"🔍 Thread: Traitement offre {i}: {data.get('N° Offre', 'N/A')}")
-       
+     
         if not url:
             self.logger.warning(f"⚠️ Pas d'URL pour offre {i}: {reference}")
             return None
@@ -1103,7 +1147,7 @@ class TUNEPSScraper:
         region_id = None
         clean_promoter = self.nettoyer_texte(data.get("Acheteur public", ""))
         clean_promoter_words = set(clean_promoter.split())
-       
+     
         for region, rid in REGION_IDS.items():
             clean_region = self.nettoyer_texte(region)
             clean_region_words = set(clean_region.split())
@@ -1159,7 +1203,7 @@ class TUNEPSScraper:
         self.is_processing = True
         self.processing_start_time = time.time()
         self.extraction_complete_mode = extraction_complete
-       
+     
         self.logger.info(f"🚀 Début scraping TUNEPS OFFRES ({datetime.now().strftime('%d/%m/%Y %H:%M')})")
         self.logger.info(f"📅 Dates: {start_date} à {end_date}")
         self.logger.info(f"🔧 Mode complete: {extraction_complete}")
@@ -1188,9 +1232,9 @@ class TUNEPSScraper:
                         else:
                             raise te
                 page = 1
-                while page <= self.MAX_PAGES:  # Limite à 4 pages
+                while True:  # No max pages limit, stop based on dates/empty pages
                     self.logger.info(f"\n📄 Traitement page {page}...")
-                   
+                 
                     try:
                         WebDriverWait(self.driver, self.TIMEOUT).until(
                             EC.presence_of_all_elements_located((By.CSS_SELECTOR, "table tbody tr, mat-row"))
@@ -1200,19 +1244,26 @@ class TUNEPSScraper:
                         break
                     rows_data = self.extract_all_rows_data()
                     self.logger.info(f"📊 {len(rows_data)} lignes extraites sur page {page}")
+
+                    # Filtrer par plage de dates
                     rows_data = [r for r in rows_data if self.is_between_dates(r.get("Date Publication", ""), start_date, end_date)]
+
                     if not rows_data:
                         empty_pages += 1
                         self.logger.info(f"Aucune offre dans la plage ({empty_pages}/3)")
                         if empty_pages >= 3:
-                            self.logger.info("Arrêt: 3 pages vides")
+                            self.logger.info("Arrêt automatique : aucune donnée dans la plage trouvée.")
                             break
                     else:
                         empty_pages = 0
+
+                    # Vérifier si on doit arrêter basé sur les dates anciennes (comme tuneps.py)
+                    if self.should_stop_scraping(rows_data, page):
+                        break
                     for r in rows_data:
                         id1 = r.get("_id1", "")
                         num_offre = r.get("N° Offre", "")
-                       
+                     
                         if id1 and num_offre:
                             r["URL_Detail"] = f"https://www.tuneps.tn/portail/offres/details/{id1}/{num_offre}"
                         else:
@@ -1226,8 +1277,8 @@ class TUNEPSScraper:
                             all_consultations.append(r)
                             all_refs.add(key)
                     self.logger.info(f"{len(rows_data)} offres dans la plage sur page {page}")
-                    if page >= self.MAX_PAGES or not self.click_next_page():
-                        self.logger.info("Fin de pagination (limite atteinte ou fin)")
+                    if not self.click_next_page():
+                        self.logger.info("Fin de pagination")
                         break
                     page += 1
                     time.sleep(random.uniform(*self.DELAY_BETWEEN_PAGES))
@@ -1238,7 +1289,7 @@ class TUNEPSScraper:
                     return []
                 offres = []
                 self.logger.info(f"🚀 Lancement {len(all_consultations)} threads (max_workers=5)")
-               
+             
                 with ThreadPoolExecutor(max_workers=5) as executor:
                     futures = []
                     for i, data in enumerate(all_consultations, 1):
@@ -1262,7 +1313,7 @@ class TUNEPSScraper:
                 self.is_processing = False
                 self.processing_start_time = None
                 self.logger.info(f"⏱️ Durée totale: {processing_duration:.2f}s")
-               
+             
                 if self.driver:
                     try:
                         self.driver.quit()
@@ -1397,28 +1448,54 @@ def test_api():
         "pending_count": len(scraper.offres_cache),
         "processing": scraper.is_processing
     })
-@app.route('/api/scrape', methods=['POST'])
+@app.route('/api/scrape', methods=['POST', 'OPTIONS'])
 def scrape():
-    logger.info("📡 /api/scrape appelée")
+    # Handle CORS preflight
+    if request.method == 'OPTIONS':
+        logger.info("📡 OPTIONS preflight received")
+        response = jsonify({"status": "ok"})
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
+        response.headers.add('Access-Control-Allow-Methods', 'POST')
+        return response
+
+    logger.info("📡 /api/scrape appelée (POST)")
     try:
-        data = request.json or {}
-        start_date = data.get('start_date')
-        end_date = data.get('end_date')
+        # Get JSON data from request
+        logger.info(f"📡 Request content-type: {request.content_type}")
+        logger.info(f"📡 Request data (raw): {request.data}")
+        data = request.get_json(force=True, silent=True) or {}
+        logger.info(f"📡 Data received: {data}")
+
+        # Support both 'start'/'end' and 'start_date'/'end_date'
+        start_date = data.get('start') or data.get('start_date')
+        end_date = data.get('end') or data.get('end_date')
+
+        # Convertir les chaînes vides en None
+        if start_date == "":
+            start_date = None
+        if end_date == "":
+            end_date = None
+
         complete_mode = data.get('extraction_complete', False)
-       
-        logger.info(f"Scraping: {start_date} à {end_date} - Complete: {complete_mode}")
-       
+        logger.info(f"📡 Scraping TUNEPS AO: {start_date} à {end_date} - Complete: {complete_mode}")
+
         thread = threading.Thread(target=scraper.scraper_offres_tuneps, args=(start_date, end_date, complete_mode))
         thread.daemon = True
         thread.start()
-       
-        return jsonify({
+
+        response = jsonify({
             "success": True,
-            "message": f"Scraping OFFRES lancé ({'complet' if complete_mode else 'rapide'})"
+            "message": f"Scraping TUNEPS AO lancé ({'complet' if complete_mode else 'rapide'})"
         })
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response
     except Exception as e:
-        logger.error(f"Erreur /api/scrape: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        logger.error(f"❌ Erreur /api/scrape: {e}")
+        logger.exception(e)
+        response = jsonify({"success": False, "error": str(e)})
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response, 500
 @app.route('/api/status', methods=['GET'])
 def status():
     if scraper.is_processing:
@@ -1437,7 +1514,7 @@ def status():
 @app.route('/api/validate/<path:reference>', methods=['POST'])
 def validate_offre(reference):
     logger.info(f"✅ Validation: {reference}")
-   
+ 
     existing_active = tenders_collection.find_one({"reference": reference, "status": "active"})
     if existing_active:
         return jsonify({"success": False, "message": "Offre déjà validée", "offre_ref": reference})
@@ -1497,11 +1574,11 @@ def download_pdf(filename):
 def serve_react(path):
     if path != "" and os.path.exists(os.path.join(REACT_BUILD_DIR, path)):
         return send_file(os.path.join(REACT_BUILD_DIR, path))
-   
+ 
     index_path = os.path.join(REACT_BUILD_DIR, 'index.html')
     if os.path.exists(index_path):
         return send_file(index_path)
-   
+ 
     return Response("<h1>TUNEPS OFFRES Scraper - Frontend manquant</h1>", mimetype='text/html')
 if __name__ == "__main__":
     # Fix Windows console encoding for emojis
@@ -1509,7 +1586,6 @@ if __name__ == "__main__":
     if sys.platform == 'win32':
         sys.stdout.reconfigure(encoding='utf-8')
         sys.stderr.reconfigure(encoding='utf-8')
-
     print("="*80)
     print("🚀 SCRAPER TUNEPS - APPELS D'OFFRES (/portail/offres)")
     print("="*80)
@@ -1526,7 +1602,7 @@ if __name__ == "__main__":
     print(" - Extraction CAUTIONNEMENT → batches[].deposit (caution du lot)")
     print(" - Extraction ID robuste (6 stratégies)")
     print(" - Fallback cautionnement global si absent par lot")
-    print(" - Scraping limité à 4 pages")
+    print(" - Scraping sans limite de pages, arrêt basé sur dates")
     print(" - Traitement parallèle (5 threads)")
     print(" - Mode rapide par défaut (extraction_complete=False)")
     print("="*80)

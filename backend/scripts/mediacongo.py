@@ -43,8 +43,8 @@ TENDER_ENDPOINT = f"{API_BASE_URL}/tender"
 PROMOTER_ENDPOINT = f"{API_BASE_URL}/promoter"
 
 # MediaCongo utilise le compte Oumayma Dahmani
-EMAIL = "oumayma.dahmani@tunipages.tn"
-PASSWORD = "Ah0F553KKu0A"
+EMAIL = "mariem.bousalem@tunipages.tn"
+PASSWORD = "L96BhA6ODugl"
 
 DEFAULT_SOURCE_ID_MEDIACONGO = int(os.getenv("DEFAULT_SOURCE_ID_MEDIACONGO", "337"))
 DEFAULT_AVIS_ID = int(os.getenv("DEFAULT_AVIS_ID", "1"))
@@ -199,7 +199,11 @@ class MediaCongoScraper:
                     return promoter_id
 
             # Créer nouveau promoteur
-            payload = {"name": promoter_name}
+            payload = {
+                "name": promoter_name,
+                "companyName": promoter_name,
+                "address": {"countryId": 219}  # RDC (countryId 219)
+            }
             create_response = self.session_appeloffres.post(
                 PROMOTER_ENDPOINT,
                 json=payload,
@@ -212,6 +216,8 @@ class MediaCongoScraper:
                 self.promoters_cache[promoter_clean] = promoter_id
                 logger.info(f"✅ Promoteur créé: {promoter_name} (ID: {promoter_id})")
                 return promoter_id
+            else:
+                logger.error(f"❌ Échec création promoteur {promoter_name}: {create_response.status_code} - {create_response.text[:200]}")
 
             return 223472
         except Exception as e:
@@ -299,14 +305,29 @@ class MediaCongoScraper:
                         date_str = date_cell.get_text(strip=True)
 
                         # Parser la date (format: DD.MM.YYYY)
+                        pub_date_obj = None
                         try:
                             date_parts = date_str.split('.')
                             if len(date_parts) == 3:
-                                pub_date = datetime(int(date_parts[2]), int(date_parts[1]), int(date_parts[0]), tzinfo=timezone.utc).isoformat()
+                                pub_date_obj = datetime(int(date_parts[2]), int(date_parts[1]), int(date_parts[0]), tzinfo=timezone.utc)
+                                pub_date = pub_date_obj.isoformat()
                             else:
-                                pub_date = datetime.now(timezone.utc).isoformat()
+                                pub_date_obj = datetime.now(timezone.utc)
+                                pub_date = pub_date_obj.isoformat()
                         except:
-                            pub_date = datetime.now(timezone.utc).isoformat()
+                            pub_date_obj = datetime.now(timezone.utc)
+                            pub_date = pub_date_obj.isoformat()
+
+                        # Filtrer par date si spécifié
+                        if start_date and end_date and pub_date_obj:
+                            try:
+                                start_dt = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                                end_dt = datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=timezone.utc) + timedelta(days=1)
+
+                                if not (start_dt <= pub_date_obj < end_dt):
+                                    continue  # Skip offres en dehors de la plage de dates
+                            except:
+                                pass  # Si erreur de parsing, inclure l'offre quand même
 
                         # Date d'expiration: 30 jours après publication
                         exp_date = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
@@ -488,6 +509,7 @@ class MediaCongoScraper:
                         logger.info(f"✅ API OK: {offre.reference} - ID: {api_id}")
                     else:
                         error_detail = f"Status {response.status_code}"
+                        logger.error(f"❌ API Error {response.status_code}: {response.text[:500]}")
             except Exception as e:
                 error_detail = str(e)[:200]
 
@@ -533,6 +555,7 @@ class MediaCongoScraper:
                 "deposit": 0
             }],
             "addresses": [{"countryId": 219}],
+            "images": []  # Champ obligatoire pour l'API
         }
 
         return {k: v for k, v in payload.items() if v is not None}
@@ -611,7 +634,7 @@ def get_pending():
         logger.error(f"❌ Erreur pending: {e}")
         return jsonify({"success": False, "message": str(e)}), 500
 
-@app.route('/api/validate/<reference>', methods=['POST'])
+@app.route('/api/validate/<path:reference>', methods=['POST'])
 def validate_offre(reference):
     """Validate an offer"""
     try:
@@ -631,7 +654,7 @@ def validate_offre(reference):
         logger.error(f"❌ Erreur validation: {e}")
         return jsonify({"success": False, "message": str(e)}), 500
 
-@app.route('/api/delete/<reference>', methods=['DELETE'])
+@app.route('/api/delete/<path:reference>', methods=['DELETE'])
 def delete_offre(reference):
     """Delete a pending offer"""
     try:

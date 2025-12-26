@@ -417,7 +417,7 @@ class TunisieScraper:
                             date_pub = cols[3].text.strip()
                             
                             if not self.should_extract_by_date(date_pub, date_filtre):
-                                self.logger.debug(f"⏭️ Skip offre {award_id} - Date {date_pub} < filtre {date_filtre}")
+                                self.logger.info(f"⏭️ Skip offre {award_id} - Date {date_pub} < filtre {date_filtre}")
                                 continue
                             
                             date_pub_only = date_pub.split()[0] if ' ' in date_pub else date_pub
@@ -507,39 +507,45 @@ class TunisieScraper:
                     return False
             
             now = datetime.now().isoformat()
-            
-            pdf_path = self.generer_pdf_path_tunisie(f"{reference}_synthetic.pdf")
-            doc = SimpleDocTemplate(pdf_path, pagesize=A4)
-            story = [
-                Paragraph(f"Projet Annuel Tunisie - Ref: {reference}", getSampleStyleSheet()['Title']),
-                Paragraph(f"Objet: {description}", getSampleStyleSheet()['Normal']),
-                Paragraph(f"Acheteur: {data_row.get('Acheteur Public', '')}", getSampleStyleSheet()['Normal']),
-                Paragraph(f"Date Pub: {data_row.get('Date de publication', '')}", getSampleStyleSheet()['Normal']),
-                Paragraph("Contenu synthétique pour test HAICOP.", getSampleStyleSheet()['Normal'])
-            ]
-            doc.build(story)
-            
-            image_filename = os.path.basename(pdf_path)
+
+            # Génération PDF (optionnelle, continue si échec)
+            image_filename = f"{reference}_synthetic.pdf"
+            try:
+                pdf_path = self.generer_pdf_path_tunisie(image_filename)
+                doc = SimpleDocTemplate(pdf_path, pagesize=A4)
+                story = [
+                    Paragraph(f"Projet Annuel Tunisie - Ref: {reference}", getSampleStyleSheet()['Title']),
+                    Paragraph(f"Objet: {description}", getSampleStyleSheet()['Normal']),
+                    Paragraph(f"Acheteur: {data_row.get('Acheteur Public', '')}", getSampleStyleSheet()['Normal']),
+                    Paragraph(f"Date Pub: {data_row.get('Date de publication', '')}", getSampleStyleSheet()['Normal']),
+                    Paragraph("Contenu synthétique pour test HAICOP.", getSampleStyleSheet()['Normal'])
+                ]
+                doc.build(story)
+                image_filename = os.path.basename(pdf_path)
+            except Exception as e:
+                self.logger.warning(f"⚠️ PDF non créé pour {reference}: {str(e)}")
+                # Continue sans PDF
             full_content = (
                 f"Acheteur: {data_row.get('Acheteur Public', '')}<br/>"
                 f"Date Pub: {data_row.get('Date de publication', '')}<br/>"
                 f"Date Limite: {data_row.get('date_limite', '')}"
             )
             
+            # ✅ CORRECTION: Utiliser la date actuelle comme date de publication au lieu de la date du site
             update_fields = {
                 "updatedAt": now,
                 "extractionDate": now,
                 "description": description,
                 "full_content": full_content,
                 "promoter": data_row.get('Acheteur Public', ''),
-                "publicationDate": data_row.get('Date de publication', ''),
+                "publicationDate": datetime.now().strftime("%d-%m-%Y"),  # ✅ Date de lancement = date de publication
                 "expirationDate": data_row.get('date_limite', ''),
                 "url_source": data_row.get('Lien', ''),
                 "cahier_charge_pdf_filename": image_filename,
                 "image_filename": image_filename,
                 "s3_image_url": self.fixed_image_s3_path,  # ✅ NOUVEAU: Image fixe
                 "lots": [{
-                    "title": data_row.get('Objet Lot/Article', ''), 
+                    "title": data_row.get('Objet Lot/Article', ''),
                     "description": data_row.get('Objet', '')
                 }],
                 "activities_ids": [461],
@@ -559,12 +565,13 @@ class TunisieScraper:
                     self.logger.info(f"ℹ️ Offre inchangée: {reference}")
                     return False
             else:
+                # ✅ CORRECTION: Utiliser la date actuelle comme date de publication au lieu de la date du site
                 offre = OffreTunisie(
                     reference=reference,
                     description=description,
                     full_content=full_content,
                     promoter=data_row.get('Acheteur Public', ''),
-                    publicationDate=data_row.get('Date de publication', ''),
+                    publicationDate=datetime.now().strftime("%d-%m-%Y"),  # ✅ Date de lancement = date de publication
                     expirationDate=data_row.get('date_limite', ''),
                     url_source=data_row.get('Lien', ''),
                     sourceId=self.source_id,
@@ -801,7 +808,7 @@ class TunisieScraper:
             "batches": [{
                 "activitiesIds": offre.activities_ids or [461], 
                 "title": f"Lot 1: {offre.description}", 
-                "deposit": "10000"
+                "deposit": "0"
             }],
             "addresses": [{"countryId": self.pays_id, "regionId": 18}]
         }
@@ -963,6 +970,8 @@ def health():
 def scrape_tunisie():
     data = request.json
     date_filtre = data.get('date_filtre', "ALL")
+    if not date_filtre or date_filtre.strip() == "":
+        date_filtre = "ALL"
     max_pages = data.get('max_pages', None)
     
     result = scraper_tunisie.scraper_tunisie_and_send(date_filtre, max_pages)
@@ -1162,6 +1171,26 @@ def delete_offre(reference):
         "message": "Offre non trouvée", 
         "offre_ref": reference
     })
+
+@app.route('/api/clear-all', methods=['DELETE'])
+def clear_all():
+    """Supprime toutes les offres pending et validated"""
+    try:
+        pending_result = pending_tenders_collection.delete_many({})
+        validated_result = tenders_collection.delete_many({})
+
+        return jsonify({
+            "success": True,
+            "message": f"{pending_result.deleted_count} pending et {validated_result.deleted_count} validated supprimées",
+            "pending_deleted": pending_result.deleted_count,
+            "validated_deleted": validated_result.deleted_count
+        })
+    except Exception as e:
+        logger.error(f"Erreur clear-all: {str(e)}")
+        return jsonify({
+            "success": False,
+            "message": str(e)
+        }), 500
 
 @app.route('/api/clean-duplicates', methods=['POST'])
 def clean_duplicates():
