@@ -1724,7 +1724,7 @@ if __name__ == "__main__":
     print("🚀 SCRAPER TUNEPS - APPELS D'OFFRES (/portail/offres)")
     print("="*80)
     print(f"📍 URL cible: {scraper.BASE_URL}")
-    print(f"📂 MongoDB: {MONGO_URI}")
+    print(f"📂 Database: PostgreSQL - {DB_NAME} (Table: {TABLE_NAME})")
     print(f"🔧 API: {API_BASE_URL}")
     print(f"💰 Currency ID: {DEFAULT_CURRENCY_ID} (TND)")
     print(f"📰 Source ID: {DEFAULT_SOURCE_ID} (TUNEPS)")
