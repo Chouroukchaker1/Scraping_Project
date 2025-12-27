@@ -54,7 +54,7 @@ import warnings
 warnings.filterwarnings('ignore')
 load_dotenv()
 # Configuration MongoDB (même que BOAMP)
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/appel_offres-scrp")
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://mongodb:27017/appel_offres-scrp")
 DB_NAME = os.getenv("DB_NAME", "appel_offres-scrp")
 COLLECTION_NAME = "tenders"
 PENDING_COLLECTION_NAME = "pending_tenders"

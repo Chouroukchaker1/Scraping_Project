@@ -9,9 +9,8 @@ from flask_cors import CORS
 from bs4 import BeautifulSoup
 import re
 from dotenv import load_dotenv
-from pymongo import MongoClient
-from pymongo.errors import PyMongoError
-from bson import ObjectId
+import psycopg2
+from psycopg2.extras import execute_values, RealDictCursor
 import tenacity
 from dataclasses import dataclass, field, asdict
 from typing import Optional, List, Dict
@@ -30,11 +29,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# MongoDB Configuration
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/tunip")
-DB_NAME = os.getenv("DB_NAME", "tunip")
-COLLECTION_NAME = os.getenv("MEDIACONGO_COLLECTION_NAME", "tenders_mediacongo")
-PENDING_COLLECTION_NAME = os.getenv("MEDIACONGO_PENDING_COLLECTION_NAME", "pending_tenders_mediacongo")
+# PostgreSQL Configuration
+DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_PORT = os.getenv("DB_PORT", "5432")
+DB_NAME = os.getenv("DB_NAME", "tenders_db")
+DB_USER = os.getenv("DB_USER", "tender_user")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "tender_password_2024")
+TABLE_NAME = "tenders_mediacongo"
 
 # API Configuration
 API_BASE_URL = os.getenv("API_BASE_URL", "https://be.appeloffres.net/api")
@@ -53,20 +54,24 @@ DEFAULT_AVIS_ID = int(os.getenv("DEFAULT_AVIS_ID", "1"))
 OUTPUT_DIR = "output"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# MongoDB connection
+# PostgreSQL connection helper
+def get_db_connection():
+    """Retourne une connexion PostgreSQL"""
+    return psycopg2.connect(
+        host=DB_HOST,
+        port=DB_PORT,
+        database=DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD
+    )
+
+# Test connection
 try:
-    mongo_client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
-    mongo_client.admin.command('ping')
-    db = mongo_client[DB_NAME]
-    tenders_collection = db[COLLECTION_NAME]
-    pending_tenders_collection = db[PENDING_COLLECTION_NAME]
-    logger.info(f"✅ MongoDB connecté: {DB_NAME} (Collections: {COLLECTION_NAME}, {PENDING_COLLECTION_NAME})")
+    conn = get_db_connection()
+    conn.close()
+    logger.info(f"✅ PostgreSQL connecté: {DB_NAME} (Table: {TABLE_NAME})")
 except Exception as e:
-    logger.error(f"❌ ERREUR MongoDB: {e}")
-    mongo_client = None
-    db = None
-    tenders_collection = None
-    pending_tenders_collection = None
+    logger.error(f"❌ ERREUR PostgreSQL: {e}")
 
 @dataclass
 class OffreMediaCongo:
@@ -93,11 +98,14 @@ class OffreMediaCongo:
         return asdict(self)
 
 def serialize_document(doc):
+    """Convert PostgreSQL row to dict (already handled by RealDictCursor)"""
     if not doc:
         return doc
-    doc = doc.copy() if isinstance(doc, dict) else dict(doc)
-    if '_id' in doc and isinstance(doc['_id'], ObjectId):
-        doc['_id'] = str(doc['_id'])
+    if isinstance(doc, dict):
+        # Convert id to string for consistency with frontend
+        doc = doc.copy()
+        if 'id' in doc:
+            doc['_id'] = str(doc['id'])
     return doc
 
 def serialize_tenders(tenders_list):
@@ -127,18 +135,19 @@ class MediaCongoScraper:
         logger.info("✅ MediaCongoScraper initialisé")
 
     def _load_existing_offres(self):
-        """Charge les références existantes depuis MongoDB"""
+        """Charge les références existantes depuis PostgreSQL"""
         try:
-            if pending_tenders_collection is None:
-                return
+            conn = get_db_connection()
+            cursor = conn.cursor()
 
-            pending_docs = pending_tenders_collection.find({}, {"reference": 1})
-            for doc in pending_docs:
-                self.existing_offres_set.add(doc.get("reference"))
+            # Charger toutes les références existantes
+            cursor.execute(f"SELECT reference FROM {TABLE_NAME}")
+            for row in cursor.fetchall():
+                if row[0]:
+                    self.existing_offres_set.add(row[0])
 
-            validated_docs = tenders_collection.find({}, {"reference": 1})
-            for doc in validated_docs:
-                self.existing_offres_set.add(doc.get("reference"))
+            cursor.close()
+            conn.close()
 
             logger.info(f"📦 {len(self.existing_offres_set)} offres existantes chargées")
         except Exception as e:
@@ -225,7 +234,7 @@ class MediaCongoScraper:
             return 223472
 
     def scrape_mediacongo_jobs(self, start_date=None, end_date=None, limit=100):
-        """Scrape jobs from MediaCongo website (HTML scraping)"""
+        """Scrape jobs from MediaCongo website (HTML scraping with pagination)"""
         try:
             if not start_date:
                 start_date = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
@@ -234,131 +243,149 @@ class MediaCongoScraper:
 
             logger.info(f"🔍 Scraping MediaCongo website: {start_date} → {end_date}")
 
-            # Scraping de la page web MediaCongo emplois.html
-            web_url = "https://www.mediacongo.net/emplois.html"
+            offres = []
+            count = 0
 
-            try:
-                response = self.session.get(web_url, timeout=30)
+            # Boucle sur toutes les pages de pagination
+            for page_num in range(1, 10):  # Max 10 pages pour éviter boucle infinie
+                # URL de la page
+                if page_num == 1:
+                    web_url = "https://www.mediacongo.net/emplois.html"
+                else:
+                    web_url = f"https://www.mediacongo.net/emplois-search--tri-offres_recentes-page-{page_num}.html"
 
-                if response.status_code != 200:
-                    logger.error(f"❌ Web error: {response.status_code}")
-                    return []
+                logger.info(f"📄 Page {page_num}: {web_url}")
 
-                soup = BeautifulSoup(response.text, 'html.parser')
+                try:
+                    response = self.session.get(web_url, timeout=30)
 
-                # Trouver la table des offres d'emploi
-                table = soup.find('table')
-                if not table:
-                    logger.warning("⚠️ Aucune table trouvée sur la page")
-                    return []
+                    if response.status_code != 200:
+                        logger.warning(f"⚠️ Page {page_num}: Error {response.status_code}")
+                        break  # Arrêter la pagination
 
-                # Extraire les lignes (rows) - ignorer la première ligne qui est le header
-                rows = table.find_all('tr')[1:]  # Skip header row
-                logger.info(f"✅ {len(rows)} offres trouvées dans la table")
+                    soup = BeautifulSoup(response.text, 'html.parser')
 
-                offres = []
-                count = 0
-                for row in rows:
-                    if count >= limit:
-                        break
+                    # Trouver la table des offres d'emploi
+                    table = soup.find('table')
+                    if not table:
+                        logger.warning(f"⚠️ Page {page_num}: Aucune table trouvée")
+                        break  # Arrêter la pagination
 
-                    try:
-                        cells = row.find_all('td')
-                        if len(cells) < 5:
-                            continue
+                    # Extraire les lignes (rows) - ignorer la première ligne qui est le header
+                    rows = table.find_all('tr')[1:]  # Skip header row
 
-                        # Extraire les informations de chaque colonne
-                        # Colonne 1: Fonction (titre + ID)
-                        titre_cell = cells[1]
-                        link_elem = titre_cell.find('a')
-                        if not link_elem:
-                            continue
+                    if len(rows) == 0:
+                        logger.info(f"✅ Page {page_num}: Aucune offre (fin de pagination)")
+                        break  # Arrêter la pagination
 
-                        title = link_elem.find('strong')
-                        if not title:
-                            continue
-                        title = title.get_text(strip=True)
+                    logger.info(f"✅ Page {page_num}: {len(rows)} offres trouvées")
 
-                        # Extraire l'ID (format: OEM42731)
-                        id_elem = titre_cell.find('strong', class_='format_id_emploi')
-                        job_id = id_elem.get_text(strip=True) if id_elem else f"MC-{count+1}"
+                    for row in rows:
+                        if count >= limit:
+                            break
 
-                        # Vérifier si déjà extrait
-                        if job_id in self.existing_offres_set:
-                            continue
-
-                        # Extraire le lien
-                        job_url = link_elem.get('href', '')
-                        if job_url and not job_url.startswith('http'):
-                            job_url = f"https://www.mediacongo.net/{job_url}"
-
-                        # Colonne 2: Organisme (promoter)
-                        org_cell = cells[2]
-                        promoter = org_cell.get_text(strip=True) or "MediaCongo"
-
-                        # Colonne 3: Lieu (location)
-                        lieu_cell = cells[3]
-                        country = lieu_cell.get_text(strip=True) or "RDC"
-
-                        # Colonne 4: Date d'insertion
-                        date_cell = cells[4]
-                        date_str = date_cell.get_text(strip=True)
-
-                        # Parser la date (format: DD.MM.YYYY)
-                        pub_date_obj = None
                         try:
-                            date_parts = date_str.split('.')
-                            if len(date_parts) == 3:
-                                pub_date_obj = datetime(int(date_parts[2]), int(date_parts[1]), int(date_parts[0]), tzinfo=timezone.utc)
-                                pub_date = pub_date_obj.isoformat()
-                            else:
+                            cells = row.find_all('td')
+                            if len(cells) < 5:
+                                continue
+
+                            # Extraire les informations de chaque colonne
+                            # Colonne 1: Fonction (titre + ID)
+                            titre_cell = cells[1]
+                            link_elem = titre_cell.find('a')
+                            if not link_elem:
+                                continue
+
+                            title = link_elem.find('strong')
+                            if not title:
+                                continue
+                            title = title.get_text(strip=True)
+
+                            # Extraire l'ID (format: OEM42731)
+                            id_elem = titre_cell.find('strong', class_='format_id_emploi')
+                            job_id = id_elem.get_text(strip=True) if id_elem else f"MC-{count+1}"
+
+                            # Vérifier si déjà extrait
+                            if job_id in self.existing_offres_set:
+                                continue
+
+                            # Extraire le lien
+                            job_url = link_elem.get('href', '')
+                            if job_url and not job_url.startswith('http'):
+                                job_url = f"https://www.mediacongo.net/{job_url}"
+
+                            # Colonne 2: Organisme (promoter)
+                            org_cell = cells[2]
+                            promoter = org_cell.get_text(strip=True) or "MediaCongo"
+
+                            # Colonne 3: Lieu (location)
+                            lieu_cell = cells[3]
+                            country = lieu_cell.get_text(strip=True) or "RDC"
+
+                            # Colonne 4: Date d'insertion
+                            date_cell = cells[4]
+                            date_str = date_cell.get_text(strip=True)
+
+                            # Parser la date (format: DD.MM.YYYY)
+                            pub_date_obj = None
+                            try:
+                                date_parts = date_str.split('.')
+                                if len(date_parts) == 3:
+                                    pub_date_obj = datetime(int(date_parts[2]), int(date_parts[1]), int(date_parts[0]), tzinfo=timezone.utc)
+                                    pub_date = pub_date_obj.isoformat()
+                                else:
+                                    pub_date_obj = datetime.now(timezone.utc)
+                                    pub_date = pub_date_obj.isoformat()
+                            except:
                                 pub_date_obj = datetime.now(timezone.utc)
                                 pub_date = pub_date_obj.isoformat()
-                        except:
-                            pub_date_obj = datetime.now(timezone.utc)
-                            pub_date = pub_date_obj.isoformat()
 
-                        # Filtrer par date si spécifié
-                        if start_date and end_date and pub_date_obj:
-                            try:
-                                start_dt = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-                                end_dt = datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=timezone.utc) + timedelta(days=1)
+                            # Filtrer par date si spécifié
+                            if start_date and end_date and pub_date_obj:
+                                try:
+                                    start_dt = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                                    end_dt = datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=timezone.utc) + timedelta(days=1)
 
-                                if not (start_dt <= pub_date_obj < end_dt):
-                                    continue  # Skip offres en dehors de la plage de dates
-                            except:
-                                pass  # Si erreur de parsing, inclure l'offre quand même
+                                    if not (start_dt <= pub_date_obj < end_dt):
+                                        continue  # Skip offres en dehors de la plage de dates
+                                except:
+                                    pass  # Si erreur de parsing, inclure l'offre quand même
 
-                        # Date d'expiration: 30 jours après publication
-                        exp_date = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
+                            # Date d'expiration: 30 jours après publication
+                            exp_date = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
 
-                        offre = OffreMediaCongo(
-                            reference=job_id,
-                            description=title,
-                            description_fr=title[:500],
-                            publicationDate=pub_date,
-                            startBiddingDate=pub_date,
-                            expirationDate=exp_date,
-                            promoter=promoter,
-                            sourceId=self.default_source_id,
-                            externalUrl=job_url,
-                            country=country,
-                        )
+                            offre = OffreMediaCongo(
+                                reference=job_id,
+                                description=title,
+                                description_fr=title[:500],
+                                publicationDate=pub_date,
+                                startBiddingDate=pub_date,
+                                expirationDate=exp_date,
+                                promoter=promoter,
+                                sourceId=self.default_source_id,
+                                externalUrl=job_url,
+                                country=country,
+                            )
 
-                        offres.append(offre)
-                        count += 1
-                        logger.info(f"  ✓ {job_id}: {title[:60]}... | {promoter}")
+                            offres.append(offre)
+                            count += 1
+                            logger.info(f"  ✓ {job_id}: {title[:60]}... | {promoter}")
 
-                    except Exception as e:
-                        logger.debug(f"Erreur extraction offre: {e}")
-                        continue
+                        except Exception as e:
+                            logger.debug(f"Erreur extraction offre: {e}")
+                            continue
 
-                logger.info(f"✅ {len(offres)} offres extraites avec succès")
-                return offres
+                    # Si on a atteint la limite, arrêter la pagination
+                    if count >= limit:
+                        logger.info(f"✅ Limite de {limit} offres atteinte, arrêt pagination")
+                        break
 
-            except Exception as e:
-                logger.error(f"❌ Erreur scraping web: {e}")
-                return []
+                except Exception as e:
+                    logger.error(f"❌ Page {page_num}: Erreur scraping: {e}")
+                    continue  # Passer à la page suivante
+
+            logger.info(f"✅ {len(offres)} offres extraites avec succès sur {page_num} pages")
+            return offres
 
         except Exception as e:
             logger.error(f"❌ Erreur scraping: {e}")
@@ -429,30 +456,63 @@ class MediaCongoScraper:
             return datetime.now(timezone.utc).isoformat()
 
     def save_to_pending(self, offre: OffreMediaCongo):
-        """Save offer to pending collection"""
+        """Save offer to PostgreSQL"""
         try:
             logger.info(f"DEBUG: Tentative sauvegarde {offre.reference}")
-
-            if pending_tenders_collection is None:
-                logger.error("❌ MongoDB non connecté")
-                return False
-
-            logger.info(f"DEBUG: Vérif doublon - ref={offre.reference}, in_set={offre.reference in self.existing_offres_set}, set_size={len(self.existing_offres_set)}")
 
             if offre.reference in self.existing_offres_set:
                 logger.info(f"⏭️ Doublon: {offre.reference}")
                 return False
 
-            tender_dict = offre.to_dict()
-            result = pending_tenders_collection.insert_one(tender_dict)
+            conn = get_db_connection()
+            cursor = conn.cursor()
 
-            if result.inserted_id:
+            tender_dict = offre.to_dict()
+
+            # Insert dans PostgreSQL
+            query = f"""
+                INSERT INTO {TABLE_NAME}
+                (reference, description, description_fr, publication_date, start_bidding_date,
+                 expiration_date, promoter, source_id, avis_id, external_url, montant,
+                 category, country, nature, status, created_at, updated_at, fetched_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (reference) DO NOTHING
+            """
+
+            cursor.execute(query, (
+                tender_dict.get('reference'),
+                tender_dict.get('description'),
+                tender_dict.get('description_fr'),
+                tender_dict.get('publicationDate'),
+                tender_dict.get('startBiddingDate'),
+                tender_dict.get('expirationDate'),
+                tender_dict.get('promoter'),
+                tender_dict.get('sourceId'),
+                tender_dict.get('avisId'),
+                tender_dict.get('externalUrl'),
+                tender_dict.get('montant'),
+                tender_dict.get('category'),
+                tender_dict.get('country'),
+                tender_dict.get('nature'),
+                tender_dict.get('status', 'pending'),
+                tender_dict.get('createdAt'),
+                tender_dict.get('updatedAt'),
+                tender_dict.get('fetchedAt')
+            ))
+
+            inserted = cursor.rowcount > 0
+            conn.commit()
+            cursor.close()
+            conn.close()
+
+            if inserted:
                 self.existing_offres_set.add(offre.reference)
                 logger.info(f"💾 Sauvegardé: {offre.reference}")
                 return True
+            else:
+                logger.debug(f"⏭️ Déjà existant (ON CONFLICT): {offre.reference}")
+                return False
 
-            logger.warning(f"⚠️ Pas d'inserted_id pour {offre.reference}")
-            return False
         except Exception as e:
             logger.error(f"❌ Erreur save {offre.reference}: {e}")
             import traceback
@@ -463,23 +523,31 @@ class MediaCongoScraper:
     def post_tender_to_database(self, offre: OffreMediaCongo) -> dict:
         """Validate and send to API"""
         try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+
             # Check if already validated
-            existing = tenders_collection.find_one({"reference": offre.reference})
+            cursor.execute(f"SELECT id FROM {TABLE_NAME} WHERE reference = %s AND status = 'validated'", (offre.reference,))
+            existing = cursor.fetchone()
             if existing:
+                cursor.close()
+                conn.close()
                 return {"success": False, "message": "Déjà validée"}
 
-            # Save to validated collection
-            tender_dict = offre.to_dict()
-            tender_dict["status"] = "validated"
-            tender_dict["validationDate"] = datetime.now(timezone.utc).isoformat()
+            # Update status to validated
+            validation_date = datetime.now(timezone.utc).isoformat()
+            cursor.execute(
+                f"UPDATE {TABLE_NAME} SET status = %s, validation_date = %s WHERE reference = %s",
+                ('validated', validation_date, offre.reference)
+            )
 
-            result = tenders_collection.insert_one(tender_dict)
+            if cursor.rowcount == 0:
+                cursor.close()
+                conn.close()
+                return {"success": False, "message": "Offre non trouvée"}
 
-            if not result.inserted_id:
-                return {"success": False, "message": "Erreur MongoDB"}
-
-            # Delete from pending
-            pending_tenders_collection.delete_one({"reference": offre.reference})
+            record_id = cursor.lastrowid
+            conn.commit()
 
             # Send to API
             api_success = False
@@ -502,10 +570,11 @@ class MediaCongoScraper:
                         response_data = response.json()
                         api_id = response_data.get("id")
                         api_success = True
-                        tenders_collection.update_one(
-                            {"_id": result.inserted_id},
-                            {"$set": {"api_id": api_id}}
+                        cursor.execute(
+                            f"UPDATE {TABLE_NAME} SET api_id = %s WHERE reference = %s",
+                            (api_id, offre.reference)
                         )
+                        conn.commit()
                         logger.info(f"✅ API OK: {offre.reference} - ID: {api_id}")
                     else:
                         error_detail = f"Status {response.status_code}"
@@ -513,7 +582,10 @@ class MediaCongoScraper:
             except Exception as e:
                 error_detail = str(e)[:200]
 
-            message = f"Validée (MongoDB + API ID: {api_id})" if api_success else f"Validée MongoDB mais échec API: {error_detail}"
+            cursor.close()
+            conn.close()
+
+            message = f"Validée (PostgreSQL + API ID: {api_id})" if api_success else f"Validée PostgreSQL mais échec API: {error_detail}"
 
             return {
                 "success": True,
@@ -569,10 +641,17 @@ CORS(app)
 
 @app.route('/api/health', methods=['GET'])
 def health():
+    try:
+        conn = get_db_connection()
+        conn.close()
+        db_status = "connected"
+    except:
+        db_status = "disconnected"
+
     return jsonify({
         "status": "ok",
         "service": "MediaCongo Web Scraper",
-        "mongodb": "connected" if mongo_client else "disconnected"
+        "database": db_status
     })
 
 @app.route('/api/scrape', methods=['POST'])
@@ -612,13 +691,24 @@ def get_pending():
     try:
         page = int(request.args.get('page', 1))
         limit = int(request.args.get('limit', 50))
-        skip = (page - 1) * limit
+        offset = (page - 1) * limit
 
-        total = pending_tenders_collection.count_documents({"status": "pending"})
-        offres = list(pending_tenders_collection.find({"status": "pending"})
-                     .sort("createdAt", -1)
-                     .skip(skip)
-                     .limit(limit))
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Count total
+        cursor.execute(f"SELECT COUNT(*) FROM {TABLE_NAME} WHERE status = 'pending'")
+        total = cursor.fetchone()['count']
+
+        # Get paginated results
+        cursor.execute(
+            f"SELECT * FROM {TABLE_NAME} WHERE status = 'pending' ORDER BY created_at DESC LIMIT %s OFFSET %s",
+            (limit, offset)
+        )
+        offres = cursor.fetchall()
+
+        cursor.close()
+        conn.close()
 
         return jsonify({
             "success": True,
@@ -638,14 +728,37 @@ def get_pending():
 def validate_offre(reference):
     """Validate an offer"""
     try:
-        pending_doc = pending_tenders_collection.find_one({"reference": reference, "status": "pending"})
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        cursor.execute(f"SELECT * FROM {TABLE_NAME} WHERE reference = %s AND status = 'pending'", (reference,))
+        pending_doc = cursor.fetchone()
+
+        cursor.close()
+        conn.close()
 
         if not pending_doc:
             return jsonify({"success": False, "message": "Offre non trouvée"}), 404
 
-        pending_doc.pop('_id', None)
-        offre = OffreMediaCongo(**pending_doc)
+        # Convert snake_case to camelCase for dataclass
+        offre_dict = {
+            'reference': pending_doc.get('reference'),
+            'description': pending_doc.get('description'),
+            'description_fr': pending_doc.get('description_fr'),
+            'publicationDate': pending_doc.get('publication_date'),
+            'startBiddingDate': pending_doc.get('start_bidding_date'),
+            'expirationDate': pending_doc.get('expiration_date'),
+            'promoter': pending_doc.get('promoter'),
+            'sourceId': pending_doc.get('source_id'),
+            'avisId': pending_doc.get('avis_id'),
+            'externalUrl': pending_doc.get('external_url'),
+            'montant': pending_doc.get('montant'),
+            'category': pending_doc.get('category'),
+            'country': pending_doc.get('country'),
+            'nature': pending_doc.get('nature'),
+        }
 
+        offre = OffreMediaCongo(**offre_dict)
         result = scraper.post_tender_to_database(offre)
 
         return jsonify(result)
@@ -658,9 +771,17 @@ def validate_offre(reference):
 def delete_offre(reference):
     """Delete a pending offer"""
     try:
-        result = pending_tenders_collection.delete_one({"reference": reference})
+        conn = get_db_connection()
+        cursor = conn.cursor()
 
-        if result.deleted_count > 0:
+        cursor.execute(f"DELETE FROM {TABLE_NAME} WHERE reference = %s", (reference,))
+        deleted_count = cursor.rowcount
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        if deleted_count > 0:
             scraper.existing_offres_set.discard(reference)
             return jsonify({"success": True, "message": "Offre supprimée"})
 
@@ -674,14 +795,23 @@ def delete_offre(reference):
 def delete_all():
     """Delete all pending offers"""
     try:
-        result = pending_tenders_collection.delete_many({"status": "pending"})
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(f"DELETE FROM {TABLE_NAME} WHERE status = 'pending'")
+        deleted_count = cursor.rowcount
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+
         scraper.existing_offres_set.clear()
         scraper._load_existing_offres()
 
         return jsonify({
             "success": True,
-            "message": f"{result.deleted_count} offres supprimées",
-            "count": result.deleted_count
+            "message": f"{deleted_count} offres supprimées",
+            "count": deleted_count
         })
     except Exception as e:
         logger.error(f"❌ Erreur delete_all: {e}")
@@ -693,13 +823,24 @@ def get_validated():
     try:
         page = int(request.args.get('page', 1))
         limit = int(request.args.get('limit', 50))
-        skip = (page - 1) * limit
+        offset = (page - 1) * limit
 
-        total = tenders_collection.count_documents({})
-        offres = list(tenders_collection.find({})
-                     .sort("validationDate", -1)
-                     .skip(skip)
-                     .limit(limit))
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Count total
+        cursor.execute(f"SELECT COUNT(*) FROM {TABLE_NAME} WHERE status = 'validated'")
+        total = cursor.fetchone()['count']
+
+        # Get paginated results
+        cursor.execute(
+            f"SELECT * FROM {TABLE_NAME} WHERE status = 'validated' ORDER BY validation_date DESC LIMIT %s OFFSET %s",
+            (limit, offset)
+        )
+        offres = cursor.fetchall()
+
+        cursor.close()
+        conn.close()
 
         return jsonify({
             "success": True,

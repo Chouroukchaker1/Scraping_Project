@@ -36,8 +36,8 @@ import traceback
 from dataclasses import dataclass, field, asdict, fields
 from typing import Optional, List, Dict, Tuple
 import base64
-from pymongo import MongoClient
-from pymongo.errors import PyMongoError
+import psycopg2
+from psycopg2.extras import execute_values, RealDictCursor
 from pdf2image import convert_from_path
 from PIL import Image
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -56,11 +56,13 @@ load_dotenv()
 # CONFIGURATION
 # ================================================
 
-# Configuration MongoDB
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/marmoucha")
-DB_NAME = "marmoucha"
-COLLECTION_NAME = "tenders_marmoucha"
-PENDING_COLLECTION_NAME = "pending_tenders_marmoucha"
+# Configuration PostgreSQL
+DB_HOST = os.getenv("DB_HOST", "postgres")
+DB_PORT = os.getenv("DB_PORT", "5432")
+DB_NAME = os.getenv("DB_NAME", "tenders_db")
+DB_USER = os.getenv("DB_USER", "tender_user")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "tender_password_2024")
+TABLE_NAME = "tenders_tuneps"
 
 # Configuration API AppelOffres
 API_BASE_URL = "https://be.appeloffres.net/api"
@@ -112,18 +114,144 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Connexion MongoDB
-mongo_client = MongoClient(MONGO_URI)
-db = mongo_client[DB_NAME]
-tenders_collection = db[COLLECTION_NAME]
-pending_tenders_collection = db[PENDING_COLLECTION_NAME]
+# Fonctions helper PostgreSQL
+def get_db_connection():
+    """Créer une connexion PostgreSQL"""
+    return psycopg2.connect(
+        host=DB_HOST,
+        port=DB_PORT,
+        database=DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD
+    )
 
+# Test de connexion PostgreSQL
 try:
-    db.command('ping')
-    logger.info("MongoDB connecte avec succes")
-except PyMongoError as e:
-    logger.error(f"Erreur MongoDB: {e}")
+    conn = get_db_connection()
+    conn.close()
+    logger.info(f"✅ PostgreSQL connecté: {DB_NAME} (Table: {TABLE_NAME})")
+except Exception as e:
+    logger.error(f"❌ Erreur connexion PostgreSQL: {e}")
     raise
+
+# Fonctions helper PostgreSQL pour remplacer MongoDB
+def pg_find_all(status=None):
+    """Équivalent de collection.find()"""
+    conn = get_db_connection()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    if status:
+        cursor.execute(f"SELECT * FROM {TABLE_NAME} WHERE status = %s ORDER BY created_at DESC", (status,))
+    else:
+        cursor.execute(f"SELECT * FROM {TABLE_NAME} ORDER BY created_at DESC")
+    results = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return [dict(row) for row in results]
+
+def pg_find_one(reference):
+    """Équivalent de collection.find_one()"""
+    conn = get_db_connection()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    cursor.execute(f"SELECT * FROM {TABLE_NAME} WHERE reference = %s LIMIT 1", (reference,))
+    result = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    return dict(result) if result else None
+
+def pg_insert_one(data):
+    """Équivalent de collection.insert_one()"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    columns = ['reference', 'title', 'description', 'full_content', 'publication_date',
+               'expiration_date', 'opening_date', 'region', 'promoter', 'source_id',
+               'avis_id', 'pays_id', 'currency_id', 'nature', 'external_url', 'pdf_url',
+               'cautionnement', 'montant', 'batches', 'status', 'extraction_date']
+
+    values = [
+        data.get('reference', ''),
+        data.get('description', '')[:500] if data.get('description') else '',  # title
+        data.get('description', ''),
+        data.get('full_content', ''),
+        data.get('publicationDate'),
+        data.get('expirationDate'),
+        data.get('ouverture_offres'),
+        data.get('region_id'),
+        data.get('promoter', ''),
+        data.get('sourceId', DEFAULT_SOURCE_ID),
+        data.get('avisId', DEFAULT_AVIS_ID),
+        data.get('paysId', DEFAULT_PAYS_ID),
+        data.get('currencyId', DEFAULT_CURRENCY_ID),
+        data.get('nature', 'public'),
+        data.get('url_source', ''),
+        data.get('cahier_charge_url', ''),
+        data.get('cautionnement_provisoire', '0'),
+        data.get('montant', ''),
+        json.dumps(data.get('lots', [])),
+        data.get('status', 'pending'),
+        data.get('extractionDate')
+    ]
+
+    placeholders = ', '.join(['%s'] * len(columns))
+    columns_str = ', '.join(columns)
+
+    query = f"""
+        INSERT INTO {TABLE_NAME} ({columns_str})
+        VALUES ({placeholders})
+        ON CONFLICT (reference) DO NOTHING
+        RETURNING id
+    """
+
+    try:
+        cursor.execute(query, values)
+        result_id = cursor.fetchone()
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return {'inserted_id': result_id[0] if result_id else None, 'acknowledged': True}
+    except Exception as e:
+        conn.rollback()
+        cursor.close()
+        conn.close()
+        logger.error(f"Erreur insert: {e}")
+        return {'inserted_id': None, 'acknowledged': False}
+
+def pg_update_one(reference, update_data):
+    """Équivalent de collection.update_one()"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    set_clause = "api_id = %s"
+    values = [update_data.get('$set', {}).get('api_id')]
+    values.append(reference)
+
+    query = f"UPDATE {TABLE_NAME} SET {set_clause} WHERE reference = %s"
+    cursor.execute(query, values)
+    modified_count = cursor.rowcount
+    conn.commit()
+    cursor.close()
+    conn.close()
+    return {'modified_count': modified_count}
+
+def pg_delete_one(reference, status=None):
+    """Équivalent de collection.delete_one()"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    if status:
+        cursor.execute(f"DELETE FROM {TABLE_NAME} WHERE reference = %s AND status = %s", (reference, status))
+    else:
+        cursor.execute(f"DELETE FROM {TABLE_NAME} WHERE reference = %s", (reference,))
+    deleted_count = cursor.rowcount
+    conn.commit()
+    cursor.close()
+    conn.close()
+    return {'deleted_count': deleted_count}
+
+def pg_replace_one(reference, data):
+    """Équivalent de collection.replace_one()"""
+    # Pour PostgreSQL, on fait un UPDATE complet
+    pg_delete_one(reference)
+    return pg_insert_one(data)
 
 # IDs de régions
 REGION_IDS = {
@@ -321,36 +449,36 @@ class TUNEPSScraper:
     def load_validated_refs(self):
         """Charge les références des offres validées"""
         try:
-            validated_docs = list(tenders_collection.find({"status": "active"}).sort("createdAt", -1))
+            validated_docs = pg_find_all(status="active")
             self.validated_refs = {doc.get("reference", "") for doc in validated_docs if doc.get("reference")}
             self.logger.info(f"{len(self.validated_refs)} references validees chargees")
-        except PyMongoError as e:
+        except Exception as e:
             self.logger.error(f"Erreur chargement validees: {e}")
     
     def _load_pending_set(self):
         """Reconstruit le set des pendings depuis DB"""
         try:
-            pending_docs = list(pending_tenders_collection.find({"status": "pending"}).sort("createdAt", -1))
+            pending_docs = pg_find_all(status="pending")
             self.pending_set = set()
             for doc in pending_docs:
                 ref = doc.get("reference", "")
                 desc_hash = hash(doc.get("description", ""))
                 self.pending_set.add((ref, desc_hash))
             self.logger.info(f"{len(self.pending_set)} doublons pendings charges")
-        except PyMongoError as e:
+        except Exception as e:
             self.logger.error(f"Erreur chargement pending set: {e}")
     
     def load_pending_offers(self):
-        """Charge les offres en attente depuis MongoDB"""
+        """Charge les offres en attente depuis PostgreSQL"""
         try:
-            pending_docs = list(pending_tenders_collection.find({"status": "pending"}).sort("createdAt", -1))
+            pending_docs = pg_find_all(status="pending")
             self.offres_cache = []
             for doc in pending_docs:
                 clean_doc = {k: v for k, v in doc.items() if k in {f.name for f in fields(OffreTuneps)}}
                 offre = OffreTuneps(**clean_doc)
                 self.offres_cache.append(offre)
             self.logger.info(f"{len(self.offres_cache)} offres pending chargees depuis DB")
-        except PyMongoError as e:
+        except Exception as e:
             self.logger.error(f"Erreur chargement pending: {e}")
     
     def _init_driver(self):
@@ -737,7 +865,7 @@ class TUNEPSScraper:
     
     @tenacity.retry(stop=tenacity.stop_after_attempt(5), wait=tenacity.wait_exponential(multiplier=2, min=4, max=20))
     def post_tender_to_database(self, offre) -> dict:
-        existing = tenders_collection.find_one({"reference": offre.reference})
+        existing = pg_find_one(offre.reference)
         if existing:
             self.logger.info(f"Offre {offre.reference} existe deja en base validee")
             return {
@@ -745,17 +873,17 @@ class TUNEPSScraper:
                 "message": "Offre deja validee en base",
                 "offre_ref": offre.reference
             }
-        
+
         tender_dict = offre.to_dict()
         tender_dict["status"] = "active"
         tender_dict["validationDate"] = datetime.now().isoformat()
-        
+
         try:
-            result = tenders_collection.insert_one(tender_dict)
-            
-            if result.inserted_id:
-                pending_deleted = pending_tenders_collection.delete_one({"reference": offre.reference})
-                if pending_deleted.deleted_count > 0:
+            result = pg_insert_one(tender_dict)
+
+            if result['inserted_id']:
+                pending_deleted = pg_delete_one(offre.reference, status="pending")
+                if pending_deleted['deleted_count'] > 0:
                     to_remove = [(r, h) for r, h in self.pending_set if r == offre.reference]
                     for tup in to_remove:
                         self.pending_set.discard(tup)
@@ -793,10 +921,7 @@ class TUNEPSScraper:
                             api_message = f"Envoi API reussi - ID: {api_id}"
                             self.logger.info(f"ENVOI API REUSSI: {offre.reference} - ID API: {api_id}")
                             
-                            tenders_collection.update_one(
-                                {"_id": result.inserted_id},
-                                {"$set": {"api_id": api_id}}
-                            )
+                            pg_update_one(offre.reference, {"$set": {"api_id": api_id}})
                         else:
                             api_message = f"Echec envoi API: Status {response.status_code} - {response.text}"
                             self.logger.error(f"ENVOI API ECHOUE pour {offre.reference}: Status {response.status_code} - {response.text}")
@@ -816,16 +941,16 @@ class TUNEPSScraper:
                     "success": True,
                     "message": message,
                     "offre_ref": offre.reference,
-                    "mongo_id": str(result.inserted_id),
+                    "db_id": str(result['inserted_id']),
                     "api_id": api_id,
                     "api_success": api_success,
                     "api_message": api_message
                 }
             else:
-                raise PyMongoError("Insertion echouee sans ID genere")
+                raise Exception("Insertion echouee sans ID genere")
                 
-        except PyMongoError as e:
-            self.logger.error(f"Erreur MongoDB: {e}")
+        except Exception as e:
+            self.logger.error(f"Erreur PostgreSQL: {e}")
             return {
                 "success": False,
                 "message": f"Erreur MongoDB: {str(e)}",
@@ -848,8 +973,8 @@ class TUNEPSScraper:
                 self.logger.warning(f"Doublon detecte pour {offre.reference} - Offre deja validee (cache), skip pending")
                 return False
 
-            # Vérification DIRECTE dans MongoDB pour être sûr (important si validation depuis Node.js)
-            exists_in_validated = tenders_collection.find_one({"reference": offre.reference})
+            # Vérification DIRECTE dans PostgreSQL pour être sûr (important si validation depuis Node.js)
+            exists_in_validated = pg_find_one(offre.reference)
             if exists_in_validated:
                 self.logger.warning(f"Doublon detecte pour {offre.reference} - Offre deja validee (DB check), skip pending")
                 # Mettre à jour le cache local
@@ -859,13 +984,13 @@ class TUNEPSScraper:
             if (offre.reference, desc_hash) in self.pending_set:
                 self.logger.warning(f"Doublon detecte pour {offre.reference} - Offre deja en pending, skip")
                 return False
-            
+
             tender_dict = offre.to_dict()
             tender_dict["status"] = "pending"
-            
-            result = pending_tenders_collection.insert_one(tender_dict)
-            
-            if result.inserted_id:
+
+            result = pg_insert_one(tender_dict)
+
+            if result['inserted_id']:
                 self.pending_set.add((offre.reference, desc_hash))
                 
                 if offre.image_filename:
@@ -888,34 +1013,34 @@ class TUNEPSScraper:
     
     def delete_pending_offre(self, reference: str) -> bool:
         try:
-            result = pending_tenders_collection.delete_one({"reference": reference, "status": "pending"})
-            
-            if result.deleted_count > 0:
+            result = pg_delete_one(reference, status="pending")
+
+            if result['deleted_count'] > 0:
                 self.offres_cache = [o for o in self.offres_cache if o.reference != reference]
                 to_remove = [(r, h) for r, h in self.pending_set if r == reference]
                 for tup in to_remove:
                     self.pending_set.discard(tup)
-                
+
                 self.logger.info(f"Offre supprimee: {reference} (DB, cache et set)")
                 return True
-            
+
             return False
-            
+
         except Exception as e:
             self.logger.error(f"Erreur delete pending: {e}")
             return False
-    
+
     def delete_validated_offre(self, reference: str) -> bool:
         try:
-            result = tenders_collection.delete_one({"reference": reference, "status": "active"})
-            
-            if result.deleted_count > 0:
+            result = pg_delete_one(reference, status="active")
+
+            if result['deleted_count'] > 0:
                 self.validated_refs.discard(reference)
                 self.logger.info(f"Offre validee supprimee: {reference} (DB et set)")
                 return True
-            
+
             return False
-            
+
         except Exception as e:
             self.logger.error(f"Erreur delete validated: {e}")
             return False
@@ -2277,23 +2402,24 @@ class TUNEPSScraper:
                     if hasattr(offre, key):
                         setattr(offre, key, value)
                 
-                pending_tenders_collection.replace_one({"reference": reference}, offre.to_dict())
+                pg_replace_one(reference, offre.to_dict())
                 self.logger.info(f"Offre {reference} mise a jour")
                 return True
-        
+
         return False
-    
+
     def get_tenders_from_db(self, limit=100):
         try:
-            tenders = list(tenders_collection.find({"status": "active"}).limit(limit).sort("createdAt", -1))
+            all_tenders = pg_find_all(status="active")
+            tenders = all_tenders[:limit] if len(all_tenders) > limit else all_tenders
             for tender in tenders:
-                tender["_id"] = str(tender["_id"])
-                tender["extractionDate"] = tender.get("extractionDate", "")
-                tender["validationDate"] = tender.get("validationDate", "")
-            
+                tender["_id"] = str(tender.get("id", ""))
+                tender["extractionDate"] = tender.get("extraction_date", "")
+                tender["validationDate"] = tender.get("validation_date", "")
+
             return tenders
-            
-        except PyMongoError as e:
+
+        except Exception as e:
             self.logger.error(f"Erreur recuperation DB: {e}")
             return []
 
@@ -2395,31 +2521,31 @@ def status():
 @app.route('/api/validate/<reference>', methods=['POST'])
 def validate_offre(reference):
     logger.info(f"Route /api/validate appelee pour {reference}")
-    
-    existing_active = tenders_collection.find_one({"reference": reference, "status": "active"})
-    if existing_active:
+
+    existing_active = pg_find_one(reference)
+    if existing_active and existing_active.get('status') == 'active':
         return jsonify({
             "success": False,
             "message": "Offre deja validee en base",
             "offre_ref": reference
         })
-    
+
     for offre in scraper.offres_cache[:]:
         if offre.reference == reference:
             result = scraper.post_tender_to_database(offre)
             if result['success']:
                 scraper.offres_cache.remove(offre)
             return jsonify(result)
-    
-    pending_doc = pending_tenders_collection.find_one({"reference": reference, "status": "pending"})
-    if pending_doc:
+
+    pending_doc = pg_find_one(reference)
+    if pending_doc and pending_doc.get('status') == 'pending':
         offre = OffreTuneps(**pending_doc)
         result = scraper.post_tender_to_database(offre)
         if result['success']:
             scraper.offres_cache = [o for o in scraper.offres_cache if o.reference != reference]
-            pending_tenders_collection.delete_one({"reference": reference})
+            pg_delete_one(reference)
         return jsonify(result)
-    
+
     return jsonify({
         "success": False,
         "message": "Offre non trouvee",

@@ -38,8 +38,8 @@ import traceback
 from dataclasses import dataclass, field, asdict, fields
 from typing import Optional, List, Dict, Tuple
 import base64
-from pymongo import MongoClient
-from pymongo.errors import PyMongoError
+import psycopg2
+from psycopg2.extras import execute_values, RealDictCursor
 from pdf2image import convert_from_path
 from PIL import Image
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -53,10 +53,13 @@ from dotenv import load_dotenv
 warnings.filterwarnings('ignore')
 load_dotenv()
 # ===== CONFIGURATION =====
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/marmouch")
-DB_NAME = "marmouchbd"
-COLLECTION_NAME = "tenders_marmouch"
-PENDING_COLLECTION_NAME = "pending_tenders_marmouch_bd"
+# Configuration PostgreSQL
+DB_HOST = os.getenv("DB_HOST", "postgres")
+DB_PORT = os.getenv("DB_PORT", "5432")
+DB_NAME = os.getenv("DB_NAME", "tenders_db")
+DB_USER = os.getenv("DB_USER", "tender_user")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "tender_password_2024")
+TABLE_NAME = "tenders_tuneps_ao"
 # API Configuration
 API_BASE_URL = os.getenv("API_BASE_URL", "https://be.appeloffres.net/api")
 FILES_ENDPOINT = f"{API_BASE_URL}/files/tender"
@@ -100,17 +103,144 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
-# MongoDB
-mongo_client = MongoClient(MONGO_URI)
-db = mongo_client[DB_NAME]
-tenders_collection = db[COLLECTION_NAME]
-pending_tenders_collection = db[PENDING_COLLECTION_NAME]
+
+# ================================================
+# POSTGRESQL HELPER FUNCTIONS
+# ================================================
+
+def get_db_connection():
+    """Créer une connexion PostgreSQL"""
+    return psycopg2.connect(
+        host=DB_HOST,
+        port=DB_PORT,
+        database=DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD
+    )
+
+# Test connexion PostgreSQL
 try:
-    db.command('ping')
-    logger.info("MongoDB connecté avec succès")
-except PyMongoError as e:
-    logger.error(f"Erreur MongoDB: {e}")
+    conn = get_db_connection()
+    conn.close()
+    logger.info(f"✅ PostgreSQL connecté: {DB_NAME} (Table: {TABLE_NAME})")
+except Exception as e:
+    logger.error(f"❌ Erreur connexion PostgreSQL: {e}")
     raise
+
+def get_all_tenders(status=None):
+    """Récupère toutes les offres depuis PostgreSQL"""
+    conn = get_db_connection()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        if status:
+            cursor.execute(f"SELECT * FROM {TABLE_NAME} WHERE status = %s ORDER BY created_at DESC", (status,))
+        else:
+            cursor.execute(f"SELECT * FROM {TABLE_NAME} ORDER BY created_at DESC")
+        return cursor.fetchall()
+    finally:
+        cursor.close()
+        conn.close()
+
+def get_existing_references():
+    """Récupère l'ensemble des références existantes"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(f"SELECT reference FROM {TABLE_NAME}")
+        return {row[0] for row in cursor.fetchall() if row[0]}
+    finally:
+        cursor.close()
+        conn.close()
+
+def insert_tender(tender_dict):
+    """Insère une offre en PostgreSQL"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        fields = ['reference', 'title', 'description', 'full_content', 'publication_date',
+                  'expiration_date', 'opening_date', 'region', 'promoter', 'source_id',
+                  'avis_id', 'pays_id', 'currency_id', 'nature', 'external_url', 'pdf_url',
+                  'cautionnement', 'montant', 'batches', 'status', 'extraction_date']
+
+        values = [
+            tender_dict.get('reference'),
+            tender_dict.get('description', '')[:500] if tender_dict.get('description') else None,
+            tender_dict.get('description'),
+            tender_dict.get('full_content'),
+            tender_dict.get('publicationDate'),
+            tender_dict.get('expirationDate'),
+            tender_dict.get('startBiddingDate'),
+            tender_dict.get('region'),
+            tender_dict.get('promoter'),
+            int(tender_dict.get('sourceId', DEFAULT_SOURCE_ID)) if tender_dict.get('sourceId') else int(DEFAULT_SOURCE_ID),
+            int(tender_dict.get('avisId', DEFAULT_AVIS_ID)) if tender_dict.get('avisId') else int(DEFAULT_AVIS_ID),
+            int(tender_dict.get('paysId', DEFAULT_PAYS_ID)) if tender_dict.get('paysId') else int(DEFAULT_PAYS_ID),
+            int(tender_dict.get('currencyId', DEFAULT_CURRENCY_ID)) if tender_dict.get('currencyId') else int(DEFAULT_CURRENCY_ID),
+            tender_dict.get('nature', 'public'),
+            tender_dict.get('external_url'),
+            tender_dict.get('pdf_url'),
+            tender_dict.get('cautionnement'),
+            tender_dict.get('montant'),
+            json.dumps(tender_dict.get('lots', [])) if tender_dict.get('lots') else None,
+            tender_dict.get('status', 'pending'),
+            tender_dict.get('extractionDate')
+        ]
+
+        placeholders = ','.join(['%s'] * len(fields))
+        query = f"""
+            INSERT INTO {TABLE_NAME} ({','.join(fields)})
+            VALUES ({placeholders})
+            ON CONFLICT (reference) DO NOTHING
+            RETURNING id
+        """
+        cursor.execute(query, values)
+        result = cursor.fetchone()
+        conn.commit()
+        return result[0] if result else None
+    finally:
+        cursor.close()
+        conn.close()
+
+def update_tender_api_id(reference, api_id):
+    """Met à jour l'api_id d'une offre"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            f"UPDATE {TABLE_NAME} SET api_id = %s WHERE reference = %s",
+            (api_id, reference)
+        )
+        conn.commit()
+    finally:
+        cursor.close()
+        conn.close()
+
+def delete_tender(reference):
+    """Supprime une offre"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(f"DELETE FROM {TABLE_NAME} WHERE reference = %s", (reference,))
+        deleted_count = cursor.rowcount
+        conn.commit()
+        return deleted_count
+    finally:
+        cursor.close()
+        conn.close()
+
+def update_tender_status(reference, status):
+    """Met à jour le statut d'une offre"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            f"UPDATE {TABLE_NAME} SET status = %s WHERE reference = %s",
+            (status, reference)
+        )
+        conn.commit()
+    finally:
+        cursor.close()
+        conn.close()
 # Régions Tunisie
 REGION_IDS = {
     "Ariana": 1, "Béja": 2, "Ben Arous": 4, "Bizerte": 5, "Gabès": 6,
@@ -256,25 +386,25 @@ class TUNEPSScraper:
             self.logger.error(f"Poppler non fonctionnel: {e}")
     def load_validated_refs(self):
         try:
-            validated_docs = list(tenders_collection.find({"status": "active"}).sort("createdAt", -1))
+            validated_docs = get_all_tenders(status="active")
             self.validated_refs = {doc.get("reference", "") for doc in validated_docs if doc.get("reference")}
             self.logger.info(f"{len(self.validated_refs)} références validées chargées")
-        except PyMongoError as e:
+        except Exception as e:
             self.logger.error(f"Erreur chargement validées: {e}")
     def _load_pending_set(self):
         try:
-            pending_docs = list(pending_tenders_collection.find({"status": "pending"}).sort("createdAt", -1))
+            pending_docs = get_all_tenders(status="pending")
             self.pending_set = set()
             for doc in pending_docs:
                 ref = doc.get("reference", "")
                 desc_hash = hash(doc.get("description", ""))
                 self.pending_set.add((ref, desc_hash))
             self.logger.info(f"{len(self.pending_set)} pending chargés")
-        except PyMongoError as e:
+        except Exception as e:
             self.logger.error(f"Erreur chargement pending set: {e}")
     def load_pending_offers(self):
         try:
-            pending_docs = list(pending_tenders_collection.find({"status": "pending"}).sort("createdAt", -1))
+            pending_docs = get_all_tenders(status="pending")
             self.offres_cache = []
             for doc in pending_docs:
                 clean_doc = {k: v for k, v in doc.items() if k in {f.name for f in fields(OffreTuneps)}}
@@ -681,9 +811,9 @@ class TUNEPSScraper:
                 return False
             tender_dict = offre.to_dict()
             tender_dict["status"] = "pending"
-            result = pending_tenders_collection.insert_one(tender_dict)
-         
-            if result.inserted_id:
+            result_id = insert_tender(tender_dict)
+
+            if result_id:
                 self.pending_set.add((offre.reference, desc_hash))
                 self.logger.info(f"✅ Offre sauvegardée en pending: {offre.reference}")
                 return True
@@ -816,18 +946,19 @@ class TUNEPSScraper:
         return filtered_payload
     @tenacity.retry(stop=tenacity.stop_after_attempt(5), wait=tenacity.wait_exponential(multiplier=2, min=4, max=20))
     def post_tender_to_database(self, offre) -> dict:
-        existing = tenders_collection.find_one({"reference": offre.reference})
-        if existing:
+        existing_refs = get_existing_references()
+        if offre.reference in existing_refs:
             self.logger.info(f"Offre {offre.reference} existe déjà")
             return {"success": False, "message": "Offre déjà validée", "offre_ref": offre.reference}
         tender_dict = offre.to_dict()
         tender_dict["status"] = "active"
         tender_dict["validationDate"] = datetime.now().isoformat()
+        tender_dict["status"] = "active"
         try:
-            result = tenders_collection.insert_one(tender_dict)
-            if result.inserted_id:
-                pending_deleted = pending_tenders_collection.delete_one({"reference": offre.reference})
-                if pending_deleted.deleted_count > 0:
+            result_id = insert_tender(tender_dict)
+            if result_id:
+                pending_deleted = delete_tender(offre.reference)
+                if pending_deleted > 0:
                     to_remove = [(r, h) for r, h in self.pending_set if r == offre.reference]
                     for tup in to_remove:
                         self.pending_set.discard(tup)
@@ -856,11 +987,8 @@ class TUNEPSScraper:
                             api_success = True
                             api_message = f"Envoi API réussi - ID: {api_id}"
                             self.logger.info(f"✅ ENVOI API RÉUSSI: {offre.reference} - ID: {api_id}")
-                         
-                            tenders_collection.update_one(
-                                {"_id": result.inserted_id},
-                                {"$set": {"api_id": api_id}}
-                            )
+
+                            update_tender_api_id(offre.reference, api_id)
                         else:
                             api_message = f"Échec API: {response.status_code} - {response.text}"
                             self.logger.error(f"❌ ENVOI API ÉCHOUÉ: {api_message}")
@@ -881,8 +1009,8 @@ class TUNEPSScraper:
                     "api_success": api_success
                 }
             else:
-                raise PyMongoError("Insertion échouée")
-        except PyMongoError as e:
+                raise Exception("Insertion échouée")
+        except Exception as e:
             self.logger.error(f"Erreur MongoDB: {e}")
             return {"success": False, "message": f"Erreur MongoDB: {str(e)}", "offre_ref": offre.reference}
     # ⭐ FONCTION AMÉLIORÉE: Extraction robuste de l'ID
@@ -1374,14 +1502,16 @@ class TUNEPSScraper:
                 for key, value in updated_data.items():
                     if hasattr(offre, key):
                         setattr(offre, key, value)
-                pending_tenders_collection.replace_one({"reference": reference}, offre.to_dict())
+                # Met à jour l'offre en PostgreSQL
+                delete_tender(reference)
+                insert_tender(offre.to_dict())
                 self.logger.info(f"Offre {reference} mise à jour")
                 return True
         return False
     def delete_pending_offre(self, reference: str) -> bool:
         try:
-            result = pending_tenders_collection.delete_one({"reference": reference, "status": "pending"})
-            if result.deleted_count > 0:
+            deleted_count = delete_tender(reference)
+            if deleted_count > 0:
                 self.offres_cache = [o for o in self.offres_cache if o.reference != reference]
                 to_remove = [(r, h) for r, h in self.pending_set if r == reference]
                 for tup in to_remove:
@@ -1394,8 +1524,8 @@ class TUNEPSScraper:
             return False
     def delete_validated_offre(self, reference: str) -> bool:
         try:
-            result = tenders_collection.delete_one({"reference": reference, "status": "active"})
-            if result.deleted_count > 0:
+            deleted_count = delete_tender(reference)
+            if deleted_count > 0:
                 self.validated_refs.discard(reference)
                 self.logger.info(f"Offre validée supprimée: {reference}")
                 return True
@@ -1405,9 +1535,11 @@ class TUNEPSScraper:
             return False
     def get_tenders_from_db(self, limit=100):
         try:
-            tenders = list(tenders_collection.find({"status": "active"}).limit(limit).sort("createdAt", -1))
+            tenders = get_all_tenders(status="active")
+            if limit:
+                tenders = tenders[:limit]
             for tender in tenders:
-                tender["_id"] = str(tender["_id"])
+                tender["_id"] = str(tender.get("id", ""))
                 tender["extractionDate"] = tender.get("extractionDate", "")
                 tender["validationDate"] = tender.get("validationDate", "")
             return tenders
@@ -1514,8 +1646,9 @@ def status():
 @app.route('/api/validate/<path:reference>', methods=['POST'])
 def validate_offre(reference):
     logger.info(f"✅ Validation: {reference}")
- 
-    existing_active = tenders_collection.find_one({"reference": reference, "status": "active"})
+
+    active_tenders = get_all_tenders(status="active")
+    existing_active = next((t for t in active_tenders if t.get("reference") == reference), None)
     if existing_active:
         return jsonify({"success": False, "message": "Offre déjà validée", "offre_ref": reference})
     for offre in scraper.offres_cache[:]:
@@ -1524,13 +1657,14 @@ def validate_offre(reference):
             if result['success']:
                 scraper.offres_cache.remove(offre)
             return jsonify(result)
-    pending_doc = pending_tenders_collection.find_one({"reference": reference, "status": "pending"})
+    pending_tenders = get_all_tenders(status="pending")
+    pending_doc = next((t for t in pending_tenders if t.get("reference") == reference), None)
     if pending_doc:
         offre = OffreTuneps(**pending_doc)
         result = scraper.post_tender_to_database(offre)
         if result['success']:
             scraper.offres_cache = [o for o in scraper.offres_cache if o.reference != reference]
-            pending_tenders_collection.delete_one({"reference": reference})
+            delete_tender(reference)
         return jsonify(result)
     return jsonify({"success": False, "message": "Offre non trouvée", "offre_ref": reference})
 @app.route('/api/update/<path:reference>', methods=['POST'])

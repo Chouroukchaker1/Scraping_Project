@@ -38,21 +38,19 @@ import traceback
 from dataclasses import dataclass, field, asdict
 from typing import Optional, List, Dict, Tuple, Set
 import base64
-import psycopg2
-from psycopg2.extras import execute_values, RealDictCursor
+from pymongo import MongoClient
+from pymongo.errors import PyMongoError
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 from difflib import SequenceMatcher
 from collections import defaultdict
 warnings.filterwarnings('ignore')
 
-# Configuration PostgreSQL
-DB_HOST = os.getenv("DB_HOST", "postgres")
-DB_PORT = os.getenv("DB_PORT", "5432")
-DB_NAME = os.getenv("DB_NAME", "tenders_db")
-DB_USER = os.getenv("DB_USER", "tender_user")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "tender_password_2024")
-TABLE_NAME = "tenders_boamp"
+# Configuration MongoDB - Nouvelle base pour France Marchés
+MONGO_URI = "mongodb://mongodb:27017/oumaima_francemarches"
+DB_NAME = "oumaima_francemarches"
+COLLECTION_NAME = "tend"
+PENDING_COLLECTION_NAME = "pendintend"
 
 # Configuration API
 API_BASE_URL = "https://be.appeloffres.net/api"
@@ -79,161 +77,6 @@ REACT_BUILD_DIR = "react-frontend/build"
 for directory in [PDF_DIR, IMAGES_DIR, OUTPUT_DIR, TEMPLATES_DIR, REACT_BUILD_DIR]:
     if not os.path.exists(directory):
         os.makedirs(directory, exist_ok=True)
-
-# ================================================
-# POSTGRESQL HELPER FUNCTIONS
-# ================================================
-
-def get_db_connection():
-    """Créer une connexion PostgreSQL"""
-    return psycopg2.connect(
-        host=DB_HOST,
-        port=DB_PORT,
-        database=DB_NAME,
-        user=DB_USER,
-        password=DB_PASSWORD
-    )
-
-def get_all_tenders(status=None):
-    """Récupère toutes les offres depuis PostgreSQL"""
-    conn = get_db_connection()
-    cursor = conn.cursor(cursor_factory=RealDictCursor)
-    try:
-        if status:
-            cursor.execute(f"SELECT * FROM {TABLE_NAME} WHERE status = %s ORDER BY created_at DESC", (status,))
-        else:
-            cursor.execute(f"SELECT * FROM {TABLE_NAME} ORDER BY created_at DESC")
-        return cursor.fetchall()
-    finally:
-        cursor.close()
-        conn.close()
-
-def get_existing_references():
-    """Récupère l'ensemble des références existantes"""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    try:
-        cursor.execute(f"SELECT reference FROM {TABLE_NAME}")
-        return {row[0] for row in cursor.fetchall() if row[0]}
-    finally:
-        cursor.close()
-        conn.close()
-
-def insert_tender(tender_dict):
-    """Insère une offre en PostgreSQL"""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    try:
-        query = f"""
-            INSERT INTO {TABLE_NAME} (reference, description, description_fr, publication_date,
-                                      expiration_date, promoter, source_id, avis_id, external_url,
-                                      montant, nature, country, status)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (reference) DO NOTHING
-            RETURNING id
-        """
-        values = (
-            tender_dict.get('reference'),
-            tender_dict.get('description'),
-            tender_dict.get('description_fr'),
-            tender_dict.get('publicationDate') or tender_dict.get('publication_date'),
-            tender_dict.get('expirationDate') or tender_dict.get('expiration_date'),
-            tender_dict.get('promoter'),
-            tender_dict.get('sourceId') or tender_dict.get('source_id'),
-            tender_dict.get('avisId') or tender_dict.get('avis_id'),
-            tender_dict.get('externalUrl') or tender_dict.get('external_url'),
-            tender_dict.get('montant'),
-            tender_dict.get('nature', 'public'),
-            tender_dict.get('country', 'France'),
-            tender_dict.get('status', 'pending')
-        )
-        cursor.execute(query, values)
-        result = cursor.fetchone()
-        conn.commit()
-        return result[0] if result else None
-    finally:
-        cursor.close()
-        conn.close()
-
-def delete_tender(reference):
-    """Supprime une offre"""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    try:
-        cursor.execute(f"DELETE FROM {TABLE_NAME} WHERE reference = %s", (reference,))
-        deleted_count = cursor.rowcount
-        conn.commit()
-        return deleted_count
-    finally:
-        cursor.close()
-        conn.close()
-
-def update_tender(reference, update_dict):
-    """Met à jour une offre"""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    try:
-        set_clauses = []
-        values = []
-        for key, value in update_dict.items():
-            set_clauses.append(f"{key} = %s")
-            values.append(value)
-        values.append(reference)
-        query = f"UPDATE {TABLE_NAME} SET {', '.join(set_clauses)} WHERE reference = %s"
-        cursor.execute(query, values)
-        updated_count = cursor.rowcount
-        conn.commit()
-        return updated_count
-    finally:
-        cursor.close()
-        conn.close()
-
-def count_tenders(status=None):
-    """Compte les offres"""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    try:
-        if status:
-            cursor.execute(f"SELECT COUNT(*) FROM {TABLE_NAME} WHERE status = %s", (status,))
-        else:
-            cursor.execute(f"SELECT COUNT(*) FROM {TABLE_NAME}")
-        return cursor.fetchone()[0]
-    finally:
-        cursor.close()
-        conn.close()
-
-def get_tender_by_reference(reference):
-    """Récupère une offre par référence"""
-    conn = get_db_connection()
-    cursor = conn.cursor(cursor_factory=RealDictCursor)
-    try:
-        cursor.execute(f"SELECT * FROM {TABLE_NAME} WHERE reference = %s", (reference,))
-        return cursor.fetchone()
-    finally:
-        cursor.close()
-        conn.close()
-
-def delete_all_pending():
-    """Supprime toutes les offres pending"""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    try:
-        cursor.execute(f"DELETE FROM {TABLE_NAME} WHERE status = 'pending'")
-        deleted_count = cursor.rowcount
-        conn.commit()
-        return deleted_count
-    finally:
-        cursor.close()
-        conn.close()
-
-# Test connexion PostgreSQL
-try:
-    conn = get_db_connection()
-    conn.close()
-    print(f"✅ PostgreSQL connecté: {DB_NAME} (Table: {TABLE_NAME})")
-except Exception as e:
-    print(f"❌ Erreur connexion PostgreSQL: {e}")
-    raise
 
 INDEX_HTML_PATH = os.path.join(REACT_BUILD_DIR, 'index.html')
 if not os.path.exists(INDEX_HTML_PATH):
@@ -494,7 +337,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# PostgreSQL used instead of MongoDB
+mongo_client = MongoClient(MONGO_URI)
+db = mongo_client[DB_NAME]
+tenders_collection = db[COLLECTION_NAME]
+pending_tenders_collection = db[PENDING_COLLECTION_NAME]
 
 def capitalize_first_word(text: str) -> str:
     """Capitalise le premier mot d'une chaîne"""
@@ -628,26 +474,26 @@ class FranceMarchesScraperAll:
 
     def _load_validated_references(self):
         try:
-            validated_docs = get_all_tenders(status="active")
-            self.validated_references_set = {doc["reference"] for doc in validated_docs if doc.get("reference")}
+            validated_docs = tenders_collection.find({"status": "active"}, {"reference": 1})
+            self.validated_references_set = {doc["reference"] for doc in validated_docs}
             self.logger.info(f"✅ {len(self.validated_references_set)} références validées")
-        except Exception as e:
+        except PyMongoError as e:
             self.logger.error(f"Erreur: {e}")
 
     def _load_existing_offres_set(self):
         try:
-            pending_docs = get_all_tenders(status="pending")
+            pending_docs = list(pending_tenders_collection.find({"status": "pending"}).sort("createdAt", -1))
             for doc in pending_docs:
                 ref = doc.get("reference", "")
                 desc_hash = hash(doc.get("description", ""))
                 self.existing_offres_set.add((ref, desc_hash))
             self.logger.info(f"✅ {len(self.existing_offres_set)} doublons pending")
-        except Exception as e:
+        except PyMongoError as e:
             self.logger.error(f"Erreur: {e}")
 
     def load_pending_offers(self):
         try:
-            pending_docs = get_all_tenders(status="pending")
+            pending_docs = list(pending_tenders_collection.find({"status": "pending"}).sort("createdAt", -1))
             self.offres_cache = []
             for doc in pending_docs:
                 doc_without_id = {k: v for k, v in doc.items() if k != '_id'}
@@ -656,7 +502,7 @@ class FranceMarchesScraperAll:
                 desc_hash = hash(offre.description)
                 self.existing_offres_set.add((offre.reference, desc_hash))
             self.logger.info(f"✅ {len(self.offres_cache)} offres pending")
-        except Exception as e:
+        except PyMongoError as e:
             self.logger.error(f"Erreur: {e}")
 
     def __del__(self):
@@ -1071,9 +917,9 @@ class FranceMarchesScraperAll:
 
             tender_dict = offre.to_dict()
             tender_dict["status"] = "pending"
-            inserted_id = insert_tender(tender_dict)
+            result = pending_tenders_collection.insert_one(tender_dict)
 
-            if inserted_id:
+            if result.inserted_id:
                 self.existing_offres_set.add((offre.reference, desc_hash))
                 return True
             return False
@@ -1083,8 +929,8 @@ class FranceMarchesScraperAll:
 
     def delete_pending_offre(self, reference: str) -> bool:
         try:
-            deleted_count = delete_tender(reference)
-            if deleted_count > 0:
+            result = pending_tenders_collection.delete_one({"reference": reference, "status": "pending"})
+            if result.deleted_count > 0:
                 self.offres_cache = [o for o in self.offres_cache if o.reference != reference]
                 for ref, desc_hash in list(self.existing_offres_set):
                     if ref == reference:
@@ -1161,7 +1007,7 @@ class FranceMarchesScraperAll:
 
     @tenacity.retry(stop=tenacity.stop_after_attempt(3), wait=tenacity.wait_exponential(multiplier=1, min=4, max=10))
     def post_tender_to_database(self, offre) -> dict:
-        existing = get_tender_by_reference(offre.reference)
+        existing = tenders_collection.find_one({"reference": offre.reference})
         if existing:
             return {"success": False, "message": "Déjà validée", "offre_ref": offre.reference}
 
@@ -1170,9 +1016,9 @@ class FranceMarchesScraperAll:
         tender_dict["validationDate"] = datetime.now().isoformat()
 
         try:
-            inserted_id = insert_tender(tender_dict)
-            if inserted_id:
-                delete_tender(offre.reference)
+            result = tenders_collection.insert_one(tender_dict)
+            if result.inserted_id:
+                pending_tenders_collection.delete_one({"reference": offre.reference})
                 self.validated_references_set.add(offre.reference)
 
             api_success = False
@@ -1189,7 +1035,7 @@ class FranceMarchesScraperAll:
                         response_data = response.json()
                         api_id = response_data.get("id")
                         api_success = True
-                        update_tender(offre.reference, {"external_api_id": api_id})
+                        tenders_collection.update_one({"_id": result.inserted_id}, {"$set": {"api_id": api_id}})
                         self.logger.info(f"✅ API OK: {offre.reference} - ID: {api_id}")
                     else:
                         error_text = response.text[:500]
@@ -1216,8 +1062,8 @@ class FranceMarchesScraperAll:
 
 def nettoyer_base_pending():
     try:
-        deleted_count = delete_all_pending()
-        print(f"🗑️ {deleted_count} offres supprimées")
+        result = pending_tenders_collection.delete_many({"status": "pending"})
+        print(f"🗑️ {result.deleted_count} offres supprimées")
         return True
     except Exception as e:
         print(f"❌ Erreur: {e}")
@@ -1266,14 +1112,14 @@ def validate_offre(reference):
                 scraper.offres_cache.remove(offre)
             return jsonify(result)
 
-    pending_doc = get_tender_by_reference(reference)
-    if pending_doc and pending_doc.get('status') == 'pending':
-        doc_without_id = {k: v for k, v in pending_doc.items() if k not in ['_id', 'id']}
+    pending_doc = pending_tenders_collection.find_one({"reference": reference, "status": "pending"})
+    if pending_doc:
+        doc_without_id = {k: v for k, v in pending_doc.items() if k != '_id'}
         offre = OffreBase(**doc_without_id)
         result = scraper.post_tender_to_database(offre)
         if result['success']:
             scraper.offres_cache = [o for o in scraper.offres_cache if o.reference != reference]
-            delete_tender(reference)
+            pending_tenders_collection.delete_one({"reference": reference})
         return jsonify(result)
 
     return jsonify({"success": False, "message": "Non trouvée", "offre_ref": reference})
@@ -1294,19 +1140,19 @@ def get_pending():
 @app.route('/api/clean_pending', methods=['POST'])
 def clean_pending():
     try:
-        deleted_count = delete_all_pending()
+        result = pending_tenders_collection.delete_many({"status": "pending"})
         scraper.offres_cache = []
         scraper.existing_offres_set = set()
         scraper._load_existing_offres_set()
-        return jsonify({"success": True, "message": f"{deleted_count} supprimées", "count": deleted_count})
+        return jsonify({"success": True, "message": f"{result.deleted_count} supprimées", "count": result.deleted_count})
     except Exception as e:
         return jsonify({"success": False, "message": str(e)})
 
 @app.route('/api/stats', methods=['GET'])
 def get_stats():
     try:
-        total_pending = count_tenders(status="pending")
-        total_validated = count_tenders(status="active")
+        total_pending = pending_tenders_collection.count_documents({"status": "pending"})
+        total_validated = tenders_collection.count_documents({"status": "active"})
         return jsonify({
             "success": True,
             "stats": {
@@ -1320,51 +1166,6 @@ def get_stats():
     except Exception as e:
         logger.error(f"❌ Erreur get_stats: {e}")
         return jsonify({"success": False, "message": str(e)}), 500
-
-@app.route('/api/health', methods=['GET'])
-def health_check():
-    """Endpoint de vérification de santé du serveur"""
-    try:
-        # Vérifier la connexion PostgreSQL
-        conn = get_db_connection()
-        if conn:
-            conn.close()
-            db_status = "connected"
-        else:
-            db_status = "disconnected"
-
-        return jsonify({
-            "success": True,
-            "status": "running",
-            "database": db_status,
-            "port": 5003,
-            "service": "BOAMP Scraper"
-        })
-    except Exception as e:
-        return jsonify({
-            "success": False,
-            "status": "error",
-            "message": str(e)
-        }), 500
-
-@app.route('/api/test', methods=['GET'])
-def test_endpoint():
-    """Endpoint de test simple"""
-    return jsonify({
-        "success": True,
-        "message": "BOAMP API is running",
-        "version": "2.0.0",
-        "database": "PostgreSQL"
-    })
-
-@app.route('/api/keywords', methods=['GET'])
-def get_keywords():
-    """Retourne la liste des mots-clés (vide pour BOAMP car extraction complète)"""
-    return jsonify({
-        "success": True,
-        "keywords": [],
-        "message": "BOAMP scraper extrait TOUS les AO sans filtrage par mots-clés"
-    })
 
 if __name__ == "__main__":
     print("=" * 80)

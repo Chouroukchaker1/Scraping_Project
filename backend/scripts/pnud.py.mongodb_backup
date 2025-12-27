@@ -1452,9 +1452,9 @@ class PNUDScraper:
             
             if response.status_code in [200, 201]:
                 logger.info(f"✅ Offre {offre.reference} postée avec succès")
-                if True:
-                    insert_tender({**asdict(offre), "status": "active"})
-                    delete_tender(offre.reference)
+                if self.mongo_connected:
+                    self.tenders_collection.insert_one(asdict(offre))
+                    self.pending_tenders_collection.delete_one({"reference": offre.reference})
                     self.existing_offres_set.add(offre.reference)
                     logger.info(f"💾 {offre.reference} sauvegardé dans MongoDB")
                 return True
@@ -1473,7 +1473,9 @@ class PNUDScraper:
     def close(self):
         self.session.close()
         self.session_appeloffres.close()
-                logger.info("🔒 Sessions fermées")
+        if self.mongo_connected and self.mongo_client:
+            self.mongo_client.close()
+        logger.info("🔒 Sessions fermées")
 
 # ============================================================================
 # FLASK API - SECTION COMPLÈTE
@@ -1514,8 +1516,11 @@ def get_pending_tenders():
         limit = int(request.args.get('limit', 10))
         skip = (page - 1) * limit
         
-                total = count_tenders(status="pending")
-        cursor = get_all_tenders(status="pending")[skip:skip+limit]
+        if not scraper.mongo_connected:
+            return jsonify({"status": "error", "message": "MongoDB non connecté"}), 500
+        
+        total = scraper.pending_tenders_collection.count_documents({})
+        cursor = scraper.pending_tenders_collection.find({}).sort("fetchedAt", -1).skip(skip).limit(limit)
         raw_tenders = list(cursor)
         tenders = serialize_tenders(raw_tenders)
         
@@ -1537,7 +1542,10 @@ def get_pending_tenders():
 def get_tenders():
     """Récupère les tenders validés"""
     try:
-                cursor = get_all_tenders(status="active")[:50]
+        if not scraper.mongo_connected:
+            return jsonify({"status": "error", "message": "MongoDB non connecté"}), 500
+        
+        cursor = scraper.tenders_collection.find({}).sort("fetchedAt", -1).limit(50)
         raw_tenders = list(cursor)
         tenders = serialize_tenders(raw_tenders)
         
@@ -1554,7 +1562,10 @@ def get_tenders():
 def validate_tender(reference):
     """Valide une offre en attente"""
     try:
-                pending_doc = get_tender_by_reference(reference)
+        if not scraper.mongo_connected:
+            return jsonify({"success": False, "message": "MongoDB non connecté"}), 500
+        
+        pending_doc = scraper.pending_tenders_collection.find_one({"reference": reference})
         if not pending_doc:
             return jsonify({"success": False, "message": "Offre non trouvée en attente"}), 404
         
@@ -1594,13 +1605,18 @@ def validate_tender(reference):
 def update_tender(reference):
     """Met à jour une offre en attente"""
     try:
-                data = request.json or {}
+        if not scraper.mongo_connected:
+            return jsonify({"success": False, "message": "MongoDB non connecté"}), 500
+        
+        data = request.json or {}
         country_id = data.get('country_id')
         
         if country_id is None:
             return jsonify({"success": False, "message": "country_id requis"}), 400
         
-        result = update_tender(reference, update_data)}}
+        result = scraper.pending_tenders_collection.update_one(
+            {"reference": reference},
+            {"$set": {"country_id": int(country_id)}}
         )
         
         if result.modified_count > 0:
@@ -1615,7 +1631,10 @@ def update_tender(reference):
 def delete_tender(reference):
     """Supprime une offre en attente"""
     try:
-                result = delete_tender(reference)
+        if not scraper.mongo_connected:
+            return jsonify({"success": False, "message": "MongoDB non connecté"}), 500
+
+        result = scraper.pending_tenders_collection.delete_one({"reference": reference})
 
         if result.deleted_count > 0:
             return jsonify({"success": True, "message": "Offre supprimée avec succès"})
@@ -1629,7 +1648,10 @@ def delete_tender(reference):
 def delete_all_tenders():
     """Supprime toutes les offres en attente"""
     try:
-                result = delete_all_pending()
+        if not scraper.mongo_connected:
+            return jsonify({"success": False, "message": "MongoDB non connecté"}), 500
+
+        result = scraper.pending_tenders_collection.delete_many({})
 
         logger.info(f"🗑️ {result.deleted_count} offres supprimées")
         return jsonify({
@@ -1648,7 +1670,10 @@ def post_pending_tenders():
         posted_count = 0
         failed_count = 0
         
-                pending_docs = list(get_all_tenders(status="pending"))
+        if not scraper.mongo_connected:
+            return jsonify({"status": "error", "message": "MongoDB non connecté"}), 500
+        
+        pending_docs = list(scraper.pending_tenders_collection.find({}))
         logger.info(f"📦 {len(pending_docs)} offres en attente à poster")
         
         for doc in pending_docs:
@@ -1693,7 +1718,7 @@ def post_pending_tenders():
                 logger.error(f"❌ Erreur post {doc.get('reference', 'unknown')}: {e}")
                 failed_count += 1
         
-        remaining = count_tenders(status="pending")
+        remaining = scraper.pending_tenders_collection.count_documents({})
         
         return jsonify({
             "status": "success",
@@ -1710,13 +1735,13 @@ def post_pending_tenders():
 def health_check():
     """Vérifie l'état du service"""
     try:
-        pending_count = count_tenders(status="pending") if True else 0
-        validated_count = count_tenders(status="active") if True else 0
+        pending_count = scraper.pending_tenders_collection.count_documents({}) if scraper.mongo_connected else 0
+        validated_count = scraper.tenders_collection.count_documents({}) if scraper.mongo_connected else 0
         last_login_str = scraper.last_login_time.strftime('%Y-%m-%d %H:%M:%S UTC') if scraper.last_login_time else 'None'
         
         return jsonify({
             "status": "healthy",
-            "mongodb_connected": True,
+            "mongodb_connected": scraper.mongo_connected,
             "existing_tenders": len(scraper.existing_offres_set),
             "pending_tenders": pending_count,
             "validated_tenders": validated_count,
@@ -1788,10 +1813,10 @@ if __name__ == "__main__":
         logger.info("🚀 DÉMARRAGE DU SCRAPER UNDP - VERSION 8.0")
         logger.info("="*80)
         logger.info(f"📡 API Base URL: {API_BASE_URL}")
-        logger.info(f"🗄️ MongoDB: {'✅ Connecté' if True else '❌ Non connecté'}")
+        logger.info(f"🗄️ MongoDB: {'✅ Connecté' if scraper.mongo_connected else '❌ Non connecté'}")
         logger.info(f"📦 Offres existantes: {len(scraper.existing_offres_set)}")
         
-        pending_count = count_tenders(status="pending") if True else 0
+        pending_count = scraper.pending_tenders_collection.count_documents({}) if scraper.mongo_connected else 0
         logger.info(f"⏳ Offres en attente: {pending_count}")
         logger.info(f"🏢 Promoteurs cachés: {len(scraper.promoters_cache)}")
         logger.info(f"🌐 Traducteur: {'✅ Disponible (multi-langues → FR)' if scraper.translator else '❌ Non disponible'}")

@@ -15,11 +15,13 @@ const ScrapeForm = ({ onScrape, loading, error }) => {
   });
 
   const handleSubmit = (e) => {
+    console.log('📝 Form submitted!', dates);
     e.preventDefault();
     if (dates.start && dates.end && new Date(dates.start) > new Date(dates.end)) {
       alert("La date de début ne peut pas être postérieure à la date de fin.");
       return;
     }
+    console.log('✅ Validation OK, appel de onScrape');
     onScrape(dates);
   };
 
@@ -160,6 +162,25 @@ const ScrapeForm = ({ onScrape, loading, error }) => {
         }}>
           ℹ️ Source ID: 337 | Compte: oumayma.dahmani@tunipages.tn | Scraping HTML (API nécessite appname approuvé)
         </div>
+
+        {loading && (
+          <div style={{
+            background: '#DBEAFE',
+            borderRadius: '10px',
+            padding: '1rem',
+            marginBottom: '1.5rem',
+            border: '2px solid #60A5FA',
+            fontSize: '0.95rem',
+            color: '#1E40AF',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.75rem',
+            fontWeight: '600'
+          }}>
+            <RefreshCw size={20} className="spin" />
+            ⏳ Scraping en cours... Veuillez patienter (cela peut prendre jusqu'à 30 secondes)
+          </div>
+        )}
 
         <button
           type="submit"
@@ -711,6 +732,7 @@ function MediaCongoPage() {
   };
 
   const handleScrape = async (dates) => {
+    console.log('🚀 handleScrape appelé avec:', dates);
     setLoading(true);
     setError('');
     setSuccess('');
@@ -722,19 +744,28 @@ function MediaCongoPage() {
         limit: dates.limit
       };
 
+      console.log('📤 Envoi de la requête POST à:', `${API_BASE}/scrape`);
+      console.log('📦 Payload:', payload);
+
       const response = await axios.post(`${API_BASE}/scrape`, payload);
 
+      console.log('✅ Réponse reçue:', response.data);
+
       if (response.data.success) {
-        setSuccess(`✅ ${response.data.message} - ${response.data.saved} offres ajoutées`);
+        const msg = response.data.saved > 0
+          ? `✅ Succès! ${response.data.saved} nouvelles offres ajoutées sur ${response.data.total} trouvées`
+          : `ℹ️ Scraping terminé: Aucune nouvelle offre (${response.data.total || 0} offres trouvées mais déjà en base)`;
+        setSuccess(msg);
         setTimeout(() => {
           fetchPending();
           fetchValidated();
         }, 1000);
       } else {
-        setError(response.data.message || 'Échec du scraping');
+        setError(`❌ ${response.data.message || 'Échec du scraping'}`);
       }
     } catch (err) {
-      setError(err.response?.data?.message || err.message || 'Erreur de connexion');
+      console.error('❌ Erreur scraping:', err);
+      setError(`❌ Erreur: ${err.response?.data?.message || err.message || 'Impossible de se connecter au serveur'}`);
     } finally {
       setLoading(false);
     }
@@ -878,7 +909,7 @@ function MediaCongoPage() {
         )}
 
         <StatsSection stats={stats} />
-        <ScrapeForm onScrape={handleScrape} loading={loading} error="" />
+        <ScrapeForm onScrape={handleScrape} loading={loading} error={error} />
 
         <div style={{
           background: 'white',

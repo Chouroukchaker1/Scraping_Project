@@ -9,9 +9,8 @@ from flask_cors import CORS
 from bs4 import BeautifulSoup
 import re
 from dotenv import load_dotenv
-from pymongo import MongoClient
-from pymongo.errors import PyMongoError
-from bson import ObjectId
+import psycopg2
+from psycopg2.extras import execute_values, RealDictCursor
 import tenacity
 from dataclasses import dataclass, field, asdict
 from typing import Optional, List, Dict
@@ -30,11 +29,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# MongoDB Configuration
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/tunip")
-DB_NAME = os.getenv("DB_NAME", "tunip")
-COLLECTION_NAME = os.getenv("RELIEF_COLLECTION_NAME", "tenders_relief")
-PENDING_COLLECTION_NAME = os.getenv("RELIEF_PENDING_COLLECTION_NAME", "pending_tenders_relief")
+# PostgreSQL Configuration
+DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_PORT = os.getenv("DB_PORT", "5432")
+DB_NAME = os.getenv("DB_NAME", "tenders_db")
+DB_USER = os.getenv("DB_USER", "tender_user")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "tender_password_2024")
+TABLE_NAME = "tenders_relief"
 
 # API Configuration
 API_BASE_URL = os.getenv("API_BASE_URL", "https://be.appeloffres.net/api")
@@ -53,20 +54,24 @@ DEFAULT_AVIS_ID = int(os.getenv("DEFAULT_AVIS_ID", "1"))
 OUTPUT_DIR = "output"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# MongoDB connection
+# PostgreSQL connection helper
+def get_db_connection():
+    """Retourne une connexion PostgreSQL"""
+    return psycopg2.connect(
+        host=DB_HOST,
+        port=DB_PORT,
+        database=DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD
+    )
+
+# Test connection
 try:
-    mongo_client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
-    mongo_client.admin.command('ping')
-    db = mongo_client[DB_NAME]
-    tenders_collection = db[COLLECTION_NAME]
-    pending_tenders_collection = db[PENDING_COLLECTION_NAME]
-    logger.info(f"✅ MongoDB connecté: {DB_NAME} (Collections: {COLLECTION_NAME}, {PENDING_COLLECTION_NAME})")
+    conn = get_db_connection()
+    conn.close()
+    logger.info(f"✅ PostgreSQL connecté: {DB_NAME} (Table: {TABLE_NAME})")
 except Exception as e:
-    logger.error(f"❌ ERREUR MongoDB: {e}")
-    mongo_client = None
-    db = None
-    tenders_collection = None
-    pending_tenders_collection = None
+    logger.error(f"❌ ERREUR PostgreSQL: {e}")
 
 @dataclass
 class OffreRelief:
@@ -93,11 +98,14 @@ class OffreRelief:
         return asdict(self)
 
 def serialize_document(doc):
+    """Convert PostgreSQL row to dict (already handled by RealDictCursor)"""
     if not doc:
         return doc
-    doc = doc.copy() if isinstance(doc, dict) else dict(doc)
-    if '_id' in doc and isinstance(doc['_id'], ObjectId):
-        doc['_id'] = str(doc['_id'])
+    if isinstance(doc, dict):
+        # Convert id to string for consistency with frontend
+        doc = doc.copy()
+        if 'id' in doc:
+            doc['_id'] = str(doc['id'])
     return doc
 
 def serialize_tenders(tenders_list):
@@ -127,18 +135,19 @@ class ReliefWebScraper:
         logger.info("✅ ReliefWebScraper initialisé")
 
     def _load_existing_offres(self):
-        """Charge les références existantes depuis MongoDB"""
+        """Charge les références existantes depuis PostgreSQL"""
         try:
-            if pending_tenders_collection is None:
-                return
+            conn = get_db_connection()
+            cursor = conn.cursor()
 
-            pending_docs = pending_tenders_collection.find({}, {"reference": 1})
-            for doc in pending_docs:
-                self.existing_offres_set.add(doc.get("reference"))
+            # Charger toutes les références existantes
+            cursor.execute(f"SELECT reference FROM {TABLE_NAME}")
+            for row in cursor.fetchall():
+                if row[0]:
+                    self.existing_offres_set.add(row[0])
 
-            validated_docs = tenders_collection.find({}, {"reference": 1})
-            for doc in validated_docs:
-                self.existing_offres_set.add(doc.get("reference"))
+            cursor.close()
+            conn.close()
 
             logger.info(f"📦 {len(self.existing_offres_set)} offres existantes chargées")
         except Exception as e:
@@ -219,7 +228,7 @@ class ReliefWebScraper:
             return 223472
 
     def scrape_relief_jobs(self, start_date=None, end_date=None, limit=100):
-        """Scrape jobs from ReliefWeb website (HTML scraping as API requires approved appname)"""
+        """Scrape jobs from ReliefWeb website (HTML scraping with pagination)"""
         try:
             if not start_date:
                 start_date = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
@@ -229,97 +238,115 @@ class ReliefWebScraper:
             logger.info(f"🔍 Scraping ReliefWeb website: {start_date} → {end_date}")
             logger.info("⚠️ Note: API ReliefWeb nécessite un appname approuvé, utilisation du scraping HTML")
 
-            # Scraping de la page web ReliefWeb Jobs
-            web_url = "https://reliefweb.int/jobs"
+            offres = []
+            count = 0
 
-            try:
-                response = self.session.get(web_url, timeout=30)
+            # Boucle sur plusieurs pages de pagination
+            for page_num in range(0, 10):  # ReliefWeb utilise ?page=0, ?page=1, etc.
+                if count >= limit:
+                    break
 
-                if response.status_code != 200:
-                    logger.error(f"❌ Web error: {response.status_code}")
-                    return []
+                web_url = f"https://reliefweb.int/jobs?page={page_num}"
+                logger.info(f"📄 Page {page_num + 1}: {web_url}")
 
-                soup = BeautifulSoup(response.text, 'html.parser')
+                try:
+                    response = self.session.get(web_url, timeout=30)
 
-                # Extraire les offres de la page
-                offres = []
-                job_listings = soup.find_all('article', class_=re.compile(r'.*job.*|.*listing.*'))
-
-                if not job_listings:
-                    # Essayer d'autres sélecteurs
-                    job_listings = soup.find_all('div', class_=re.compile(r'.*job.*|.*card.*'))
-
-                logger.info(f"✅ {len(job_listings)} offres trouvées sur la page")
-
-                count = 0
-                for job in job_listings:
-                    if count >= limit:
+                    if response.status_code != 200:
+                        logger.error(f"❌ Web error: {response.status_code}")
                         break
 
-                    try:
-                        # Extraire le titre
-                        title_elem = job.find('h3') or job.find('h2') or job.find('a', class_=re.compile(r'.*title.*'))
-                        if not title_elem:
+                    soup = BeautifulSoup(response.text, 'html.parser')
+
+                    # Extraire les offres de la page
+                    job_listings = soup.find_all('article', class_=re.compile(r'.*job.*|.*listing.*'))
+
+                    if not job_listings:
+                        # Essayer d'autres sélecteurs
+                        job_listings = soup.find_all('div', class_=re.compile(r'.*job.*|.*card.*'))
+
+                    if len(job_listings) == 0:
+                        logger.info(f"🛑 Page {page_num + 1} vide - fin de pagination")
+                        break
+
+                    logger.info(f"✅ {len(job_listings)} offres trouvées sur page {page_num + 1}")
+
+                    for job in job_listings:
+                        if count >= limit:
+                            break
+
+                        try:
+                            # Extraire le titre depuis h3
+                            title_elem = job.find('h3', class_=re.compile(r'.*title.*'))
+                            if not title_elem:
+                                title_elem = job.find('h3') or job.find('h2')
+
+                            if not title_elem:
+                                continue
+
+                            title = title_elem.get_text(strip=True)
+                            if not title:
+                                continue
+
+                            # Extraire le lien (trouver le lien vers /job/...)
+                            job_url = ""
+                            job_id = f"relief-{count+1}"
+
+                            # Le lien vers le job est généralement le 2ème lien ou celui contenant /job/
+                            all_links = job.find_all('a', href=True)
+                            for link in all_links:
+                                href = link.get('href', '')
+                                if '/job/' in href:
+                                    job_url = href if href.startswith('http') else f"https://reliefweb.int{href}"
+                                    # Extraire ID du lien (ex: /job/4192721/...)
+                                    id_match = re.search(r'/job/(\d+)', job_url)
+                                    if id_match:
+                                        job_id = id_match.group(1)
+                                    break
+
+                            # Vérifier si déjà extrait
+                            if job_id in self.existing_offres_set:
+                                continue
+
+                            # Extraire organisation
+                            org_elem = job.find(class_=re.compile(r'.*source.*'))
+                            promoter = org_elem.get_text(strip=True) if org_elem else "ReliefWeb"
+
+                            # Extraire pays
+                            country_elem = job.find('p', class_=re.compile(r'.*country.*'))
+                            country = country_elem.get_text(strip=True) if country_elem else ""
+
+                            # Dates
+                            pub_date = datetime.now(timezone.utc).isoformat()
+                            exp_date = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
+
+                            offre = OffreRelief(
+                                reference=job_id,
+                                description=title,
+                                description_fr=title[:500],
+                                publicationDate=pub_date,
+                                startBiddingDate=pub_date,
+                                expirationDate=exp_date,
+                                promoter=promoter,
+                                sourceId=self.default_source_id,
+                                externalUrl=job_url,
+                                country=country,
+                            )
+
+                            offres.append(offre)
+                            count += 1
+                            logger.debug(f"✅ Extracted: {job_id} - {title[:50]}")
+
+                        except Exception as e:
+                            logger.debug(f"Erreur extraction offre: {e}")
                             continue
 
-                        title = title_elem.get_text(strip=True)
+                except Exception as e:
+                    logger.error(f"❌ Erreur scraping page {page_num + 1}: {e}")
+                    break
 
-                        # Extraire le lien
-                        link_elem = job.find('a', href=True)
-                        job_url = ""
-                        job_id = f"relief-{count+1}"
-
-                        if link_elem:
-                            job_url = link_elem['href']
-                            if not job_url.startswith('http'):
-                                job_url = f"https://reliefweb.int{job_url}"
-                            # Extraire ID du lien
-                            id_match = re.search(r'/(\d+)$', job_url)
-                            if id_match:
-                                job_id = id_match.group(1)
-
-                        # Vérifier si déjà extrait
-                        if job_id in self.existing_offres_set:
-                            continue
-
-                        # Extraire organisation
-                        org_elem = job.find(class_=re.compile(r'.*source.*|.*organization.*'))
-                        promoter = org_elem.get_text(strip=True) if org_elem else "ReliefWeb"
-
-                        # Extraire pays
-                        country_elem = job.find(class_=re.compile(r'.*country.*|.*location.*'))
-                        country = country_elem.get_text(strip=True) if country_elem else ""
-
-                        # Dates
-                        pub_date = datetime.now(timezone.utc).isoformat()
-                        exp_date = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
-
-                        offre = OffreRelief(
-                            reference=job_id,
-                            description=title,
-                            description_fr=title[:500],
-                            publicationDate=pub_date,
-                            startBiddingDate=pub_date,
-                            expirationDate=exp_date,
-                            promoter=promoter,
-                            sourceId=self.default_source_id,
-                            externalUrl=job_url,
-                            country=country,
-                        )
-
-                        offres.append(offre)
-                        count += 1
-
-                    except Exception as e:
-                        logger.debug(f"Erreur extraction offre: {e}")
-                        continue
-
-                logger.info(f"✅ {len(offres)} offres extraites avec succès")
-                return offres
-
-            except Exception as e:
-                logger.error(f"❌ Erreur scraping web: {e}")
-                return []
+            logger.info(f"✅ {len(offres)} offres extraites avec succès sur {page_num + 1} pages")
+            return offres
 
         except Exception as e:
             logger.error(f"❌ Erreur scraping: {e}")
@@ -390,25 +417,61 @@ class ReliefWebScraper:
             return datetime.now(timezone.utc).isoformat()
 
     def save_to_pending(self, offre: OffreRelief):
-        """Save offer to pending collection"""
+        """Save offer to PostgreSQL"""
         try:
-            if pending_tenders_collection is None:
-                logger.error("❌ MongoDB non connecté")
-                return False
-
             if offre.reference in self.existing_offres_set:
                 logger.debug(f"⏭️ Doublon: {offre.reference}")
                 return False
 
-            tender_dict = offre.to_dict()
-            result = pending_tenders_collection.insert_one(tender_dict)
+            conn = get_db_connection()
+            cursor = conn.cursor()
 
-            if result.inserted_id:
+            tender_dict = offre.to_dict()
+
+            # Insert dans PostgreSQL
+            query = f"""
+                INSERT INTO {TABLE_NAME}
+                (reference, description, description_fr, publication_date, start_bidding_date,
+                 expiration_date, promoter, source_id, avis_id, external_url, montant,
+                 category, country, nature, status, created_at, updated_at, fetched_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (reference) DO NOTHING
+            """
+
+            cursor.execute(query, (
+                tender_dict.get('reference'),
+                tender_dict.get('description'),
+                tender_dict.get('description_fr'),
+                tender_dict.get('publicationDate'),
+                tender_dict.get('startBiddingDate'),
+                tender_dict.get('expirationDate'),
+                tender_dict.get('promoter'),
+                tender_dict.get('sourceId'),
+                tender_dict.get('avisId'),
+                tender_dict.get('externalUrl'),
+                tender_dict.get('montant'),
+                tender_dict.get('category'),
+                tender_dict.get('country'),
+                tender_dict.get('nature'),
+                tender_dict.get('status', 'pending'),
+                tender_dict.get('createdAt'),
+                tender_dict.get('updatedAt'),
+                tender_dict.get('fetchedAt')
+            ))
+
+            inserted = cursor.rowcount > 0
+            conn.commit()
+            cursor.close()
+            conn.close()
+
+            if inserted:
                 self.existing_offres_set.add(offre.reference)
                 logger.info(f"💾 Sauvegardé: {offre.reference}")
                 return True
+            else:
+                logger.debug(f"⏭️ Déjà existant (ON CONFLICT): {offre.reference}")
+                return False
 
-            return False
         except Exception as e:
             logger.error(f"❌ Erreur save: {e}")
             return False
@@ -417,23 +480,30 @@ class ReliefWebScraper:
     def post_tender_to_database(self, offre: OffreRelief) -> dict:
         """Validate and send to API"""
         try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+
             # Check if already validated
-            existing = tenders_collection.find_one({"reference": offre.reference})
+            cursor.execute(f"SELECT id FROM {TABLE_NAME} WHERE reference = %s AND status = 'validated'", (offre.reference,))
+            existing = cursor.fetchone()
             if existing:
+                cursor.close()
+                conn.close()
                 return {"success": False, "message": "Déjà validée"}
 
-            # Save to validated collection
-            tender_dict = offre.to_dict()
-            tender_dict["status"] = "validated"
-            tender_dict["validationDate"] = datetime.now(timezone.utc).isoformat()
+            # Update status to validated
+            validation_date = datetime.now(timezone.utc).isoformat()
+            cursor.execute(
+                f"UPDATE {TABLE_NAME} SET status = %s, validation_date = %s WHERE reference = %s",
+                ('validated', validation_date, offre.reference)
+            )
 
-            result = tenders_collection.insert_one(tender_dict)
+            if cursor.rowcount == 0:
+                cursor.close()
+                conn.close()
+                return {"success": False, "message": "Offre non trouvée"}
 
-            if not result.inserted_id:
-                return {"success": False, "message": "Erreur MongoDB"}
-
-            # Delete from pending
-            pending_tenders_collection.delete_one({"reference": offre.reference})
+            conn.commit()
 
             # Send to API
             api_success = False
@@ -456,17 +526,21 @@ class ReliefWebScraper:
                         response_data = response.json()
                         api_id = response_data.get("id")
                         api_success = True
-                        tenders_collection.update_one(
-                            {"_id": result.inserted_id},
-                            {"$set": {"api_id": api_id}}
+                        cursor.execute(
+                            f"UPDATE {TABLE_NAME} SET api_id = %s WHERE reference = %s",
+                            (api_id, offre.reference)
                         )
+                        conn.commit()
                         logger.info(f"✅ API OK: {offre.reference} - ID: {api_id}")
                     else:
                         error_detail = f"Status {response.status_code}"
             except Exception as e:
                 error_detail = str(e)[:200]
 
-            message = f"Validée (MongoDB + API ID: {api_id})" if api_success else f"Validée MongoDB mais échec API: {error_detail}"
+            cursor.close()
+            conn.close()
+
+            message = f"Validée (PostgreSQL + API ID: {api_id})" if api_success else f"Validée PostgreSQL mais échec API: {error_detail}"
 
             return {
                 "success": True,
@@ -521,10 +595,17 @@ CORS(app)
 
 @app.route('/api/health', methods=['GET'])
 def health():
+    try:
+        conn = get_db_connection()
+        conn.close()
+        db_status = "connected"
+    except:
+        db_status = "disconnected"
+
     return jsonify({
         "status": "ok",
         "service": "Relief Web Scraper",
-        "mongodb": "connected" if mongo_client else "disconnected"
+        "database": db_status
     })
 
 @app.route('/api/scrape', methods=['POST'])
@@ -564,13 +645,24 @@ def get_pending():
     try:
         page = int(request.args.get('page', 1))
         limit = int(request.args.get('limit', 50))
-        skip = (page - 1) * limit
+        offset = (page - 1) * limit
 
-        total = pending_tenders_collection.count_documents({"status": "pending"})
-        offres = list(pending_tenders_collection.find({"status": "pending"})
-                     .sort("createdAt", -1)
-                     .skip(skip)
-                     .limit(limit))
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Count total
+        cursor.execute(f"SELECT COUNT(*) FROM {TABLE_NAME} WHERE status = 'pending'")
+        total = cursor.fetchone()['count']
+
+        # Get paginated results
+        cursor.execute(
+            f"SELECT * FROM {TABLE_NAME} WHERE status = 'pending' ORDER BY created_at DESC LIMIT %s OFFSET %s",
+            (limit, offset)
+        )
+        offres = cursor.fetchall()
+
+        cursor.close()
+        conn.close()
 
         return jsonify({
             "success": True,
@@ -590,14 +682,37 @@ def get_pending():
 def validate_offre(reference):
     """Validate an offer"""
     try:
-        pending_doc = pending_tenders_collection.find_one({"reference": reference, "status": "pending"})
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        cursor.execute(f"SELECT * FROM {TABLE_NAME} WHERE reference = %s AND status = 'pending'", (reference,))
+        pending_doc = cursor.fetchone()
+
+        cursor.close()
+        conn.close()
 
         if not pending_doc:
             return jsonify({"success": False, "message": "Offre non trouvée"}), 404
 
-        pending_doc.pop('_id', None)
-        offre = OffreRelief(**pending_doc)
+        # Convert snake_case to camelCase for dataclass
+        offre_dict = {
+            'reference': pending_doc.get('reference'),
+            'description': pending_doc.get('description'),
+            'description_fr': pending_doc.get('description_fr'),
+            'publicationDate': pending_doc.get('publication_date'),
+            'startBiddingDate': pending_doc.get('start_bidding_date'),
+            'expirationDate': pending_doc.get('expiration_date'),
+            'promoter': pending_doc.get('promoter'),
+            'sourceId': pending_doc.get('source_id'),
+            'avisId': pending_doc.get('avis_id'),
+            'externalUrl': pending_doc.get('external_url'),
+            'montant': pending_doc.get('montant'),
+            'category': pending_doc.get('category'),
+            'country': pending_doc.get('country'),
+            'nature': pending_doc.get('nature'),
+        }
 
+        offre = OffreRelief(**offre_dict)
         result = scraper.post_tender_to_database(offre)
 
         return jsonify(result)
@@ -610,9 +725,17 @@ def validate_offre(reference):
 def delete_offre(reference):
     """Delete a pending offer"""
     try:
-        result = pending_tenders_collection.delete_one({"reference": reference})
+        conn = get_db_connection()
+        cursor = conn.cursor()
 
-        if result.deleted_count > 0:
+        cursor.execute(f"DELETE FROM {TABLE_NAME} WHERE reference = %s", (reference,))
+        deleted_count = cursor.rowcount
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        if deleted_count > 0:
             scraper.existing_offres_set.discard(reference)
             return jsonify({"success": True, "message": "Offre supprimée"})
 
@@ -626,14 +749,23 @@ def delete_offre(reference):
 def delete_all():
     """Delete all pending offers"""
     try:
-        result = pending_tenders_collection.delete_many({"status": "pending"})
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(f"DELETE FROM {TABLE_NAME} WHERE status = 'pending'")
+        deleted_count = cursor.rowcount
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+
         scraper.existing_offres_set.clear()
         scraper._load_existing_offres()
 
         return jsonify({
             "success": True,
-            "message": f"{result.deleted_count} offres supprimées",
-            "count": result.deleted_count
+            "message": f"{deleted_count} offres supprimées",
+            "count": deleted_count
         })
     except Exception as e:
         logger.error(f"❌ Erreur delete_all: {e}")
@@ -645,13 +777,24 @@ def get_validated():
     try:
         page = int(request.args.get('page', 1))
         limit = int(request.args.get('limit', 50))
-        skip = (page - 1) * limit
+        offset = (page - 1) * limit
 
-        total = tenders_collection.count_documents({})
-        offres = list(tenders_collection.find({})
-                     .sort("validationDate", -1)
-                     .skip(skip)
-                     .limit(limit))
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Count total
+        cursor.execute(f"SELECT COUNT(*) FROM {TABLE_NAME} WHERE status = 'validated'")
+        total = cursor.fetchone()['count']
+
+        # Get paginated results
+        cursor.execute(
+            f"SELECT * FROM {TABLE_NAME} WHERE status = 'validated' ORDER BY validation_date DESC LIMIT %s OFFSET %s",
+            (limit, offset)
+        )
+        offres = cursor.fetchall()
+
+        cursor.close()
+        conn.close()
 
         return jsonify({
             "success": True,

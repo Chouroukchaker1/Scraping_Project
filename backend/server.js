@@ -1,6 +1,5 @@
-// server.js - VERSION CORRIGÉE ET COMPLÈTE (TUNEPS AO fonctionne)
+// server.js - VERSION POSTGRESQL COMPLÈTE
 const express = require('express');
-const mongoose = require('mongoose');
 const cors = require('cors');
 const helmet = require('helmet');
 const path = require('path');
@@ -33,15 +32,6 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
-
-// ==================== MONGODB ====================
-const MONGODB_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/marmoucha';
-mongoose.connect(MONGODB_URI)
-  .then(() => console.log('✅ MongoDB connected to marmoucha database'))
-  .catch(err => {
-    console.error('❌ MongoDB connection error:', err.message);
-    console.log('⚠️ Continuing without MongoDB...');
-  });
 
 // ==================== ROUTES ====================
 // Routes d'authentification
@@ -509,7 +499,7 @@ function startBoampPythonScraper() {
     return;
   }
 
-  const pythonScriptPath = path.join(__dirname, 'scripts', 'scraper.py');
+  const pythonScriptPath = path.join(__dirname, 'scripts', 'france.py');
   if (!fs.existsSync(pythonScriptPath)) {
     console.error('❌ scraper.py non trouvé !');
     return;
@@ -972,8 +962,7 @@ app.get('/health', async (req, res) => {
   const health = {
     node: 'healthy',
     timestamp: new Date().toISOString(),
-    mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
-    database: 'marmoucha',
+    database: 'PostgreSQL - tenders_db',
     frontend: reactBuildExists ? 'build found' : 'build not found',
     services: {
       auth: 'available',

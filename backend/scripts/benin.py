@@ -18,17 +18,26 @@ import os
 import json
 from datetime import datetime
 import pandas as pd
-import pymongo
+import psycopg2
+from psycopg2.extras import execute_values, RealDictCursor
 
-# Configuration MongoDB
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
-DB_NAME = os.getenv("DB_NAME", "marches_publics_benin_scraping")  # Nom corrigé pour éviter incohérences
-COLLECTION_NAME = "appels_offres_scraping"
+# Configuration PostgreSQL
+DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_PORT = os.getenv("DB_PORT", "5432")
+DB_NAME = os.getenv("DB_NAME", "tenders_db")
+DB_USER = os.getenv("DB_USER", "tender_user")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "tender_password_2024")
 
-# Connexion MongoDB
-client = pymongo.MongoClient(MONGO_URI)
-db = client[DB_NAME]
-collection = db[COLLECTION_NAME]
+# Fonction pour obtenir une connexion PostgreSQL
+def get_db_connection():
+    """Retourne une connexion PostgreSQL"""
+    return psycopg2.connect(
+        host=DB_HOST,
+        port=DB_PORT,
+        database=DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD
+    )
 
 # Import du scraper (copié ici pour complétude)
 from selenium import webdriver
@@ -472,29 +481,71 @@ app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
 app.secret_key = 'super_secret_key'  # Pour les flashes
 
-# Variable globale pour stocker les données (chargée depuis MongoDB)
+# Variable globale pour stocker les données (chargée depuis PostgreSQL)
 current_data = []
 
 def load_data():
-    """Charge les données depuis MongoDB"""
+    """Charge les données depuis PostgreSQL"""
     global current_data
-    current_data = list(collection.find())
-    print(f"✓ {len(current_data)} documents chargés depuis MongoDB")
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("SELECT * FROM tenders_benin ORDER BY created_at DESC")
+        current_data = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        print(f"✓ {len(current_data)} documents chargés depuis PostgreSQL")
+    except Exception as e:
+        print(f"✗ Erreur chargement PostgreSQL: {e}")
+        current_data = []
 
 def save_data(data):
-    """Sauvegarde les données dans MongoDB (insert_many pour accumulation, déduplication possible via Ref si besoin)"""
+    """Sauvegarde les données dans PostgreSQL (INSERT avec ON CONFLICT pour déduplication)"""
     global current_data
-    if data:
-        # Optionnel: Déduplication basique par Ref avant insertion
-        existing_refs = {doc.get('Ref') for doc in current_data if doc.get('Ref')}
-        new_data = [item for item in data if item.get('Ref') not in existing_refs]
- 
-        if new_data:
-            collection.insert_many(new_data)
-            print(f"✓ {len(new_data)} nouveaux documents insérés dans MongoDB")
-            load_data()  # Recharge pour mise à jour
-        else:
-            print("✓ Aucune nouvelle donnée à insérer (déjà existantes)")
+    if not data:
+        print("✓ Aucune donnée à sauvegarder")
+        return
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # Préparer les données pour insertion
+        values = []
+        for item in data:
+            values.append((
+                item.get('Ref', ''),
+                item.get('Description', ''),
+                item.get('Date_publication', ''),
+                item.get('Date_limite_depot', ''),
+                item.get('Delai', ''),
+                item.get('Autorite_contractante', ''),
+                item.get('Lieu_execution', ''),
+                item.get('Lien_PDF', '')
+            ))
+
+        # Insertion avec déduplication (ON CONFLICT DO NOTHING sur ref)
+        query = """
+            INSERT INTO tenders_benin
+            (ref, description, date_publication, date_limite_depot, delai,
+             autorite_contractante, lieu_execution, lien_pdf)
+            VALUES %s
+            ON CONFLICT (ref) DO NOTHING
+        """
+
+        execute_values(cursor, query, values)
+        inserted_count = cursor.rowcount
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        print(f"✓ {inserted_count} nouveaux documents insérés dans PostgreSQL")
+        load_data()  # Recharge pour mise à jour
+
+    except Exception as e:
+        print(f"✗ Erreur sauvegarde PostgreSQL: {e}")
+        if conn:
+            conn.rollback()
 
 # Templates HTML intégrés - Améliorés avec pagination, recherche et tri
 INDEX_TEMPLATE = """\
@@ -723,26 +774,26 @@ def api_pending():
 
             # Mapper les champs Benin vers le format attendu par le frontend
             transformed_offer = {
-                '_id': offer.get('_id'),
-                'reference': offer.get('Ref', ''),
-                'description': offer.get('Description', ''),
-                'promoter': offer.get('Autorite_contractante', 'Marchés Publics Bénin'),
-                'date_publication': offer.get('Date_publication', ''),
-                'date_limite': offer.get('Date_limite_depot', ''),
-                'date_ouverture': offer.get('Date_ouverture_offres', ''),
-                'delai': offer.get('Delai', ''),
-                'lieu_acquisition': offer.get('Lieu_acquisition', ''),
-                'lien_pdf': offer.get('Lien_PDF', ''),
+                '_id': str(offer.get('id', '')),  # PostgreSQL id au lieu de MongoDB _id
+                'reference': offer.get('ref', ''),
+                'description': offer.get('description', ''),
+                'promoter': offer.get('autorite_contractante', 'Marchés Publics Bénin'),
+                'date_publication': offer.get('date_publication', ''),
+                'date_limite': offer.get('date_limite_depot', ''),
+                'date_ouverture': offer.get('date_ouverture_offres', ''),
+                'delai': offer.get('delai', ''),
+                'lieu_acquisition': offer.get('lieu_acquisition', ''),
+                'lien_pdf': offer.get('lien_pdf', ''),
                 # Garder aussi les champs originaux au cas où
-                'Ref': offer.get('Ref', ''),
-                'Description': offer.get('Description', ''),
-                'Autorite_contractante': offer.get('Autorite_contractante', ''),
-                'Date_publication': offer.get('Date_publication', ''),
-                'Date_limite_depot': offer.get('Date_limite_depot', ''),
-                'Date_ouverture_offres': offer.get('Date_ouverture_offres', ''),
-                'Delai': offer.get('Delai', ''),
-                'Lieu_acquisition': offer.get('Lieu_acquisition', ''),
-                'Lien_PDF': offer.get('Lien_PDF', '')
+                'Ref': offer.get('ref', ''),
+                'Description': offer.get('description', ''),
+                'Autorite_contractante': offer.get('autorite_contractante', ''),
+                'Date_publication': offer.get('date_publication', ''),
+                'Date_limite_depot': offer.get('date_limite_depot', ''),
+                'Date_ouverture_offres': offer.get('date_ouverture_offres', ''),
+                'Delai': offer.get('delai', ''),
+                'Lieu_acquisition': offer.get('lieu_acquisition', ''),
+                'Lien_PDF': offer.get('lien_pdf', '')
             }
             offers.append(transformed_offer)
 
@@ -808,8 +859,17 @@ def api_scrape():
 def api_delete(offer_id):
     """Supprime une offre"""
     try:
-        result = collection.delete_one({'_id': offer_id})
-        if result.deleted_count > 0:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # Supprimer par ID
+        cursor.execute("DELETE FROM tenders_benin WHERE id = %s", (offer_id,))
+        deleted_count = cursor.rowcount
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        if deleted_count > 0:
             load_data()  # Recharger les données
             return jsonify({"success": True, "message": "Offre supprimée"})
         else:

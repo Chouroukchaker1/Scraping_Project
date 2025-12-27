@@ -45,6 +45,25 @@ const ScrapeForm = ({ onScrape, loading, error }) => {
           Rechercher des Opportunités Humanitaires ReliefWeb
         </h2>
 
+        {loading && (
+          <div style={{
+            background: '#DBEAFE',
+            borderRadius: '10px',
+            padding: '1rem',
+            marginBottom: '1.5rem',
+            border: '2px solid #60A5FA',
+            fontSize: '0.95rem',
+            color: '#1E40AF',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.75rem',
+            fontWeight: '600'
+          }}>
+            <RefreshCw size={20} className="spin" />
+            ⏳ Scraping en cours... Veuillez patienter (cela peut prendre jusqu'à 30 secondes)
+          </div>
+        )}
+
         {error && (
           <div style={{
             background: '#FEE2E2',
@@ -711,6 +730,7 @@ function ReliefPage() {
   };
 
   const handleScrape = async (dates) => {
+    console.log('🚀 handleScrape appelé avec:', dates);
     setLoading(true);
     setError('');
     setSuccess('');
@@ -722,10 +742,17 @@ function ReliefPage() {
         limit: dates.limit
       };
 
+      console.log('📤 Envoi requête POST à:', `${API_BASE}/scrape`);
+      console.log('📦 Payload:', payload);
+
       const response = await axios.post(`${API_BASE}/scrape`, payload);
+      console.log('✅ Réponse reçue:', response.data);
 
       if (response.data.success) {
-        setSuccess(`✅ ${response.data.message} - ${response.data.saved} offres ajoutées`);
+        const msg = response.data.saved > 0
+          ? `✅ Succès! ${response.data.saved} nouvelles offres ajoutées sur ${response.data.total} trouvées`
+          : `ℹ️ Scraping terminé: Aucune nouvelle offre (${response.data.total || 0} offres trouvées mais déjà en base)`;
+        setSuccess(msg);
         setTimeout(() => {
           fetchPending();
           fetchValidated();
@@ -734,6 +761,7 @@ function ReliefPage() {
         setError(response.data.message || 'Échec du scraping');
       }
     } catch (err) {
+      console.error('❌ Erreur scraping:', err);
       setError(err.response?.data?.message || err.message || 'Erreur de connexion');
     } finally {
       setLoading(false);
@@ -878,7 +906,7 @@ function ReliefPage() {
         )}
 
         <StatsSection stats={stats} />
-        <ScrapeForm onScrape={handleScrape} loading={loading} error="" />
+        <ScrapeForm onScrape={handleScrape} loading={loading} error={error} />
 
         <div style={{
           background: 'white',
