@@ -376,8 +376,8 @@ class TUNEPSScraper:
         
         # Configuration scraping
         self.BASE_URL = "https://www.tuneps.tn/portail/consultations"
-        self.TIMEOUT = 60
-        self.WAIT_TIME = 2
+        self.TIMEOUT = 120  # Increased to 120s for slow Angular app loading
+        self.WAIT_TIME = 3
         self.DELAY_BETWEEN_CONSULTATIONS = (1.0, 2.0)
         self.DELAY_BETWEEN_PAGES = (2, 4)
         self.MAX_PAGES = None
@@ -512,9 +512,12 @@ class TUNEPSScraper:
                 options.add_argument("--ignore-certificate-errors")
                 options.add_argument("--ignore-ssl-errors")
                 options.add_argument("--disable-setuid-sandbox")
-                options.add_argument("--single-process")
                 options.add_argument("--disable-software-rasterizer")
-                options.page_load_strategy = 'eager'
+                options.add_argument("--disable-web-security")
+                options.add_argument("--allow-running-insecure-content")
+                options.add_argument("--disable-features=VizDisplayCompositor")
+                # Use normal page load strategy instead of eager for Angular apps
+                # options.page_load_strategy = 'eager'
                 options.add_experimental_option("excludeSwitches", ["enable-automation"])
                 options.add_experimental_option('useAutomationExtension', False)
                 
