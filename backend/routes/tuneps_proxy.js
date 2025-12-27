@@ -108,6 +108,30 @@ router.get('/tenders', async (req, res) => {
     }
 });
 
+// Obtenir validated (alias pour /tenders pour compatibilité frontend)
+router.get('/validated', async (req, res) => {
+    try {
+        const { page = 1, limit = 100 } = req.query;
+        const response = await axios.get(`${PYTHON_SERVER_URL}/api/tenders`, {
+            params: { page, limit },
+            timeout: 30000
+        });
+
+        // Formater la réponse pour correspondre à l'ancien format attendu par le frontend
+        if (response.data.success && response.data.tenders) {
+            res.json({
+                success: true,
+                tenders: response.data.tenders,
+                total: response.data.tenders.length
+            });
+        } else {
+            res.json(response.data);
+        }
+    } catch (error) {
+        handlePythonApiError(error, res);
+    }
+});
+
 // Valider une offre
 router.post('/validate/:reference', async (req, res) => {
     try {
