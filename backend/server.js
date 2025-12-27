@@ -15,7 +15,7 @@ const PORT = process.env.PORT || 5000;
 // ==================== IMPORTATION DES ROUTES ====================
 const authRoutes = require('./routes/auth');
 const userRoutes = require('./routes/users');
-const tunepsRoutes = require('./routes/tuneps');
+const tunepsRoutes = require('./routes/tuneps_proxy');
 const boampRoutes = require('./routes/routesboamp');
 
 // ==================== REACT FRONTEND ====================

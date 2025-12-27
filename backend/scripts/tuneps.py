@@ -2466,9 +2466,9 @@ logger.info("Scheduler configure: Extraction automatique quotidienne a 7h30 (Tun
 def test_api():
     logger.info("Route /api/test appelee")
     return jsonify({
-        "message": "Backend OK",
+        "message": "Backend OK - PostgreSQL",
         "pending_count": len(scraper.offres_cache),
-        "mongo_uri": MONGO_URI,
+        "database": f"PostgreSQL: {DB_NAME} (Table: {TABLE_NAME})",
         "processing": scraper.is_processing
     })
 
