@@ -4,7 +4,7 @@ import axios from 'axios';
 import { Search, Calendar, CheckCircle, Edit2, Trash2, RefreshCw, Play, AlertCircle, Globe, Send, Building, ExternalLink, Filter } from 'lucide-react';
 import './Benin.css';
 
-const API_BASE = 'http://localhost:5012';
+const API_BASE = '/api/benin';
 
 // ===== FORMULAIRE DE SCRAPING =====
 const ScrapeForm = ({ onScrape, loading, error, onCleanDuplicates }) => {
@@ -39,7 +39,26 @@ const ScrapeForm = ({ onScrape, loading, error, onCleanDuplicates }) => {
           <Building size={24} color="#27ae60" />
           Scraping des Marchés Publics Tunisiens BÉNIN
         </h2>
-        
+
+        {loading && (
+          <div style={{
+            background: '#DBEAFE',
+            borderRadius: '10px',
+            padding: '1rem',
+            marginBottom: '1.5rem',
+            border: '2px solid #60A5FA',
+            fontSize: '0.95rem',
+            color: '#1E40AF',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.75rem',
+            fontWeight: '600'
+          }}>
+            <RefreshCw size={20} className="spinning" />
+            ⏳ Scraping en cours... Veuillez patienter (cela peut prendre plusieurs minutes pour Selenium)
+          </div>
+        )}
+
         {error && (
           <div style={{
             background: '#FEE2E2',
@@ -72,13 +91,13 @@ const ScrapeForm = ({ onScrape, loading, error, onCleanDuplicates }) => {
               marginBottom: '0.5rem'
             }}>
               <Calendar size={16} style={{ display: 'inline', marginRight: '0.5rem', verticalAlign: 'middle' }} />
-              Date Filtre (DD-MM-YYYY)
+              Date Limite de Dépôt (DD-MM-YYYY)
             </label>
             <input
               type="text"
               value={formData.date_filtre}
               onChange={(e) => setFormData({ ...formData, date_filtre: e.target.value })}
-              placeholder="Ex: 01-12-2024 ou ALL"
+              placeholder="Ex: 27-12-2025 (ou vide = toutes les dates)"
               style={{
                 width: '100%',
                 padding: '0.75rem',
@@ -88,6 +107,14 @@ const ScrapeForm = ({ onScrape, loading, error, onCleanDuplicates }) => {
                 transition: 'all 0.2s'
               }}
             />
+            <p style={{
+              fontSize: '0.8rem',
+              color: '#64748B',
+              marginTop: '0.3rem',
+              marginLeft: '0.5rem'
+            }}>
+              💡 Filtre les offres dont la date limite de dépôt correspond exactement à cette date
+            </p>
           </div>
           
           <div>
@@ -930,27 +957,38 @@ const Benin = () => {
   };
 
   const handleScrape = async (formData) => {
+    console.log('🚀 [BENIN] handleScrape appelé avec:', formData);
+    console.log('🔗 [BENIN] API_BASE =', API_BASE);
     setLoadingScrape(true);
     setError('');
     try {
-      const response = await axios.post(`${API_BASE}/scrape-tunisie`, formData);
-      
+      const payload = {
+        max_pages: formData.max_pages || 3,
+        date_filtre: formData.date_filtre || ''
+      };
+
+      console.log('📤 [BENIN] Envoi requête POST à:', `${API_BASE}/scrape`);
+      console.log('📦 [BENIN] Payload:', payload);
+
+      const response = await axios.post(`${API_BASE}/scrape`, payload);
+      console.log('✅ Réponse reçue:', response.data);
+
       if (response.data.success) {
-        alert('✅ Scraping BÉNIN démarré avec succès! Rafraîchissez dans quelques minutes.');
-        setProcessing(true);
-        
-        const interval = setInterval(() => {
-          fetchPendingOffres();
-        }, 10000);
-        
+        const msg = response.data.count > 0
+          ? `✅ Succès! ${response.data.count} offres extraites`
+          : `ℹ️ Scraping terminé: Aucune nouvelle offre trouvée`;
+        alert(msg);
+
+        // Rafraîchir les données
         setTimeout(() => {
-          clearInterval(interval);
-          setProcessing(false);
-        }, 180000); // 3 minutes pour BÉNIN
+          fetchPendingOffres();
+          fetchValidatedTenders();
+        }, 1000);
       } else {
         setError(response.data.message || 'Erreur lors du scraping');
       }
     } catch (err) {
+      console.error('❌ Erreur scraping:', err);
       setError(err.response?.data?.message || err.message || 'Erreur de connexion');
     } finally {
       setLoadingScrape(false);

@@ -362,8 +362,13 @@ class MarchesPublicsBeninScraper:
  
         return appels
  
-    def scrape_all_pages(self, max_pages=5):
-        """Scrape plusieurs pages"""
+    def scrape_all_pages(self, max_pages=5, date_filtre=''):
+        """Scrape plusieurs pages avec filtrage optionnel par date
+
+        Args:
+            max_pages: Nombre maximum de pages à scraper
+            date_filtre: Date au format DD-MM-YYYY pour filtrer les offres (vide = toutes les offres)
+        """
         all_appels = []
  
         try:
@@ -392,6 +397,19 @@ class MarchesPublicsBeninScraper:
                 # Extrait les données
                 appels = self.extract_appels_from_current_page()
  
+ 
+                # Filtre par date si specifie
+                if date_filtre and date_filtre.upper() != 'ALL' and appels:
+                    appels_filtres = []
+                    for appel in appels:
+                        date_limite = appel.get('Date_limite_depot', '')
+                        if date_limite:
+                            date_partie = date_limite.split(' à ')[0].strip() if ' à ' in date_limite else date_limite.strip()
+                            if date_partie == date_filtre:
+                                appels_filtres.append(appel)
+
+                    print(f"\n Filtrage: {len(appels_filtres)}/{len(appels)} offres correspondent a la date {date_filtre}")
+                    appels = appels_filtres
                 if appels:
                     all_appels.extend(appels)
                     print(f"\n ✅ {len(appels)} appels extraits de la page {page}")
@@ -766,9 +784,10 @@ def api_scrape():
     try:
         data = request.get_json() or {}
         max_pages = int(data.get('max_pages', 3))
+        date_filtre = data.get('date_filtre', '').strip()
 
         scraper = MarchesPublicsBeninScraper(headless=True)
-        appels_offres = scraper.scrape_all_pages(max_pages=max_pages)
+        appels_offres = scraper.scrape_all_pages(max_pages=max_pages, date_filtre=date_filtre)
 
         if appels_offres:
             save_data(appels_offres)
@@ -780,7 +799,7 @@ def api_scrape():
         else:
             return jsonify({
                 "success": False,
-                "message": "Aucune donnée extraite"
+                "message": "Aucune donnée extraite (vérifiez le filtre de date)"
             }), 404
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 500
