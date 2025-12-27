@@ -1,0 +1,341 @@
+#!/usr/bin/env python3
+"""
+Benin Flask API Scraper
+Extraction des appels d'offres depuis les marchés publics du Bénin
+API Flask + MongoDB + Structure complète
+"""
+
+import os
+import sys
+import json
+import logging
+import requests
+from datetime import datetime, timezone
+from flask import Flask, jsonify, request
+from flask_cors import CORS
+from bs4 import BeautifulSoup
+import re
+from urllib.parse import urljoin
+from pymongo import MongoClient
+from pymongo.errors import PyMongoError, ConnectionFailure
+from bson import ObjectId
+import pandas as pd
+from pathlib import Path
+from dataclasses import dataclass, field, asdict
+from typing import Optional, List, Dict
+import time
+
+# Fix Windows console encoding for emojis
+if sys.platform == 'win32':
+    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stderr.reconfigure(encoding='utf-8')
+
+# ===== CONFIGURATION =====
+# MongoDB Configuration
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/tunip")
+DB_NAME = os.getenv("DB_NAME", "tunip")
+COLLECTION_NAME = "tenders_benin"
+PENDING_COLLECTION_NAME = "pending_tenders_benin"
+
+# Paths
+OUTPUT_DIR = "output"
+EXCEL_DIR = "excel_benin"
+
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+os.makedirs(EXCEL_DIR, exist_ok=True)
+
+# Logging Configuration
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler('scraper_benin.log', encoding='utf-8')
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# ===== DATACLASS =====
+@dataclass
+class OffreBenin:
+    """Modèle de données pour une offre Bénin"""
+    reference: str
+    promoteur: str
+    localisation: str
+    description: str
+    date_publication: str
+    date_limite: str
+    montant: str = ""
+    url_details: str = ""
+    source: str = "Benin"
+    pays: str = "Bénin"
+    status: str = "pending"
+    createdAt: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    updatedAt: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    extractionDate: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    validationDate: Optional[str] = None
+
+    def to_dict(self):
+        return asdict(self)
+
+def serialize_document(doc):
+    """Convertit ObjectId en string pour JSON"""
+    if not doc:
+        return doc
+    doc = doc.copy() if isinstance(doc, dict) else dict(doc)
+    if '_id' in doc and isinstance(doc['_id'], ObjectId):
+        doc['_id'] = str(doc['_id'])
+    return doc
+
+def serialize_tenders(tenders_list):
+    """Sérialise une liste de tenders"""
+    return [serialize_document(t) for t in tenders_list]
+
+# ===== SCRAPER CLASS =====
+class BeninFlaskScraper:
+    def __init__(self):
+        self.base_url = "https://www.marchespublics.bj/"  # URL à adapter
+        self.session = requests.Session()
+
+        # Headers
+        self.session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7',
+        })
+
+        # MongoDB Connection
+        try:
+            self.mongo_client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+            self.db = self.mongo_client[DB_NAME]
+            self.collection = self.db[COLLECTION_NAME]
+            self.pending_collection = self.db[PENDING_COLLECTION_NAME]
+
+            # Test connection
+            self.mongo_client.admin.command('ping')
+            logger.info(f"✅ MongoDB connecté: {DB_NAME}")
+        except Exception as e:
+            logger.error(f"❌ Erreur MongoDB: {e}")
+            self.mongo_client = None
+
+        # Load existing references
+        self.validated_refs = set()
+        self.pending_refs = set()
+        self.load_existing_references()
+
+    def load_existing_references(self):
+        """Charge les références existantes"""
+        if not self.mongo_client:
+            return
+
+        try:
+            validated_docs = list(self.collection.find({}, {"reference": 1}))
+            self.validated_refs = {doc["reference"] for doc in validated_docs if "reference" in doc}
+
+            pending_docs = list(self.pending_collection.find({}, {"reference": 1}))
+            self.pending_refs = {doc["reference"] for doc in pending_docs if "reference" in doc}
+
+            logger.info(f"✅ {len(self.validated_refs)} validées + {len(self.pending_refs)} pending chargées")
+        except Exception as e:
+            logger.error(f"❌ Erreur chargement refs: {e}")
+
+    def scrape_tenders(self, max_pages=5):
+        """Scrape les appels d'offres"""
+        tenders = []
+
+        try:
+            logger.info(f"🚀 Début scraping Bénin (max {max_pages} pages)")
+
+            # TODO: Implémenter la logique de scraping spécifique au site Bénin
+            # Cette version est un template - adapter selon le site réel
+
+            for page in range(1, max_pages + 1):
+                logger.info(f"📄 Page {page}/{max_pages}")
+
+                # Exemple de requête (à adapter)
+                # response = self.session.get(f"{self.base_url}/tenders?page={page}")
+                # soup = BeautifulSoup(response.text, 'html.parser')
+
+                # Parser les offres
+                # ...
+
+                time.sleep(1)  # Rate limiting
+
+            logger.info(f"✅ Scraping terminé: {len(tenders)} offres trouvées")
+
+        except Exception as e:
+            logger.error(f"❌ Erreur scraping: {e}")
+
+        return tenders
+
+    def save_to_pending(self, tender):
+        """Sauvegarde une offre en pending"""
+        if not self.mongo_client:
+            return False
+
+        try:
+            self.pending_collection.insert_one(tender)
+            return True
+        except Exception as e:
+            logger.error(f"❌ Erreur save pending: {e}")
+            return False
+
+# ===== FLASK APP =====
+app = Flask(__name__)
+CORS(app, origins="*")
+
+# Instance du scraper
+scraper = BeninFlaskScraper()
+is_processing = False
+
+@app.route('/api/health', methods=['GET'])
+def health():
+    """Health check endpoint"""
+    return jsonify({
+        "status": "healthy",
+        "service": "Benin Scraper",
+        "port": 5012,
+        "mongodb_connected": scraper.mongo_client is not None,
+        "pending_count": len(scraper.pending_refs),
+        "validated_count": len(scraper.validated_refs),
+        "is_processing": is_processing,
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    })
+
+@app.route('/api/scrape', methods=['POST'])
+def scrape():
+    """Endpoint de scraping"""
+    global is_processing
+
+    if is_processing:
+        return jsonify({"success": False, "message": "Scraping déjà en cours"}), 409
+
+    try:
+        is_processing = True
+        data = request.json or {}
+        max_pages = data.get('max_pages', 5)
+
+        logger.info(f"📡 /api/scrape appelée (max_pages={max_pages})")
+
+        tenders = scraper.scrape_tenders(max_pages=max_pages)
+
+        return jsonify({
+            "success": True,
+            "message": f"Scraping terminé: {len(tenders)} offres trouvées",
+            "tenders_found": len(tenders)
+        })
+
+    except Exception as e:
+        logger.error(f"❌ Erreur API scrape: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+    finally:
+        is_processing = False
+
+@app.route('/api/pending', methods=['GET'])
+def get_pending():
+    """Récupère les offres en attente"""
+    try:
+        if not scraper.mongo_client:
+            return jsonify({"success": False, "error": "MongoDB non disponible"}), 503
+
+        page = int(request.args.get('page', 1))
+        limit = int(request.args.get('limit', 20))
+        skip = (page - 1) * limit
+
+        pending = list(scraper.pending_collection.find().sort("createdAt", -1).skip(skip).limit(limit))
+        total = scraper.pending_collection.count_documents({})
+
+        return jsonify({
+            "success": True,
+            "data": serialize_tenders(pending),
+            "total": total,
+            "page": page,
+            "limit": limit
+        })
+
+    except Exception as e:
+        logger.error(f"❌ Erreur get pending: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/api/validate/<reference>', methods=['POST'])
+def validate_tender(reference):
+    """Valide une offre"""
+    try:
+        if not scraper.mongo_client:
+            return jsonify({"success": False, "error": "MongoDB non disponible"}), 503
+
+        # Trouver dans pending
+        tender = scraper.pending_collection.find_one({"reference": reference})
+
+        if not tender:
+            return jsonify({"success": False, "error": "Offre non trouvée"}), 404
+
+        # Mettre à jour le status
+        tender['status'] = 'active'
+        tender['validationDate'] = datetime.now(timezone.utc).isoformat()
+
+        # Déplacer vers collection validée
+        scraper.collection.insert_one(tender)
+        scraper.pending_collection.delete_one({"reference": reference})
+
+        # Mettre à jour les sets
+        scraper.validated_refs.add(reference)
+        scraper.pending_refs.discard(reference)
+
+        logger.info(f"✅ Offre validée: {reference}")
+
+        return jsonify({
+            "success": True,
+            "message": f"Offre {reference} validée"
+        })
+
+    except Exception as e:
+        logger.error(f"❌ Erreur validation: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/api/delete/<reference>', methods=['DELETE'])
+def delete_tender(reference):
+    """Supprime une offre pending"""
+    try:
+        if not scraper.mongo_client:
+            return jsonify({"success": False, "error": "MongoDB non disponible"}), 503
+
+        result = scraper.pending_collection.delete_one({"reference": reference})
+
+        if result.deleted_count > 0:
+            scraper.pending_refs.discard(reference)
+            logger.info(f"🗑️ Offre supprimée: {reference}")
+            return jsonify({"success": True, "message": f"Offre {reference} supprimée"})
+        else:
+            return jsonify({"success": False, "error": "Offre non trouvée"}), 404
+
+    except Exception as e:
+        logger.error(f"❌ Erreur suppression: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+# Fallback route
+@app.route('/', defaults={'path': ''})
+@app.route('/<path:path>')
+def fallback(path):
+    return jsonify({
+        "service": "Benin Scraper API",
+        "version": "1.0",
+        "endpoints": [
+            "GET /api/health",
+            "POST /api/scrape",
+            "GET /api/pending",
+            "POST /api/validate/<reference>",
+            "DELETE /api/delete/<reference>"
+        ]
+    })
+
+if __name__ == '__main__':
+    print("=" * 80)
+    print("🇧🇯 SCRAPER BÉNIN - VERSION FLASK")
+    print("=" * 80)
+    print(f"📍 MongoDB: {MONGO_URI}")
+    print(f"📊 Port: 5012")
+    print("=" * 80)
+
+    app.run(host='0.0.0.0', port=5012, debug=False)

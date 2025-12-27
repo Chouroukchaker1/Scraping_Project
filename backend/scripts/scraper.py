@@ -1,0 +1,2199 @@
+import os
+import json
+import logging
+import threading
+import http.server
+import socketserver
+from datetime import datetime, timedelta, timezone
+from flask import Flask, render_template, jsonify, request, send_file
+from flask_cors import CORS
+import requests
+import pandas as pd
+from dateutil.parser import parse
+from dateutil import tz
+from bs4 import BeautifulSoup
+import re
+from urllib.parse import urljoin, urlparse
+from dotenv import load_dotenv
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException, WebDriverException
+import tenacity
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+from reportlab.lib.colors import HexColor, white, black
+from reportlab.lib.units import cm
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
+from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY
+import unicodedata
+import warnings
+import traceback
+from dataclasses import dataclass, field, asdict
+from typing import Optional, List, Dict, Tuple, Set
+import base64
+from pymongo import MongoClient
+from pymongo.errors import PyMongoError
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
+from difflib import SequenceMatcher
+from collections import defaultdict
+import sys
+
+# ✅ CORRECTION 1: Forcer l'encodage UTF-8 pour Windows
+sys.stdout.reconfigure(encoding='utf-8')
+sys.stderr.reconfigure(encoding='utf-8')
+
+warnings.filterwarnings('ignore')
+
+# Configuration MongoDB - CORRIGÉ POUR UTILISER .ENV
+load_dotenv()
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/tunip")
+DB_NAME = os.getenv("DB_NAME", "tunip")
+COLLECTION_NAME = os.getenv("BOAMP_COLLECTION_NAME", "boampvalidates")
+PENDING_COLLECTION_NAME = os.getenv("BOAMP_PENDING_COLLECTION_NAME", "boampoffres")
+
+# Configuration API
+API_BASE_URL = "https://be.appeloffres.net/api"
+LOGIN_ENDPOINT = f"{API_BASE_URL}/auth/login/"
+TENDER_ENDPOINT = f"{API_BASE_URL}/tender"
+PROMOTER_ENDPOINT = f"{API_BASE_URL}/promoter"
+FILE_ENDPOINT = f"{API_BASE_URL}/files/tender"
+BUSINESS_SECTOR_ENDPOINT = f"{API_BASE_URL}/business-sector"
+
+EMAIL = "oumayma.dahmani@tunipages.tn"
+PASSWORD = "Ah0F553KKu0A"
+DEFAULT_SOURCE_ID = "1674"
+DEFAULT_PROMOTER_ID = "223472"
+DEFAULT_AVIS_ID = "1"
+DEFAULT_PAYS_ID = "70"
+
+# Dossiers (chemins relatifs pour Docker)
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PDF_DIR = os.path.join(SCRIPT_DIR, "pdf_boamp_extraction")
+IMAGES_DIR = os.path.join(SCRIPT_DIR, "images")
+OUTPUT_DIR = os.path.join(SCRIPT_DIR, "output")
+TEMPLATES_DIR = "templates"
+REACT_BUILD_DIR = "react-frontend/build"
+
+for directory in [PDF_DIR, IMAGES_DIR, OUTPUT_DIR, TEMPLATES_DIR, REACT_BUILD_DIR]:
+    if not os.path.exists(directory):
+        os.makedirs(directory, exist_ok=True)
+
+INDEX_HTML_PATH = os.path.join(REACT_BUILD_DIR, 'index.html')
+if not os.path.exists(INDEX_HTML_PATH):
+    fallback_html = '''<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🚀 Scraper BOAMP - 71 Mots-clés</title>
+</head>
+<body>
+    <h1>📊 Scraper BOAMP - UNIQUEMENT AO avec mots-clés</h1>
+</body>
+</html>'''
+    with open(INDEX_HTML_PATH, 'w', encoding='utf-8') as f:
+        f.write(fallback_html)
+    print("✅ Interface HTML créée")
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler('scraper.log', encoding='utf-8')
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# Connexion MongoDB avec gestion d'erreur robuste
+try:
+    mongo_client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+    # Test de connexion
+    mongo_client.admin.command('ping')
+    db = mongo_client[DB_NAME]
+    tenders_collection = db[COLLECTION_NAME]
+    pending_tenders_collection = db[PENDING_COLLECTION_NAME]
+    logger.info(f"✅ MongoDB connecté: {DB_NAME} (Collections: {COLLECTION_NAME}, {PENDING_COLLECTION_NAME})")
+except Exception as e:
+    logger.error(f"❌ ERREUR CRITIQUE: Impossible de se connecter à MongoDB: {e}")
+    logger.error(f"❌ URI: {MONGO_URI}")
+    logger.error(f"❌ Les données NE SERONT PAS SAUVEGARDÉES!")
+    # Créer des objets factices pour éviter les crash
+    mongo_client = None
+    db = None
+    tenders_collection = None
+    pending_tenders_collection = None
+
+# 🔥 71 MOTS-CLÉS BOAMP - LISTE COMPLÈTE
+BOAMP_KEYWORDS_LIST = [
+    # INFORMATIQUE (11)
+    "consommable informatique",
+    "informatique etudes conseils",
+    "informatique maintenance serveurs",
+    "services reparation materiel",
+    "informatique materiel",
+    "informatique prestations services",
+    "travaux infrastructure",
+    "logiciel",
+    "progiciel",
+    "site internet",
+    "telecommunications",
+    # ÉTUDES ET CONSEIL (7)
+    "etudes",
+    "etudes amenagement urbanisme",
+    "etudes controles environnementaux",
+    "audit",
+    "assistance juridique",
+    "assistance technique",
+    "expertise comptable",
+    # BÂTIMENT (18)
+    "batiment",
+    "gros oeuvre",
+    "electricite travaux",
+    "peinture travaux",
+    "cloison faux plafond",
+    "cloture",
+    "menuiserie",
+    "etancheite",
+    "demolition",
+    "securite incendie",
+    "ascenseur",
+    "chauffage travaux",
+    "climatisation",
+    "plomberie travaux",
+    "sanitaire",
+    "revetements sols",
+    "maconnerie",
+    "decoration travaux",
+    # TRAVAUX PUBLICS (4)
+    "voirie",
+    "voirie reseaux divers",
+    "eclairage public",
+    "signalisation",
+    # MOBILIER (3)
+    "mobilier",
+    "mobilier jardin",
+    "mobilier urbain",
+    # BUREAUTIQUE (4)
+    "papeterie",
+    "articles bureau scolaires",
+    "materiel bureau",
+    "titres restaurant",
+    # ALIMENTAIRE (2)
+    "denrees alimentaires",
+    "surgeles",
+    # TEXTILE (4)
+    "textile",
+    "cuir",
+    "habillement",
+    "chaussures articles chaussants",
+    # SÉCURITÉ (2)
+    "equipements protection individuelle",
+    "videosurveillance",
+    # SANTÉ (2)
+    "consommables medicaux",
+    "materiel medical",
+    # ÉLECTRIQUE (2)
+    "materiel electrique",
+    "photovoltaique",
+    # INDUSTRIEL (4)
+    "equipement industriel",
+    "pompes",
+    "quincaillerie articles",
+    "materiaux construction",
+    # LOISIRS (8)
+    "materiel audiovisuel",
+    "equipement sportif",
+    "electromenager",
+    "espaces verts",
+    "evenementiel",
+    "impression",
+    "voyage",
+    "pneumatiques"
+]
+
+# 🔥 MAPPING AMÉLIORÉ - Basé sur le document détaillé fourni
+BOAMP_TO_API_MAPPING_IMPROVED = {
+    # INFORMATIQUE (11)
+    "consommable informatique": {
+        "mappings": [
+            {"secteur": "Matériels et Équipements Informatique", "activite": "Matériel Informatique Avancé (Serveurs, Stations de Travail, etc.)", "priorite": 1}
+        ]
+    },
+    "informatique etudes conseils": {
+        "mappings": [
+            {"secteur": "Services Informatiques et Conseils", "activite": "Gestion de Projet Informatique et Consultation", "priorite": 1},
+            {"secteur": "Etudes, conseils et assistances", "activite": "Bureau d'études, conseil, suivi, assistance des travaux et pilotage", "priorite": 2}
+        ]
+    },
+    "informatique maintenance serveurs": {
+        "mappings": [
+            {"secteur": "Maintenance et Réparation Informatique", "activite": "Contrats de Maintenance d'Infrastructure Informatique", "priorite": 1}
+        ]
+    },
+    "services reparation materiel": {
+        "mappings": [
+            {"secteur": "Maintenance et Réparation Informatique", "activite": "Services de Réparation Matérielle et de Dépannage", "priorite": 1}
+        ]
+    },
+    "informatique materiel": {
+        "mappings": [
+            {"secteur": "Matériels et Équipements Informatique", "activite": "Matériel Informatique Avancé (Serveurs, Stations de Travail, etc.)", "priorite": 1}
+        ]
+    },
+    "informatique prestations services": {
+        "mappings": [
+            {"secteur": "Services Informatiques et Conseils", "activite": "Gestion de Projet Informatique et Consultation", "priorite": 1},
+            {"secteur": "Etudes, conseils et assistances", "activite": "Bureau d'études, conseil, suivi, assistance des travaux et pilotage", "priorite": 2}
+        ]
+    },
+    "travaux infrastructure": {
+        "mappings": [
+            {"secteur": "Télécommunication & Réseaux", "activite": "Equipements, installation et câblage", "priorite": 1}
+        ]
+    },
+    "logiciel": {
+        "mappings": [
+            {"secteur": "Génie Logiciel (Informatique)", "activite": "Solutions Logicielles Personnalisées", "priorite": 1}
+        ]
+    },
+    "progiciel": {
+        "mappings": [
+            {"secteur": "Génie Logiciel (Informatique)", "activite": "Solutions Logicielles Personnalisées", "priorite": 1}
+        ]
+    },
+    "site internet": {
+        "mappings": [
+            {"secteur": "Génie Logiciel (Informatique)", "activite": "Solutions Logicielles Personnalisées", "priorite": 1}
+        ]
+    },
+    "telecommunications": {
+        "mappings": [
+            {"secteur": "Télécommunication & Réseaux", "activite": "Equipements, installation et câblage", "priorite": 1}
+        ]
+    },
+    # ÉTUDES ET CONSEIL (7)
+    "etudes": {
+        "mappings": [
+            {"secteur": "Etudes, conseils et assistances", "activite": "Bureau d'études, conseil, suivi, assistance des travaux et pilotage", "priorite": 1}
+        ]
+    },
+    "etudes amenagement urbanisme": {
+        "mappings": [
+            {"secteur": "Etudes, conseils et assistances", "activite": "Bureau d'études, conseil, suivi, assistance des travaux et pilotage", "priorite": 1}
+        ]
+    },
+    "etudes controles environnementaux": {
+        "mappings": [
+            {"secteur": "Environnement", "activite": "Bureau d'études en environnement", "priorite": 1}
+        ]
+    },
+    "audit": {
+        "mappings": [
+            {"secteur": "Etudes, conseils et assistances", "activite": "Audit et Certification", "priorite": 1}
+        ]
+    },
+    "assistance juridique": {
+        "mappings": [
+            {"secteur": "Etudes, conseils et assistances", "activite": "Comptabilité, finances et services juridiques", "priorite": 1}
+        ]
+    },
+    "assistance technique": {
+        "mappings": [
+            {"secteur": "Etudes, conseils et assistances", "activite": "Bureau d'études, conseil, suivi, assistance des travaux et pilotage", "priorite": 1}
+        ]
+    },
+    "expertise comptable": {
+        "mappings": [
+            {"secteur": "Etudes, conseils et assistances", "activite": "Comptabilité, finances et services juridiques", "priorite": 1}
+        ]
+    },
+    # BÂTIMENT (18)
+    "batiment": {
+        "mappings": [
+            {"secteur": "Bâtiment", "activite": "Bâtiment - Entreprise générale", "priorite": 1}
+        ]
+    },
+    "gros oeuvre": {
+        "mappings": [
+            {"secteur": "Bâtiment", "activite": "Bâtiment - Entreprise générale", "priorite": 1}
+        ]
+    },
+    "electricite travaux": {
+        "mappings": [
+            {"secteur": "Bâtiment", "activite": "Electricité", "priorite": 1}
+        ]
+    },
+    "peinture travaux": {
+        "mappings": [
+            {"secteur": "Bâtiment", "activite": "Peinture et vitrerie", "priorite": 1}
+        ]
+    },
+    "cloison faux plafond": {
+        "mappings": [
+            {"secteur": "Bâtiment", "activite": "Faux plafond et décoration Plâtre", "priorite": 1}
+        ]
+    },
+    "cloture": {
+        "mappings": [
+            {"secteur": "Bâtiment", "activite": "Bâtiment - Entreprise générale", "priorite": 1}
+        ]
+    },
+    "menuiserie": {
+        "mappings": [
+            {"secteur": "Bâtiment", "activite": "Menuiserie et Bois", "priorite": 1},
+            {"secteur": "Bâtiment", "activite": "Menuiserie Aluminium et PVC", "priorite": 2},
+            {"secteur": "Bâtiment", "activite": "Menuiserie métallique", "priorite": 2}
+        ]
+    },
+    "etancheite": {
+        "mappings": [
+            {"secteur": "Bâtiment", "activite": "Etanchéité", "priorite": 1}
+        ]
+    },
+    "demolition": {
+        "mappings": [
+            {"secteur": "Bâtiment", "activite": "Bâtiment - Entreprise générale", "priorite": 1}
+        ]
+    },
+    "securite incendie": {
+        "mappings": [
+            {"secteur": "Bâtiment", "activite": "Sécurité - Incendie", "priorite": 1},
+            {"secteur": "Bâtiment", "activite": "Lutte contre l'incendie", "priorite": 2}
+        ]
+    },
+    "ascenseur": {
+        "mappings": [
+            {"secteur": "Bâtiment", "activite": "Ascenseurs", "priorite": 1}
+        ]
+    },
+    "chauffage travaux": {
+        "mappings": [
+            {"secteur": "Bâtiment", "activite": "Equipements sanitaires, fluides et climatisation", "priorite": 1}
+        ]
+    },
+    "climatisation": {
+        "mappings": [
+            {"secteur": "Bâtiment", "activite": "Equipements sanitaires, fluides et climatisation", "priorite": 1},
+            {"secteur": "Equipements et Fournitures pour Commerce et Bureau", "activite": "Electroménager", "priorite": 2}
+        ]
+    },
+    "plomberie travaux": {
+        "mappings": [
+            {"secteur": "Bâtiment", "activite": "Equipements sanitaires, fluides et climatisation", "priorite": 1}
+        ]
+    },
+    "sanitaire": {
+        "mappings": [
+            {"secteur": "Bâtiment", "activite": "Equipements sanitaires, fluides et climatisation", "priorite": 1}
+        ]
+    },
+    "revetements sols": {
+        "mappings": [
+            {"secteur": "Bâtiment", "activite": "Revêtement du sol et faux plancher", "priorite": 1}
+        ]
+    },
+    "maconnerie": {
+        "mappings": [
+            {"secteur": "Bâtiment", "activite": "Bâtiment - Entreprise générale", "priorite": 1}
+        ]
+    },
+    "decoration travaux": {
+        "mappings": [
+            {"secteur": "Services", "activite": "Agencement, salon et décoration", "priorite": 1}
+        ]
+    },
+    # TRAVAUX PUBLICS (4)
+    "voirie": {
+        "mappings": [
+            {"secteur": "Travaux Public", "activite": "Route - Entreprise générale", "priorite": 1}
+        ]
+    },
+    "voirie reseaux divers": {
+        "mappings": [
+            {"secteur": "Travaux Public", "activite": "VRD - Entreprise générale", "priorite": 1}
+        ]
+    },
+    "eclairage public": {
+        "mappings": [
+            {"secteur": "Travaux Public", "activite": "Eclairage public", "priorite": 1}
+        ]
+    },
+    "signalisation": {
+        "mappings": [
+            {"secteur": "Travaux Public", "activite": "Signalisation", "priorite": 1}
+        ]
+    },
+    # MOBILIER (3)
+    "mobilier": {
+        "mappings": [
+            {"secteur": "Meubles et Mobiliers", "activite": "Mobiliers divers", "priorite": 1}
+        ]
+    },
+    "mobilier jardin": {
+        "mappings": [
+            {"secteur": "Meubles et Mobiliers", "activite": "Mobiliers divers", "priorite": 1}
+        ]
+    },
+    "mobilier urbain": {
+        "mappings": [
+            {"secteur": "Meubles et Mobiliers", "activite": "Mobiliers divers", "priorite": 1}
+        ]
+    },
+    # BUREAUTIQUE (4)
+    "papeterie": {
+        "mappings": [
+            {"secteur": "Bureautique, Equipements et Fourniture", "activite": "Papiers, imprimés et livres scolaires", "priorite": 1}
+        ]
+    },
+    "articles bureau scolaires": {
+        "mappings": [
+            {"secteur": "Bureautique, Equipements et Fourniture", "activite": "Papiers, imprimés et livres scolaires", "priorite": 1},
+            {"secteur": "Bureautique, Equipements et Fourniture", "activite": "Consommables de bureaux", "priorite": 2}
+        ]
+    },
+    "materiel bureau": {
+        "mappings": [
+            {"secteur": "Bureautique, Equipements et Fourniture", "activite": "Consommables de bureaux", "priorite": 1},
+            {"secteur": "Bureautique, Equipements et Fourniture", "activite": "Fourniture et consommables d'imprimerie", "priorite": 2}
+        ]
+    },
+    "titres restaurant": {
+        "mappings": [
+            {"secteur": "Bureautique, Equipements et Fournitures", "activite": "Articles de cadeaux, semainiers, agendas, porte documents", "priorite": 1}
+        ]
+    },
+    # ALIMENTAIRE (2)
+    "denrees alimentaires": {
+        "mappings": [
+            {"secteur": "Agro-alimentaires", "activite": "Produits alimentaires", "priorite": 1}
+        ]
+    },
+    "surgeles": {
+        "mappings": [
+            {"secteur": "Agro-alimentaires", "activite": "Produits alimentaires", "priorite": 1}
+        ]
+    },
+    # TEXTILE (4)
+    "textile": {
+        "mappings": [
+            {"secteur": "Cuir et Habillement", "activite": "Habillement", "priorite": 1}
+        ]
+    },
+    "cuir": {
+        "mappings": [
+            {"secteur": "Cuir et Habillement", "activite": "Cuir et Chaussures", "priorite": 1}
+        ]
+    },
+    "habillement": {
+        "mappings": [
+            {"secteur": "Cuir et Habillement", "activite": "Habillement", "priorite": 1}
+        ]
+    },
+    "chaussures articles chaussants": {
+        "mappings": [
+            {"secteur": "Cuir et Habillement", "activite": "Cuir et Chaussures", "priorite": 1}
+        ]
+    },
+    # SÉCURITÉ (2)
+    "equipements protection individuelle": {
+        "mappings": [
+            {"secteur": "Equipements et Fournitures de Sécurité et Contrôle", "activite": "Equipement de sécurité et de contrôle d'accès", "priorite": 1}
+        ]
+    },
+    "videosurveillance": {
+        "mappings": [
+            {"secteur": "Equipements et Fournitures de Sécurité et Contrôle", "activite": "Equipement de sécurité et de contrôle d'accès", "priorite": 1},
+            {"secteur": "Equipements et Fournitures Industriels", "activite": "vidéo-Surveillance", "priorite": 2}
+        ]
+    },
+    # SANTÉ (2)
+    "consommables medicaux": {
+        "mappings": [
+            {"secteur": "Equipements et Fournitures de santé", "activite": "Equipements et fournitures hospitaliers", "priorite": 1}
+        ]
+    },
+    "materiel medical": {
+        "mappings": [
+            {"secteur": "Equipements et Fournitures de santé", "activite": "Equipements et fournitures hospitaliers", "priorite": 1}
+        ]
+    },
+    # ÉLECTRIQUE (2)
+    "materiel electrique": {
+        "mappings": [
+            {"secteur": "Electrique, Electronique et Automatisme", "activite": "Matériels électriques et composants", "priorite": 1}
+        ]
+    },
+    "photovoltaique": {
+        "mappings": [
+            {"secteur": "Energie photovoltaïque", "activite": "Panneaux Photovoltaïques et Chauffe-eau solaires", "priorite": 1}
+        ]
+    },
+    # INDUSTRIEL (4)
+    "equipement industriel": {
+        "mappings": [
+            {"secteur": "Equipements et Fournitures Industriels", "activite": "Equipements et fournitures industriels", "priorite": 1}
+        ]
+    },
+    "pompes": {
+        "mappings": [
+            {"secteur": "Equipements et Fournitures Industriels", "activite": "Equipements de Pompage", "priorite": 1}
+        ]
+    },
+    "quincaillerie articles": {
+        "mappings": [
+            {"secteur": "Equipements et Fournitures Industriels", "activite": "Quincaillerie", "priorite": 1}
+        ]
+    },
+    "materiaux construction": {
+        "mappings": [
+            {"secteur": "Equipements et Fournitures pour Bâtiment et Travaux Publics (BTP)", "activite": "Matériaux de construction", "priorite": 1},
+            {"secteur": "Verre, céramique et matériaux de construction", "activite": "Matériaux de construction", "priorite": 2}
+        ]
+    },
+    # LOISIRS (8)
+    "materiel audiovisuel": {
+        "mappings": [
+            {"secteur": "Equipements et Fournitures pour Loisirs et Divertissement", "activite": "Equipements audio-visuels, musicaux et culturels", "priorite": 1}
+        ]
+    },
+    "equipement sportif": {
+        "mappings": [
+            {"secteur": "Equipements et Fournitures pour Loisirs et Divertissement", "activite": "Equipement sportif et de divertissement", "priorite": 1}
+        ]
+    },
+    "electromenager": {
+        "mappings": [
+            {"secteur": "Equipements et Fournitures pour Commerce et Bureau", "activite": "Electroménager", "priorite": 1}
+        ]
+    },
+    "espaces verts": {
+        "mappings": [
+            {"secteur": "Services", "activite": "Entretien des espaces verts", "priorite": 1}
+        ]
+    },
+    "evenementiel": {
+        "mappings": [
+            {"secteur": "Services", "activite": "Communication, publicité et événement", "priorite": 1}
+        ]
+    },
+    "impression": {
+        "mappings": [
+            {"secteur": "Services", "activite": "Edition et impression", "priorite": 1}
+        ]
+    },
+    "voyage": {
+        "mappings": [
+            {"secteur": "Services", "activite": "Voyages et Hébergement", "priorite": 1}
+        ]
+    },
+    "pneumatiques": {
+        "mappings": [
+            {"secteur": "Véhicules et Accessoires", "activite": "Pièces de rechange, pneumatiques et autres", "priorite": 1}
+        ]
+    }
+}
+
+def similarity(a: str, b: str) -> float:
+    """Calcule la similarité entre deux chaînes"""
+    return SequenceMatcher(None, a.lower(), b.lower()).ratio()
+
+def capitalize_first_word(text: str) -> str:
+    """Capitalise le premier mot d'une chaîne"""
+    if not text:
+        return text
+    words = text.split()
+    if words:
+        words[0] = words[0].capitalize()
+        return ' '.join(words)
+    return text
+
+@dataclass
+class OffreBase:
+    createdAt: str = ""
+    updatedAt: str = ""
+    extractionDate: str = ""
+    deletedAt: Optional[str] = None
+    status: str = "pending"
+    description: str = ""
+    full_content: str = ""
+    expirationDate: str = ""
+    publicationDate: str = ""
+    startBiddingDate: Optional[str] = None
+    type: str = "international"
+    reference: str = ""
+    specificationsReceivingAddress: str = ""
+    offerValidityPeriod: str = ""
+    nature: str = "public"
+    fundingSource: Optional[str] = None
+    fundingSourceType: str = "national"
+    isMultiCurrency: bool = False
+    sourceId: Optional[str] = None
+    promoterId: Optional[str] = None
+    currencyId: str = "4"
+    createdById: Optional[str] = None
+    updatedById: Optional[str] = None
+    pays: str = "France"
+    source: str = "BOAMP"
+    promoter: str = ""
+    pieces_jointes: List[str] = field(default_factory=list)
+    cahier_charge: str = ""
+    cahier_charge_pdf: str = ""
+    cahier_charge_pdf_filename: str = ""
+    cahier_charge_pdf_base64: str = ""
+    image_filename: str = ""
+    image_base64: str = ""
+    lots: List[Dict] = field(default_factory=list)
+    mots_cles_detectes: List[str] = field(default_factory=list)
+    avis: str = "appel d'offre"
+    secteur_activite: str = ""
+    secteur_activite_id: Optional[int] = None
+    activities_ids: List[int] = field(default_factory=list)
+    procedure: str = "N/A"
+    type_marche: str = "Public"
+    url_source: str = ""
+    validationDate: Optional[str] = None
+
+    def __post_init__(self):
+        if not self.createdAt:
+            self.createdAt = datetime.now().isoformat()
+        if not self.updatedAt:
+            self.updatedAt = datetime.now().isoformat()
+        if not self.extractionDate:
+            self.extractionDate = datetime.now().isoformat()
+
+    def to_dict(self):
+        return asdict(self)
+
+class BOAMPScraperAllSectors:
+    def __init__(self, use_selenium=False, skip_s3=True):
+        self.api_url = "https://boamp-datadila.opendatasoft.com/api/records/1.0/search/"
+        self.dataset = "boamp"
+        self.session = requests.Session()
+        self.use_selenium = False  # Désactivé par défaut
+        self.driver = None
+        self.access_token = None
+        self.session_appeloffres = requests.Session()
+        self.promoter_cache = {}
+        self.secteurs_cache = {}
+        self.offres_cache = []
+        self.existing_offres_set = set()
+        self.validated_references_set = set()
+        self.logger = logging.getLogger(__name__)
+        self.pdf_dir = PDF_DIR
+        self.images_dir = IMAGES_DIR
+        self.output_dir = OUTPUT_DIR
+        self.skip_s3 = True  # Désactivé par défaut
+   
+        # ATTRIBUTS POUR 71 MOTS-CLÉS BOAMP
+        self.api_business_sectors = {}
+        self.boamp_to_api_ids = {}
+        self.boamp_keywords = BOAMP_KEYWORDS_LIST
+        self.search_queries = self._build_search_queries_from_keywords()
+        self.stats_tracking = {
+            "keywords_searched": 0,
+            "queries_executed": 0,
+            "duplicates_avoided": 0,
+            "rejected_no_keywords": 0,
+            "accepted_with_keywords": 0
+        }
+   
+        self.headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/129.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8",
+        }
+        self.session.headers.update(self.headers)
+   
+        self.appeloffres_headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+   
+        self.default_source_id = DEFAULT_SOURCE_ID
+        self.default_promoter_id = DEFAULT_PROMOTER_ID
+   
+        # INITIALISATION RAPIDE - Pas de Selenium
+        self.logger.info("Initialisation rapide - Selenium desactive")
+
+        # CHARGEMENT DIFFÉRÉ - Seulement si nécessaire
+        self.initialized = False
+
+        # Charger les données existantes depuis MongoDB
+        self._load_existing_data_from_mongodb()
+
+    def _load_existing_data_from_mongodb(self):
+        """Charge les références existantes depuis MongoDB au démarrage"""
+        try:
+            if tenders_collection is None or pending_tenders_collection is None:
+                self.logger.warning("⚠️ MongoDB non connecté - Impossible de charger les données existantes")
+                return
+
+            # Charger les offres validées
+            validated_count = 0
+            for doc in tenders_collection.find({}, {"reference": 1}):
+                ref = doc.get("reference")
+                if ref:
+                    self.validated_references_set.add(ref)
+                    validated_count += 1
+
+            # Charger les offres en attente
+            pending_count = 0
+            for doc in pending_tenders_collection.find({}, {"reference": 1, "description": 1}):
+                ref = doc.get("reference")
+                desc = doc.get("description", "")
+                if ref:
+                    desc_hash = hash(desc)
+                    self.existing_offres_set.add((ref, desc_hash))
+                    pending_count += 1
+
+            self.logger.info(f"📦 Chargé depuis MongoDB: {validated_count} validées, {pending_count} en attente")
+        except Exception as e:
+            self.logger.error(f"❌ Erreur chargement données MongoDB: {e}")
+
+    def fetch_api_business_sectors(self) -> bool:
+        """Récupère TOUS les secteurs depuis l'API"""
+        try:
+            self.logger.info("Récupération des secteurs depuis l'API...")
+            all_sectors = []
+            page = 1
+            items_per_page = 100
+       
+            while True:
+                url = f"{BUSINESS_SECTOR_ENDPOINT}?page={page}&itemsPerPage={items_per_page}"
+                response = self.session_appeloffres.get(url, headers=self.appeloffres_headers, timeout=30)
+           
+                if response.status_code != 200:
+                    self.logger.error(f"Erreur API secteurs: Status {response.status_code}")
+                    break
+           
+                data = response.json()
+                results = data.get("results", [])
+           
+                if not results:
+                    break
+           
+                all_sectors.extend(results)
+                self.logger.info(f"Page {page}: {len(results)} secteurs récupérés")
+           
+                total_items = data.get("totalItems", 0)
+                if len(all_sectors) >= total_items:
+                    break
+           
+                page += 1
+                time.sleep(0.2)
+       
+            # Stocker les secteurs
+            for sector in all_sectors:
+                sector_id = sector.get("id")
+                if sector_id:
+                    activities = []
+                    for activity in sector.get("activities", []):
+                        activities.append({
+                            "id": activity.get("id"),
+                            "name": activity.get("name", "").strip(),
+                            "name_clean": self.nettoyer_texte(activity.get("name", ""))
+                        })
+               
+                    self.api_business_sectors[sector_id] = {
+                        "id": sector_id,
+                        "name": sector.get("name", "").strip(),
+                        "name_clean": self.nettoyer_texte(sector.get("name", "")),
+                        "description": sector.get("description", ""),
+                        "isEnabled": sector.get("isEnabled", True),
+                        "activities": activities
+                    }
+       
+            self.logger.info(f"{len(self.api_business_sectors)} secteurs API chargés")
+            return True
+       
+        except Exception as e:
+            self.logger.error(f"Erreur récupération secteurs: {e}")
+            return False
+
+    def build_boamp_to_api_mapping_improved(self):
+        """Construit le mapping BOAMP → IDs API réels - VERSION AMÉLIORÉE avec gestion multi-secteurs"""
+        self.logger.info("Construction du mapping BOAMP -> API (VERSION AMELIOREE)...")
+   
+        mapped_count = 0
+        multi_sector_count = 0
+   
+        for boamp_keyword, mapping_config in BOAMP_TO_API_MAPPING_IMPROVED.items():
+            mappings_list = mapping_config.get("mappings", [])
+       
+            mapped_sectors = []
+       
+            for mapping_info in mappings_list:
+                target_sector_name = mapping_info["secteur"]
+                target_activity_name = mapping_info["activite"]
+                priorite = mapping_info.get("priorite", 1)
+           
+                # Recherche du secteur
+                best_sector_id = None
+                best_sector_score = 0
+           
+                for sector_id, sector_data in self.api_business_sectors.items():
+                    score = similarity(target_sector_name, sector_data["name"])
+                    if score > best_sector_score:
+                        best_sector_score = score
+                        best_sector_id = sector_id
+           
+                if best_sector_id and best_sector_score > 0.5:
+                    sector = self.api_business_sectors[best_sector_id]
+                    best_activity_id = None
+                    best_activity_score = 0
+               
+                    for activity in sector["activities"]:
+                        score = similarity(target_activity_name, activity["name"])
+                        if score > best_activity_score:
+                            best_activity_score = score
+                            best_activity_id = activity["id"]
+               
+                    if best_activity_id and best_activity_score > 0.4:
+                        mapped_sectors.append({
+                            "secteur_id": best_sector_id,
+                            "secteur_name": sector["name"],
+                            "activite_id": best_activity_id,
+                            "activite_name": next(a["name"] for a in sector["activities"] if a["id"] == best_activity_id),
+                            "sector_score": best_sector_score,
+                            "activity_score": best_activity_score,
+                            "priorite": priorite
+                        })
+       
+            # Trier par priorité puis par score
+            mapped_sectors.sort(key=lambda x: (-x["priorite"], -x["sector_score"], -x["activity_score"]))
+       
+            if mapped_sectors:
+                self.boamp_to_api_ids[boamp_keyword] = {
+                    "primary": mapped_sectors[0],
+                    "all_mappings": mapped_sectors,
+                    "has_multiple": len(mapped_sectors) > 1
+                }
+                mapped_count += 1
+           
+                if len(mapped_sectors) > 1:
+                    multi_sector_count += 1
+                    self.logger.info(f"'{boamp_keyword}': {len(mapped_sectors)} secteurs possibles")
+   
+        self.logger.info(f"{mapped_count}/{len(BOAMP_TO_API_MAPPING_IMPROVED)} mots-clés BOAMP mappés")
+        self.logger.info(f"{multi_sector_count} mots-clés avec secteurs multiples")
+
+    def _build_search_queries_from_keywords(self) -> List[Dict]:
+        """Construit les requêtes à partir des 71 mots-clés - UNE REQUÊTE PAR MOT-CLÉ avec OR pour multi-mots"""
+        queries = []
+   
+        for i, kw in enumerate(self.boamp_keywords, 1):
+            words = kw.split()
+            if len(words) > 1:
+                # OR entre mots pour élargir la recherche
+                query_str = ' OR '.join(f'"{word}"' for word in words)
+            else:
+                query_str = f'"{kw}"'
+       
+            queries.append({
+                "type": "boamp_keyword_individual",
+                "query": query_str,
+                "keywords": [kw],
+                "query_number": i
+            })
+   
+        self.logger.info(f"{len(queries)} requêtes construites (1 par mot-clé, avec OR pour multi-mots)")
+        return queries
+
+    def detect_boamp_keywords(self, texte: str) -> List[str]:
+        """Détecte les mots-clés BOAMP dans le texte - Amélioré pour plus de flexibilité"""
+        texte_clean = self.nettoyer_texte(texte)
+        detected = []
+   
+        for keyword in self.boamp_keywords:
+            keyword_clean = self.nettoyer_texte(keyword)
+       
+            # Si mot-clé multi-mots, vérifier présence de tous les mots
+            if ' ' in keyword_clean:
+                words = keyword_clean.split()
+                all_words_present = all(word in texte_clean for word in words)
+                if all_words_present:
+                    detected.append(keyword)
+            else:
+                # Pour mots simples, exact match
+                if keyword_clean in texte_clean:
+                    detected.append(keyword)
+   
+        return detected
+
+    def assigner_secteur_automatique(self, texte: str, detected_keywords: List[str] = None, associated_keywords: List[str] = None) -> Optional[Tuple[str, int, List[int]]]:
+        """Détection basée sur 71 mots-clés BOAMP avec gestion multi-secteurs
+        Retourne: (secteur_name, secteur_id, [activite_ids])
+        Retourne None si aucun mot-clé"""
+   
+        if associated_keywords:
+            keywords_to_use = associated_keywords
+        elif detected_keywords:
+            keywords_to_use = detected_keywords
+        else:
+            detected_keywords = self.detect_boamp_keywords(texte)
+            if not detected_keywords:
+                return None
+            keywords_to_use = detected_keywords
+   
+        # Utiliser le premier keyword mappé avec le meilleur score
+        best_mapping = None
+        best_keyword = None
+   
+        for keyword in keywords_to_use:
+            if keyword in self.boamp_to_api_ids:
+                mapping = self.boamp_to_api_ids[keyword]
+                primary = mapping["primary"]
+           
+                # Si on n'a pas encore de mapping ou si celui-ci est meilleur
+                if best_mapping is None or primary["sector_score"] > best_mapping["sector_score"]:
+                    best_mapping = primary
+                    best_keyword = keyword
+   
+        if best_mapping:
+            secteur_id = best_mapping["secteur_id"]
+            secteur_name = best_mapping["secteur_name"]
+            activite_id = best_mapping["activite_id"]
+       
+            # Si le keyword a plusieurs mappings possibles, collecter toutes les activités
+            if best_keyword and self.boamp_to_api_ids[best_keyword].get("has_multiple"):
+                all_activity_ids = [m["activite_id"] for m in self.boamp_to_api_ids[best_keyword]["all_mappings"]]
+                # Limiter à 3 activités max pour éviter la surcharge
+                activity_ids = all_activity_ids[:3]
+            else:
+                activity_ids = [activite_id]
+       
+            return secteur_name, secteur_id, activity_ids
+   
+        return None
+
+    def _load_validated_references(self):
+        try:
+            validated_docs = tenders_collection.find({"status": "active"}, {"reference": 1})
+            self.validated_references_set = {doc["reference"] for doc in validated_docs}
+            self.logger.info(f"{len(self.validated_references_set)} références validées")
+        except PyMongoError as e:
+            self.logger.error(f"Erreur: {e}")
+
+    def _load_existing_offres_set(self):
+        try:
+            pending_docs = list(pending_tenders_collection.find({"status": "pending"}).sort("createdAt", -1))
+            for doc in pending_docs:
+                ref = doc.get("reference", "")
+                desc_hash = hash(doc.get("description", ""))
+                self.existing_offres_set.add((ref, desc_hash))
+            self.logger.info(f"{len(self.existing_offres_set)} doublons pending")
+        except PyMongoError as e:
+            self.logger.error(f"Erreur: {e}")
+
+    def load_pending_offers(self):
+        try:
+            pending_docs = list(pending_tenders_collection.find({"status": "pending"}).sort("createdAt", -1))
+            self.offres_cache = []
+            for doc in pending_docs:
+                doc_without_id = {k: v for k, v in doc.items() if k != '_id'}
+           
+                # CORRECTION: Mapper les anciens noms de champs vers les nouveaux
+                if 'avisId' in doc_without_id:
+                    doc_without_id.pop('avisId')  # Supprimer le champ incompatible
+           
+                # Filtrer uniquement les champs valides pour OffreBase
+                valid_fields = {}
+                offre_fields = OffreBase.__dataclass_fields__.keys()
+                for key, value in doc_without_id.items():
+                    if key in offre_fields:
+                        valid_fields[key] = value
+           
+                offre = OffreBase(**valid_fields)
+                self.offres_cache.append(offre)
+                desc_hash = hash(offre.description)
+                self.existing_offres_set.add((offre.reference, desc_hash))
+            self.logger.info(f"{len(self.offres_cache)} offres pending")
+        except PyMongoError as e:
+            self.logger.error(f"Erreur: {e}")
+        except Exception as e:
+            self.logger.error(f"Erreur load_pending_offers: {e}")
+
+    def __del__(self):
+        if self.driver:
+            try:
+                self.driver.quit()
+            except Exception:
+                pass
+
+    def generer_pdf_path(self, filename: str) -> str:
+        return os.path.join(self.pdf_dir, filename).replace('\\', '/')
+
+    def generer_image_path(self, filename: str) -> str:
+        return os.path.join(self.images_dir, filename).replace('\\', '/')
+
+    def pdf_to_base64(self, pdf_path: str) -> str:
+        try:
+            if os.path.exists(pdf_path):
+                file_size = os.path.getsize(pdf_path)
+                if file_size > 100:
+                    with open(pdf_path, 'rb') as pdf_file:
+                        return base64.b64encode(pdf_file.read()).decode('utf-8')
+        except Exception as e:
+            self.logger.error(f"Erreur base64: {e}")
+        return ""
+
+    @tenacity.retry(stop=tenacity.stop_after_attempt(3), wait=tenacity.wait_exponential(multiplier=1, min=4, max=10))
+    def login_appeloffres(self) -> bool:
+        if self.access_token:
+            return True
+        try:
+            payload = {"email": EMAIL, "password": PASSWORD}
+            headers = {"Content-Type": "application/json", "Accept": "application/json"}
+            response = self.session_appeloffres.post(LOGIN_ENDPOINT, json=payload, headers=headers, timeout=30)
+            if response.status_code in [200, 201]:
+                data = response.json()
+                self.access_token = data.get("accessToken")
+                if self.access_token:
+                    self.appeloffres_headers["Authorization"] = f"Bearer {self.access_token}"
+                    self.logger.info("Connexion API réussie")
+                    return True
+            return False
+        except Exception as e:
+            self.logger.error(f"Erreur connexion: {e}")
+            return False
+
+    def upload_file_to_s3(self, file_path: str) -> str:
+        if not os.path.exists(file_path):
+            return ""
+   
+        file_size = os.path.getsize(file_path)
+        if file_size <= 100:
+            return ""
+   
+        if not self.login_appeloffres():
+            return ""
+   
+        try:
+            with open(file_path, 'rb') as f:
+                files = {'file': (os.path.basename(file_path), f, 'application/pdf')}
+                data = {'tender': '100'}
+                response = self.session_appeloffres.post(FILE_ENDPOINT, files=files, data=data, headers={'Authorization': f"Bearer {self.access_token}"}, timeout=60)
+           
+                if response.status_code in [200, 201]:
+                    resp_json = response.json()
+                    url = resp_json.get('url', '')
+                    if url:
+                        parsed = urlparse(url)
+                        s3_path = parsed.path.lstrip('/')
+                        s3_path = re.sub(r'^tender-s3-prod/', '', s3_path)
+                        return s3_path
+        except Exception as e:
+            self.logger.error(f"Upload S3: {e}")
+        return ""
+
+    def get_or_create_promoter(self, promoter_name: str) -> str:
+        if not promoter_name:
+            return self.default_promoter_id
+   
+        clean_name = self.nettoyer_texte(promoter_name)
+        if clean_name in self.promoter_cache:
+            return self.promoter_cache[clean_name]
+   
+        if not self.login_appeloffres():
+            return self.default_promoter_id
+   
+        capitalized_promoter = capitalize_first_word(promoter_name)
+   
+        payload = {
+            "name": capitalized_promoter[:100],
+            "description": f"Promoteur BOAMP: {capitalized_promoter[:100]}",
+            "reference": re.sub(r'\W+', '_', promoter_name.upper())[:20],
+            "isEnabled": True,
+            "companyName": capitalized_promoter[:100],
+            "address": {"street": "1 Rue", "city": "Paris", "country": "France", "postalCode": "75001"}
+        }
+   
+        try:
+            response = self.session_appeloffres.post(PROMOTER_ENDPOINT, json=payload, headers=self.appeloffres_headers, timeout=30)
+            if response.status_code in [200, 201]:
+                promoter_id = response.json().get("id")
+                self.promoter_cache[clean_name] = str(promoter_id)
+                return str(promoter_id)
+            return self.default_promoter_id
+        except Exception as e:
+            return self.default_promoter_id
+
+    def clean_date_str(self, date_str: str) -> str:
+        if not date_str:
+            return ""
+        date_str = re.sub(r'[\u200E\u200F\u202A-\u202E]', '', date_str)
+        date_str = re.sub(r'[^\d/\-\s:]+', '', date_str)
+        return date_str.strip()
+
+    def format_date_to_french(self, date_text: str) -> str:
+        date_text = self.clean_date_str(date_text)
+        if not date_text or date_text in ["N/A", "None", "null", ""]:
+            return "N/A"
+        try:
+            date_text = re.sub(r'(\d{4})-(\d{2})-(\d{2})(\d{2}):(\d{2}):(\d{2})', r'\1-\2-\3 \4:\5:\6', date_text)
+            date_text = re.sub(r'(\d{2}:\d{2}:\d{2})00:00$', r'\1', date_text)
+            date_text = re.sub(r'h', ':', date_text)
+            date_text = re.sub(r'\s+', ' ', date_text).strip()
+            parsed_date = parse(date_text, fuzzy=True, dayfirst=True, tzinfos={None: tz.gettz('Europe/Paris')})
+            return f"{parsed_date.strftime('%d/%m/%Y')} {parsed_date.strftime('%H:%M')}"
+        except Exception as e:
+            try:
+                date_match = re.search(r'(\d{4})-(\d{2})-(\d{2})|(\d{2})/(\d{2})/(\d{4})', date_text)
+                if date_match:
+                    if date_match.group(1):
+                        year, month, day = date_match.group(1), date_match.group(2), date_match.group(3)
+                        return f"{day}/{month}/{year} 08:00"
+                    else:
+                        day, month, year = date_match.group(4), date_match.group(5), date_match.group(6)
+                        return f"{day}/{month}/{year} 08:00"
+            except:
+                pass
+        return "N/A"
+
+    def normaliser_date_api(self, date_text: str) -> str:
+        return self.format_date_to_french(date_text)
+
+    @tenacity.retry(stop=tenacity.stop_after_attempt(3), wait=tenacity.wait_exponential(multiplier=1, min=4, max=10))
+    def extraire_date_limite_via_api_boamp(self, id_offre: str) -> str:
+        try:
+            params = {"dataset": "boamp", "q": f"idweb:{id_offre}", "rows": 1}
+            response = self.session.get(self.api_url, params=params, timeout=15)
+            if response.status_code == 200:
+                records = response.json().get("records", [])
+                if records:
+                    fields = records[0].get("fields", {})
+                    date_fields_priority = ['datelimite', 'datelimitereponse', 'date_limite', 'datefin', 'deadline', 'date_limite_reception', 'date_limite_depot']
+                    for date_field in date_fields_priority:
+                        if date_field in fields and fields[date_field]:
+                            date_value = str(fields[date_field]).strip()
+                            if date_value:
+                                normalized = self.format_date_to_french(date_value)
+                                if normalized != "N/A" and re.match(r'\d{2}/\d{2}/\d{4} \d{2}:\d{2}', normalized):
+                                    return normalized
+                    # Fallback: Chercher dans le texte libre si pas de champ dédié
+                    texte_libre = fields.get('libelle_cpv', '') + ' ' + fields.get('objet', '')
+                    date_patterns = [
+                        r'(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\s*(?:à|a)\s*(\d{1,2}h(?:\d{2})?)',
+                        r'date\s+limite[:\s]*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
+                        r'(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
+                    ]
+                    for pattern in date_patterns:
+                        matches = re.finditer(pattern, texte_libre)
+                        for match in matches:
+                            date_str = match.group(1)
+                            normalized = self.format_date_to_french(date_str)
+                            if normalized != "N/A":
+                                return normalized
+            return "N/A"
+        except Exception as e:
+            self.logger.error(f"Erreur extraction date limite {id_offre}: {e}")
+            return "N/A"
+
+    @tenacity.retry(stop=tenacity.stop_after_attempt(3), wait=tenacity.wait_exponential(multiplier=1, min=4, max=10))
+    def telecharger_pdf_boamp(self, pdf_url: str, id_offre: str) -> Tuple[str, str]:
+        try:
+            if not pdf_url or not id_offre:
+                return "", ""
+       
+            filename = f"{id_offre}.pdf"
+            pdf_path = self.generer_pdf_path(filename)
+       
+            if os.path.exists(pdf_path):
+                file_size = os.path.getsize(pdf_path)
+                if file_size > 100:
+                    self.logger.info(f"PDF déjà existant: {filename}")
+                    return pdf_path, filename
+                else:
+                    os.remove(pdf_path)
+       
+            self.logger.info(f"Téléchargement PDF: {pdf_url}")
+            response = self.session.get(pdf_url, timeout=30, stream=True)
+       
+            if response.status_code == 200:
+                with open(pdf_path, 'wb') as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        f.write(chunk)
+           
+                if os.path.exists(pdf_path):
+                    file_size = os.path.getsize(pdf_path)
+                    if file_size > 100:
+                        self.logger.info(f"PDF téléchargé: {filename} ({file_size} bytes)")
+                        return pdf_path, filename
+                    else:
+                        self.logger.warning(f"PDF trop petit: {filename} ({file_size} bytes)")
+                        os.remove(pdf_path)
+                        return "", ""
+            else:
+                self.logger.warning(f"Échec téléchargement PDF: Status {response.status_code}")
+                return "", ""
+           
+        except Exception as e:
+            self.logger.error(f"Erreur téléchargement PDF: {e}")
+            return "", ""
+
+    def detecter_type_offre(self, id_offre: str, url: str) -> str:
+        """Détecte si l'offre est nationale ou internationale basée sur critères sociaux"""
+        try:
+            response = self.session.get(url, timeout=15)
+            if response.status_code == 200:
+                soup = BeautifulSoup(response.text, 'html.parser')
+                img_social = soup.find('img', {'alt': 'Critères sociaux'})
+                if img_social:
+                    self.logger.info(f"Critères sociaux détectés pour {id_offre} -> Type: national")
+                    return "national"
+            self.logger.info(f"Pas de critères sociaux pour {id_offre} -> Type: international")
+            return "international"
+        except Exception as e:
+            self.logger.error(f"Erreur détection type {id_offre}: {e}")
+            return "international"
+
+    def extraire_contenu_avec_pdf_et_upload(self, fields: dict, id_offre: str) -> dict:
+        pdf_path_local = ""
+        pdf_filename_local = ""
+        s3_path = ""
+   
+        now = datetime.now()
+        year = now.year
+        month = now.month
+   
+        urls_to_try = []
+        urls_to_try.append(f"https://www.boamp.fr/telechargements/FILES/PDF/{year}/{month:02d}/{id_offre}.pdf")
+   
+        dateparution = fields.get('dateparution', '')
+        if '/' in dateparution:
+            parts = dateparution.split('/')
+            if len(parts) == 3:
+                year_pub = int(parts[2])
+                month_pub = int(parts[1])
+                urls_to_try.append(f"https://www.boamp.fr/telechargements/FILES/PDF/{year_pub}/{month_pub:02d}/{id_offre}.pdf")
+   
+        prev_month = month - 1 if month > 1 else 12
+        prev_year = year if month > 1 else year - 1
+        urls_to_try.append(f"https://www.boamp.fr/telechargements/FILES/PDF/{prev_year}/{prev_month:02d}/{id_offre}.pdf")
+   
+        next_month = month + 1 if month < 12 else 1
+        next_year = year if month < 12 else year + 1
+        urls_to_try.append(f"https://www.boamp.fr/telechargements/FILES/PDF/{next_year}/{next_month:02d}/{id_offre}.pdf")
+   
+        for url in urls_to_try:
+            pdf_path_local, pdf_filename_local = self.telecharger_pdf_boamp(url, id_offre)
+            if pdf_path_local:
+                self.logger.info(f"PDF trouvé via: {url}")
+                break
+   
+        if pdf_path_local and os.path.exists(pdf_path_local):
+            s3_path = self.upload_file_to_s3(pdf_path_local)
+            if s3_path:
+                self.logger.info(f"PDF uploadé sur S3: {s3_path}")
+        else:
+            self.logger.warning(f"Aucun PDF trouvé pour {id_offre}")
+   
+        expiration_date = self.extraire_date_limite_via_api_boamp(id_offre)
+   
+        return {
+            'reference': id_offre,
+            'description_complete': self.nettoyer_texte(fields.get('objet', '')),
+            'expiration_date': expiration_date,
+            'texte_integral': fields.get('libelle_cpv', ''),
+            'pdf_path': pdf_path_local,
+            'pdf_filename': pdf_filename_local,
+            'image_filename': s3_path if s3_path else pdf_filename_local,
+            's3_path': s3_path,
+        }
+
+    def traiter_offre_generale(self, fields: dict, associated_keywords: List[str] = None, extraction_complete: bool = True) -> Optional[OffreBase]:
+        """Traite une offre - Utilise associated_keywords pour éviter rejet"""
+        id_offre = fields.get("idweb")
+        if not id_offre:
+            return None
+   
+        titre = fields.get("objet", "")
+        desc_clean = self.nettoyer_texte(titre)
+        desc_hash = hash(desc_clean)
+   
+        if (id_offre, desc_hash) in self.existing_offres_set:
+            self.stats_tracking["duplicates_avoided"] += 1
+            return None
+   
+        url = f"https://www.boamp.fr/avis/detail/{id_offre}"
+   
+        # Détection du type basée sur critères sociaux
+        offre_type = self.detecter_type_offre(id_offre, url)
+   
+        contenu = self.extraire_contenu_avec_pdf_et_upload(fields, id_offre)
+        full_content = contenu.get('texte_integral', '')
+        texte_analyse = f"{titre} {full_content}"
+        expiration_date = contenu.get('expiration_date', 'N/A')
+   
+        # Détection secteur + mots-clés avec associated_keywords
+        detected_keywords = self.detect_boamp_keywords(texte_analyse)
+        all_keywords = list(set(detected_keywords + (associated_keywords or [])))
+   
+        # ACCEPTER TOUTES LES OFFRES POUR TEST
+        if associated_keywords:
+            # Si on a des mots-clés associés, on accepte l'offre
+            all_keywords = associated_keywords
+        elif not detected_keywords:
+            # TEMPORAIRE: Accepter même sans mots-clés pour voir le volume
+            self.logger.info(f"ACCEPTÉ SANS MOT-CLÉ: {id_offre} - {titre[:50]}")
+            all_keywords = ["test"]
+   
+        secteur_result = self.assigner_secteur_automatique(texte_analyse, detected_keywords, all_keywords)
+   
+        if secteur_result:
+            secteur_name, secteur_id, activity_ids = secteur_result
+        else:
+            # Fallback si mapping échoue mais kw présent
+            secteur_name = "Services"
+            secteur_id = 384
+            activity_ids = [385]
+   
+        self.stats_tracking["accepted_with_keywords"] += 1
+        self.logger.info(f"ACCEPTÉ ({len(all_keywords)} mot(s)-clé(s)): {id_offre} - Secteur: {secteur_name}")
+   
+        # LOG POUR DEBUG
+        self.logger.info(f"DEBUG: Titre='{titre[:100]}', Mots-clés={all_keywords}")
+   
+        pdf_base64 = ""
+        if contenu.get('pdf_path'):
+            pdf_base64 = self.pdf_to_base64(contenu['pdf_path'])
+   
+        s3_path = contenu.get('s3_path', '')
+   
+        capitalized_description = capitalize_first_word(self.nettoyer_texte(titre)[:200])
+   
+        if expiration_date == "N/A":
+            avis = "appel d'offre et avis d'attribution"
+            avis_id = "1,8"
+        else:
+            avis = "appel d'offre"
+            avis_id = DEFAULT_AVIS_ID
+   
+        offre = OffreBase(
+            reference=id_offre,
+            description=capitalized_description,
+            full_content=full_content[:500],
+            promoter=capitalize_first_word(self.nettoyer_texte(fields.get("nomacheteur", ""))[:100]),
+            publicationDate=self.format_date_to_french(fields.get("dateparution", "N/A")),
+            expirationDate=expiration_date,
+            type=offre_type,
+            cahier_charge_pdf_base64=pdf_base64,
+            image_filename=s3_path if s3_path else contenu.get('pdf_filename', ''),
+            image_base64=pdf_base64,
+            sourceId=self.default_source_id,
+            secteur_activite=secteur_name,
+            secteur_activite_id=secteur_id,
+            activities_ids=activity_ids,
+            mots_cles_detectes=all_keywords,
+            url_source=url,
+            avis=avis,
+            pays="France",
+            source="BOAMP"
+        )
+   
+        self.offres_cache.append(offre)
+        self.save_to_pending(offre)
+   
+        return offre
+
+    def map_offre_to_tender_payload(self, offre) -> dict:
+        def parse_date_safe(date_str):
+            if not date_str or date_str == "N/A":
+                return None
+            try:
+                date_str = self.clean_date_str(date_str)
+                date_str = re.sub(r'h', ':', date_str)
+                date_str = re.sub(r'\s+', ' ', date_str).strip()
+                dt = parse(date_str, fuzzy=True, dayfirst=True, tzinfos={None: tz.gettz('Europe/Paris')})
+                # Si l'heure est 00:00, la mettre à 08:00 pour publication et limite
+                if dt.hour == 0 and dt.minute == 0:
+                    dt = dt.replace(hour=8, minute=0, second=0, microsecond=0)
+                return dt
+            except:
+                return None
+   
+        now = datetime.now(timezone.utc)
+   
+        pub_dt = parse_date_safe(offre.publicationDate)
+        if pub_dt is None or pub_dt > now:
+            pub_dt = now
+        publication_ts = pub_dt.isoformat()
+   
+        exp_dt = parse_date_safe(offre.expirationDate)
+        if exp_dt is None or exp_dt <= now:
+            exp_dt = now + timedelta(days=30)
+        elif exp_dt <= now:
+            exp_dt = now + timedelta(days=30)
+        exp_dt = exp_dt.replace(hour=12, minute=0, second=0, microsecond=0)
+        expiration_ts = exp_dt.isoformat()
+   
+        start_dt = pub_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+        start_bidding_ts = start_dt.isoformat()
+   
+        activities_ids = offre.activities_ids if offre.activities_ids and len(offre.activities_ids) > 0 else [385]
+        batches = [{
+            "activitiesIds": activities_ids,
+            "title": offre.description[:80],
+            "deposit": 0
+        }]
+   
+        promoter_id = self.get_or_create_promoter(offre.promoter)
+        business_sector_id = offre.secteur_activite_id if offre.secteur_activite_id and offre.secteur_activite_id != 999 else 384
+   
+        if offre.expirationDate == "N/A":
+            avis_id = 8
+        else:
+            avis_id = int(DEFAULT_AVIS_ID)
+   
+        images_list = [offre.image_filename] if offre.image_filename else []
+   
+        payload = {
+            "title": offre.description[:200],
+            "description": offre.description[:500],
+            "publicationDate": publication_ts,
+            "startBiddingDate": start_bidding_ts,
+            "expirationDate": expiration_ts,
+            "reference": offre.reference,
+            "avisId": avis_id,
+            "sourceId": 1674,
+            "promoterId": int(promoter_id),
+            "businessSectorId": business_sector_id,
+            "type": offre.type,
+            "nature": "public",
+            "isEnabled": True,
+            "images": images_list,
+            "specificationsReceivingAddress": offre.url_source or "Non disponible",
+            "fundingSourceType": "national",
+            "currencyId": 4,
+            "isMultiCurrency": False,
+            "batches": batches,
+            "addresses": [{"countryId": int(DEFAULT_PAYS_ID)}],
+            "pays": offre.pays,
+            "source": offre.source,
+            "promoter": offre.promoter,
+            "avis": offre.avis,
+            "url_source": offre.url_source,
+            "secteur_activite": offre.secteur_activite,
+            "activities_ids": offre.activities_ids
+        }
+   
+        return {k: v for k, v in payload.items() if v is not None and v != ""}
+
+    @tenacity.retry(stop=tenacity.stop_after_attempt(3), wait=tenacity.wait_exponential(multiplier=1, min=4, max=10))
+    def post_tender_to_database(self, offre) -> dict:
+        existing = tenders_collection.find_one({"reference": offre.reference})
+        if existing:
+            return {"success": False, "message": "Déjà validée", "offre_ref": offre.reference}
+   
+        tender_dict = offre.to_dict()
+        tender_dict["status"] = "active"
+        tender_dict["validationDate"] = datetime.now().isoformat()
+   
+        try:
+            result = tenders_collection.insert_one(tender_dict)
+            if result.inserted_id:
+                pending_tenders_collection.delete_one({"reference": offre.reference})
+                self.validated_references_set.add(offre.reference)
+           
+                api_success = False
+                api_id = None
+                error_detail = ""
+           
+                try:
+                    if not self.login_appeloffres():
+                        error_detail = "Échec connexion API"
+                        return {
+                            "success": True,
+                            "message": f"Validée MongoDB mais {error_detail}",
+                            "offre_ref": offre.reference,
+                            "api_success": False,
+                            "api_error": error_detail
+                        }
+               
+                    payload = self.map_offre_to_tender_payload(offre)
+                    response = self.session_appeloffres.post(TENDER_ENDPOINT, json=payload, headers=self.appeloffres_headers, timeout=30)
+               
+                    if response.status_code in [200, 201]:
+                        response_data = response.json()
+                        api_id = response_data.get("id")
+                        api_success = True
+                        tenders_collection.update_one({"_id": result.inserted_id}, {"$set": {"api_id": api_id}})
+                        self.logger.info(f"API OK: {offre.reference} - ID: {api_id}")
+                    else:
+                        error_text = response.text[:500]
+                        try:
+                            error_json = response.json()
+                            error_detail = str(error_json.get('message', error_text))
+                        except:
+                            error_detail = error_text
+                except Exception as e:
+                    error_detail = str(e)[:200]
+           
+                message = f"Validée (MongoDB + API ID: {api_id})" if api_success else f"Validée MongoDB mais échec API: {error_detail}"
+                return {
+                    "success": True,
+                    "message": message,
+                    "offre_ref": offre.reference,
+                    "api_id": api_id,
+                    "api_success": api_success,
+                    "api_error": error_detail if not api_success else None
+                }
+        except Exception as e:
+            self.logger.error(f"ERREUR MONGODB: {e}")
+            return {"success": False, "message": f"Erreur MongoDB: {str(e)}", "offre_ref": offre.reference}
+
+    def save_to_pending(self, offre):
+        try:
+            # Vérifier que MongoDB est connecté
+            if pending_tenders_collection is None:
+                self.logger.error(f"❌ MONGODB NON CONNECTÉ - Impossible de sauvegarder {offre.reference}")
+                return False
+
+            desc_hash = hash(offre.description)
+            if (offre.reference, desc_hash) in self.existing_offres_set:
+                self.logger.debug(f"⏭️ Doublon ignoré: {offre.reference}")
+                return False
+
+            tender_dict = offre.to_dict()
+            tender_dict["status"] = "pending"
+            result = pending_tenders_collection.insert_one(tender_dict)
+
+            if result.inserted_id:
+                self.existing_offres_set.add((offre.reference, desc_hash))
+                self.logger.info(f"💾 SAUVEGARDÉ dans MongoDB: {offre.reference}")
+                return True
+            else:
+                self.logger.error(f"❌ Échec sauvegarde MongoDB (no ID): {offre.reference}")
+                return False
+        except Exception as e:
+            self.logger.error(f"❌ ERREUR MongoDB save_to_pending pour {offre.reference}: {e}")
+            import traceback
+            self.logger.error(f"Détails: {traceback.format_exc()}")
+            return False
+
+    def delete_pending_offre(self, reference: str) -> bool:
+        try:
+            result = pending_tenders_collection.delete_one({"reference": reference, "status": "pending"})
+            if result.deleted_count > 0:
+                self.offres_cache = [o for o in self.offres_cache if o.reference != reference]
+                for ref, desc_hash in list(self.existing_offres_set):
+                    if ref == reference:
+                        self.existing_offres_set.discard((ref, desc_hash))
+                return True
+            return False
+        except Exception as e:
+            return False
+
+    def nettoyer_texte(self, texte: str) -> str:
+        if not texte:
+            return ""
+        texte = unicodedata.normalize('NFKD', str(texte))
+        texte = ''.join(c for c in texte if not unicodedata.combining(c))
+        texte = re.sub(r'\s+', ' ', texte)
+        return texte.strip().lower()
+
+    def _execute_single_query(self, query_info: Dict, date_debut: str, date_fin: str) -> Dict[str, List[str]]:
+        """Exécute une requête et retourne {id: [keywords]} - PAGINATION MAXIMALE"""
+        found_dict = defaultdict(list)
+        rows_per_page = 10000  # AUGMENTÉ À 10000
+        start = 0
+        total_fetched = 0
+        max_results = 50000  # LIMITE MAXIMALE PAR REQUÊTE
+   
+        try:
+            base_date_query = f"dateparution:[{date_debut} TO {date_fin}]"
+            full_query = f"({query_info['query']}) AND {base_date_query}"
+       
+            while total_fetched < max_results:
+                params = {
+                    "dataset": self.dataset,
+                    "q": full_query,
+                    "rows": rows_per_page,
+                    "start": start,
+                    "sort": "dateparution"
+                }
+           
+                response = self.session.get(self.api_url, params=params, timeout=30)
+           
+                if response.status_code != 200:
+                    self.logger.error(f"Erreur API: Status {response.status_code}")
+                    break
+           
+                data = response.json()
+                records = data.get("records", [])
+                nhits = data.get("nhits", 0)
+           
+                if not records:
+                    break
+           
+                for record in records:
+                    fields = record.get("fields", {})
+                    id_offre = fields.get("idweb")
+                    if id_offre:
+                        found_dict[id_offre].append(query_info['keywords'][0])
+                        total_fetched += 1
+           
+                self.logger.info(f"Page start={start}: {len(records)} records, total={total_fetched}, nhits={nhits}")
+           
+                # DEBUG: Log détaillé pour première page
+                if start == 0 and records:
+                    first_record = records[0].get('fields', {})
+                    self.logger.info(f"Premier record: {first_record.get('idweb', 'NO_ID')} - {first_record.get('objet', 'NO_TITLE')[:50]}")
+           
+                # Arrêter si on a tout récupéré
+                if len(records) < rows_per_page or total_fetched >= nhits or total_fetched >= max_results:
+                    break
+           
+                # DEBUG: Log si aucun record trouvé
+                if not records and start == 0:
+                    self.logger.warning(f"Aucun record pour query: {query_info['keywords'][0]}")
+           
+                start += rows_per_page
+                time.sleep(0.1)  # RÉDUIT LE DÉLAI
+       
+            unique_ids = len(found_dict)
+            self.logger.info(f"Query {query_info.get('query_number', '?')}: {unique_ids} IDs uniques sur {total_fetched} total")
+       
+            # DEBUG: Log si aucun résultat
+            if unique_ids == 0:
+                self.logger.warning(f"AUCUN RÉSULTAT pour '{query_info['keywords'][0]}' - Query: {query_info['query']}")
+       
+        except Exception as e:
+            self.logger.error(f"Query failed: {e}")
+            self.logger.error(f"Query details: {query_info}")
+   
+        return dict(found_dict)
+
+    def scraper_offres_all_secteurs(self, date_debut: str, date_fin: str) -> Dict:
+        """Scraping basé sur 71 mots-clés BOAMP - AMÉLIORÉ"""
+        if not date_debut or not date_fin:
+            today = datetime.now()
+            date_fin = today.strftime("%Y-%m-%d")
+            date_debut = (today - timedelta(days=7)).strftime("%Y-%m-%d")  # 7 JOURS AU LIEU DE 1
+   
+        self.logger.info("=" * 80)
+        self.logger.info(f"SCRAPING PAR 71 MOTS-CLÉS BOAMP: {date_debut} à {date_fin}")
+        self.logger.info(f"{len(self.boamp_keywords)} mots-clés BOAMP")
+        self.logger.info(f"{len(self.search_queries)} requêtes (1 par mot-clé, OR pour multi-mots)")
+        self.logger.info(f"AO SANS MOTS-CLÉS = REJETÉS")
+        self.logger.info(f"PAGINATION ACTIVÉE: EXTRACTION MAXIMALE")
+        self.logger.info("=" * 80)
+   
+        self.stats_tracking = {
+            "keywords_searched": len(self.boamp_keywords),
+            "queries_executed": 0,
+            "duplicates_avoided": 0,
+            "rejected_no_keywords": 0,
+            "accepted_with_keywords": 0
+        }
+   
+        all_found_dict = defaultdict(list)
+   
+        # Phase 1: Collecte des IDs
+        self.logger.info("PHASE 1: Collecte via mots-clés BOAMP...")
+        for i, query_info in enumerate(self.search_queries, 1):
+            self.logger.info(f"[{i}/{len(self.search_queries)}] Mot-clé: {query_info['keywords'][0]}")
+       
+            found_for_query = self._execute_single_query(query_info, date_debut, date_fin)
+       
+            for id_offre, kws in found_for_query.items():
+                all_found_dict[id_offre].extend(kws)
+                all_found_dict[id_offre] = list(set(all_found_dict[id_offre]))
+       
+            self.stats_tracking["queries_executed"] += 1
+       
+            time.sleep(0.5)
+   
+        all_unique_ids = list(all_found_dict.keys())
+        self.logger.info(f"{len(all_unique_ids)} IDs uniques collectés")
+   
+        # DEBUG: Afficher quelques IDs pour vérifier
+        if all_unique_ids:
+            self.logger.info(f"Premiers IDs: {list(all_unique_ids)[:5]}")
+        else:
+            self.logger.warning(f"AUCUN ID TROUVÉ - Vérifier les requêtes BOAMP")
+   
+        # Phase 2: Traitement
+        self.logger.info("PHASE 2: Traitement et filtrage...")
+   
+        # DEBUG: Vérifier si on a des IDs à traiter
+        if not all_unique_ids:
+            self.logger.error("AUCUN ID À TRAITER - Problème avec les requêtes BOAMP")
+            return {
+                "offres": [],
+                "stats": {
+                    "total": 0,
+                    "new": 0,
+                    "ignored": 0,
+                    "pending": len(self.offres_cache),
+                    "keywords_searched": self.stats_tracking["keywords_searched"],
+                    "queries_executed": self.stats_tracking["queries_executed"],
+                    "accepted_with_keywords": 0,
+                    "rejected_no_keywords": 0
+                }
+            }
+        offres = []
+        ignored_validated = 0
+        ignored_duplicates = 0
+   
+        for id_offre in all_unique_ids:
+            associated_kws = all_found_dict[id_offre]
+       
+            if id_offre in self.validated_references_set:
+                ignored_validated += 1
+                continue
+       
+            try:
+                params = {"dataset": "boamp", "q": f"idweb:{id_offre}", "rows": 1}
+                response = self.session.get(self.api_url, params=params, timeout=15)
+           
+                if response.status_code == 200:
+                    records = response.json().get("records", [])
+                    if records:
+                        fields = records[0].get("fields", {})
+                        # DEBUG: Log chaque offre traitée
+                        self.logger.info(f"Traitement {id_offre}: {fields.get('objet', 'NO_TITLE')[:50]}")
+                        offre = self.traiter_offre_generale(fields, associated_keywords=associated_kws, extraction_complete=True)
+                        if offre:
+                            offres.append(offre)
+                        else:
+                            ignored_duplicates += 1
+                    else:
+                        self.logger.warning(f"Aucun record trouvé pour ID {id_offre}")
+       
+            except Exception as e:
+                self.logger.error(f"Erreur {id_offre}: {e}")
+                self.logger.error(f"Détails erreur: {traceback.format_exc()[:200]}")
+                continue
+   
+        # Stats finales
+        self.logger.info("=" * 80)
+        self.logger.info("RÉSULTATS FINAUX:")
+        self.logger.info(f"Mots-clés: {self.stats_tracking['keywords_searched']}")
+        self.logger.info(f"Requêtes: {self.stats_tracking['queries_executed']}")
+        self.logger.info(f"Total IDs: {len(all_unique_ids)}")
+        self.logger.info(f"ACCEPTÉS: {self.stats_tracking['accepted_with_keywords']}")
+        self.logger.info(f"REJETÉS: {self.stats_tracking['rejected_no_keywords']}")
+        self.logger.info(f"Validées: {ignored_validated}")
+        self.logger.info(f"Doublons: {ignored_duplicates}")
+        self.logger.info(f"FINALES: {len(offres)}")
+        self.logger.info("=" * 80)
+   
+        return {
+            "offres": offres,
+            "stats": {
+                "total": len(all_unique_ids),
+                "new": len(offres),
+                "ignored": ignored_validated,
+                "pending": len(self.offres_cache),
+                "keywords_searched": self.stats_tracking["keywords_searched"],
+                "queries_executed": self.stats_tracking["queries_executed"],
+                "accepted_with_keywords": self.stats_tracking["accepted_with_keywords"],
+                "rejected_no_keywords": self.stats_tracking["rejected_no_keywords"]
+            }
+        }
+
+    def get_offres_cache(self, page: int = 1, limit: int = 20):
+        total = len(self.offres_cache)
+        start = (page - 1) * limit
+        end = start + limit
+        paginated_offres = self.offres_cache[start:end]
+   
+        return {
+            "offres": [
+                {
+                    "reference": offre.reference,
+                    "description": offre.description,
+                    "secteur_activite": offre.secteur_activite,
+                    "secteur_activite_id": offre.secteur_activite_id,
+                    "activities_ids": offre.activities_ids,
+                    "mots_cles_detectes": offre.mots_cles_detectes,
+                    "promoter": offre.promoter,
+                    "publicationDate": offre.publicationDate,
+                    "expirationDate": offre.expirationDate,
+                    "image_filename": offre.image_filename,
+                    "url_source": offre.url_source,
+                    "status": offre.status,
+                    "source": offre.source,
+                    "pays": offre.pays,
+                    "avis": offre.avis,
+                    "procedure": offre.procedure,
+                    "type_marche": offre.type_marche,
+                    "full_content": offre.full_content[:100]
+                }
+                for offre in paginated_offres
+            ],
+            "total": total,
+            "page": page,
+            "limit": limit,
+            "totalPages": (total + limit - 1) // limit
+        }
+
+def nettoyer_base_pending():
+    try:
+        result = pending_tenders_collection.delete_many({"status": "pending"})
+        print(f"{result.deleted_count} offres supprimees")
+        return True
+    except Exception as e:
+        print(f"Erreur: {e}")
+        return False
+
+app = Flask(__name__, static_folder=REACT_BUILD_DIR, static_url_path='', template_folder=REACT_BUILD_DIR)
+
+# ✅ CORRECTION 2: CORS simplifié avec UTF-8
+CORS(app, origins='*', supports_credentials=True)
+print("CORS configuré pour tous origins (développement)")
+
+# Initialisation différée du scraper
+scraper = None
+
+def get_scraper():
+    global scraper
+    if scraper is None:
+        logger.info("Initialisation du scraper...")
+        scraper = BOAMPScraperAllSectors(use_selenium=False, skip_s3=True)
+        # Initialisation complète seulement si nécessaire
+        if not scraper.initialized:
+            scraper.load_pending_offers()
+            scraper._load_existing_offres_set()
+            scraper._load_validated_references()
+            if scraper.login_appeloffres():
+                scraper.fetch_api_business_sectors()
+                scraper.build_boamp_to_api_mapping_improved()
+                logger.info(f"{len(scraper.api_business_sectors)} secteurs API charges")
+                logger.info(f"{len(scraper.boamp_to_api_ids)} mots-cles BOAMP mappes")
+            scraper.initialized = True
+        logger.info("Scraper pret")
+    return scraper
+
+@app.route('/', defaults={'path': ''})
+@app.route('/<path:path>')
+def serve_react(path):
+    file_path = os.path.join(REACT_BUILD_DIR, path)
+    if path != "" and os.path.exists(file_path) and os.path.isfile(file_path):
+        return send_file(file_path)
+    else:
+        if os.path.exists(INDEX_HTML_PATH):
+            return send_file(INDEX_HTML_PATH)
+        return "Erreur", 500
+
+@app.route('/api/scrape', methods=['POST'])
+def scrape():
+    try:
+        logger.info("DEBUT SCRAPING API")
+   
+        data = request.json or {}
+        date_debut = data.get('date_debut')
+        date_fin = data.get('date_fin')
+   
+        logger.info(f"Dates recues: {date_debut} a {date_fin}")
+   
+        # Vérifier la connexion MongoDB
+        try:
+            pending_count = pending_tenders_collection.count_documents({})
+            logger.info(f"MongoDB OK - {pending_count} documents pending")
+        except Exception as mongo_e:
+            logger.error(f"MongoDB ERROR: {mongo_e}")
+            return jsonify({"success": False, "error": f"MongoDB connection failed: {str(mongo_e)}"}), 500
+   
+        # Initialiser le scraper seulement maintenant
+        current_scraper = get_scraper()
+   
+        # Vérifier l'authentification API
+        if not current_scraper.login_appeloffres():
+            logger.error("API LOGIN FAILED")
+            return jsonify({"success": False, "error": "API authentication failed"}), 500
+   
+        logger.info("LANCEMENT SCRAPING...")
+        result = current_scraper.scraper_offres_all_secteurs(date_debut, date_fin)
+   
+        if not result:
+            logger.error("SCRAPING RETURNED NULL")
+            return jsonify({"success": False, "error": "Scraping returned no result"}), 500
+   
+        logger.info(f"Resultat scraping: {result.get('stats', {})}")
+   
+        paginated = current_scraper.get_offres_cache(page=1, limit=20)
+   
+        logger.info(f"SCRAPING TERMINE: {result['stats']['new']} nouvelles offres")
+   
+        return jsonify({"success": True, "offres": paginated, "stats": result["stats"]})
+   
+    except Exception as e:
+        error_msg = str(e)
+        traceback_msg = traceback.format_exc()
+   
+        logger.error(f"ERREUR SCRAPING: {error_msg}")
+        logger.error(f"Traceback complet: {traceback_msg}")
+   
+        return jsonify({
+            "success": False,
+            "error": error_msg,
+            "traceback": traceback_msg[:1000]
+        }), 500
+
+@app.route('/api/validate/<reference>', methods=['POST'])
+def validate_offre(reference):
+    current_scraper = get_scraper()
+    for offre in current_scraper.offres_cache[:]:
+        if offre.reference == reference:
+            result = current_scraper.post_tender_to_database(offre)
+            if result['success']:
+                current_scraper.offres_cache.remove(offre)
+            return jsonify(result)
+    pending_doc = pending_tenders_collection.find_one({"reference": reference, "status": "pending"})
+    if pending_doc:
+        doc_without_id = {k: v for k, v in pending_doc.items() if k != '_id'}
+   
+        if 'avisId' in doc_without_id:
+            doc_without_id.pop('avisId')
+   
+        valid_fields = {}
+        offre_fields = OffreBase.__dataclass_fields__.keys()
+        for key, value in doc_without_id.items():
+            if key in offre_fields:
+                valid_fields[key] = value
+   
+        offre = OffreBase(**valid_fields)
+        result = current_scraper.post_tender_to_database(offre)
+        if result['success']:
+            current_scraper.offres_cache = [o for o in current_scraper.offres_cache if o.reference != reference]
+            pending_tenders_collection.delete_one({"reference": reference})
+        return jsonify(result)
+    return jsonify({"success": False, "message": "Non trouvee", "offre_ref": reference})
+
+@app.route('/api/delete/<reference>', methods=['DELETE'])
+def delete_offre(reference):
+    current_scraper = get_scraper()
+    if current_scraper.delete_pending_offre(reference):
+        return jsonify({"success": True, "message": "Supprimee", "offre_ref": reference})
+    return jsonify({"success": False, "message": "Non trouvee", "offre_ref": reference})
+
+@app.route('/api/pending', methods=['GET'])
+def get_pending():
+    page = int(request.args.get('page', 1))
+    limit = int(request.args.get('limit', 100))  # AUGMENTÉ À 100
+    # LIRE DIRECTEMENT DEPUIS MONGODB AU LIEU DU CACHE
+    try:
+        skip = (page - 1) * limit
+        total = pending_tenders_collection.count_documents({"status": "pending"})
+   
+        offres_docs = list(pending_tenders_collection.find(
+            {"status": "pending"}
+        ).sort("createdAt", -1).skip(skip).limit(limit))
+   
+        offres = []
+        for doc in offres_docs:
+            offres.append({
+                "reference": doc.get("reference", ""),
+                "description": doc.get("description", ""),
+                "secteur_activite": doc.get("secteur_activite", ""),
+                "secteur_activite_id": doc.get("secteur_activite_id"),
+                "activities_ids": doc.get("activities_ids", []),
+                "mots_cles_detectes": doc.get("mots_cles_detectes", []),
+                "promoter": doc.get("promoter", ""),
+                "publicationDate": doc.get("publicationDate", ""),
+                "expirationDate": doc.get("expirationDate", ""),
+                "image_filename": doc.get("image_filename", ""),
+                "url_source": doc.get("url_source", ""),
+                "status": doc.get("status", "pending")
+            })
+   
+        return jsonify({
+            "success": True,
+            "pending": {
+                "offres": offres,
+                "total": total,
+                "page": page,
+                "limit": limit,
+                "totalPages": (total + limit - 1) // limit
+            }
+        })
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)})
+
+@app.route('/api/clean_pending', methods=['POST'])
+def clean_pending():
+    try:
+        result = pending_tenders_collection.delete_many({"status": "pending"})
+        current_scraper = get_scraper()
+        current_scraper.offres_cache = []
+        current_scraper.existing_offres_set = set()
+        current_scraper._load_existing_offres_set()
+        return jsonify({"success": True, "message": f"{result.deleted_count} supprimees", "count": result.deleted_count})
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)})
+
+@app.route('/api/secteurs', methods=['GET'])
+def get_secteurs():
+    try:
+        current_scraper = get_scraper()
+        secteurs_list = []
+        for secteur_id, secteur_data in current_scraper.api_business_sectors.items():
+            secteurs_list.append({
+                "id": secteur_id,
+                "name": secteur_data["name"],
+                "description": secteur_data.get("description", ""),
+                "isEnabled": secteur_data.get("isEnabled", True),
+                "activities": secteur_data.get("activities", [])
+            })
+   
+        secteurs_list.sort(key=lambda x: x["name"])
+   
+        return jsonify({"success": True, "results": secteurs_list, "total": len(secteurs_list), "source": "API appeloffres.net"})
+    except Exception as e:
+        logger.error(f"Erreur get_secteurs: {e}")
+        return jsonify({"success": False, "message": str(e), "results": []}), 500
+
+@app.route('/api/boamp_mapping', methods=['GET'])
+def get_boamp_mapping():
+    try:
+        current_scraper = get_scraper()
+        mapping_list = []
+        for keyword, mapping_data in current_scraper.boamp_to_api_ids.items():
+            primary = mapping_data["primary"]
+            all_mappings = mapping_data.get("all_mappings", [primary])
+       
+            mapping_list.append({
+                "boamp_keyword": keyword,
+                "primary_secteur_id": primary["secteur_id"],
+                "primary_secteur_name": primary["secteur_name"],
+                "primary_activite_id": primary["activite_id"],
+                "primary_activite_name": primary["activite_name"],
+                "has_multiple": mapping_data.get("has_multiple", False),
+                "all_sectors_count": len(all_mappings)
+            })
+   
+        return jsonify({"success": True, "mapping": mapping_list, "total": len(mapping_list)})
+    except Exception as e:
+        logger.error(f"Erreur get_boamp_mapping: {e}")
+        return jsonify({"success": False, "message": str(e)}), 500
+
+@app.route('/api/keywords', methods=['GET'])
+def get_keywords():
+    try:
+        return jsonify({
+            "success": True,
+            "keywords": BOAMP_KEYWORDS_LIST,
+            "total": len(BOAMP_KEYWORDS_LIST)
+        })
+    except Exception as e:
+        logger.error(f"Erreur get_keywords: {e}")
+        return jsonify({"success": False, "message": str(e)}), 500
+
+@app.route('/api/health', methods=['GET'])
+def health_check():
+    try:
+        # Test MongoDB connection
+        mongo_status = "OK"
+        try:
+            pending_count = pending_tenders_collection.count_documents({})
+            mongo_status = f"OK ({pending_count} pending)"
+        except Exception as e:
+            mongo_status = f"ERROR: {str(e)}"
+   
+        # Test API connection
+        api_status = "OK" if scraper.access_token else "Not authenticated"
+   
+        return jsonify({
+            "success": True,
+            "timestamp": datetime.now().isoformat(),
+            "services": {
+                "python": {"status": "OK", "port": 5003},
+                "mongodb": {"status": mongo_status},
+                "scraper": {"status": "ready", "keywords": len(scraper.boamp_keywords)},
+                "api": {"status": api_status}
+            }
+        })
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }), 500
+
+@app.route('/api/test', methods=['GET', 'POST'])
+def test_endpoint():
+    """Endpoint de test simple pour vérifier la connectivité"""
+    return jsonify({
+        "success": True,
+        "message": "Python server is running!",
+        "timestamp": datetime.now().isoformat(),
+        "method": request.method,
+        "data": request.json if request.method == 'POST' else None
+    })
+
+@app.route('/api/stats', methods=['GET'])
+def get_stats():
+    try:
+        total_pending = pending_tenders_collection.count_documents({"status": "pending"})
+        total_validated = tenders_collection.count_documents({"status": "active"})
+   
+        with_keywords = total_pending
+   
+        pipeline_pending = [
+            {"$match": {"status": "pending"}},
+            {"$group": {"_id": "$secteur_activite", "count": {"$sum": 1}}},
+            {"$sort": {"count": -1}},
+            {"$limit": 10}
+        ]
+        secteur_stats_pending = list(pending_tenders_collection.aggregate(pipeline_pending))
+   
+        pipeline_validated = [
+            {"$match": {"status": "active"}},
+            {"$group": {"_id": "$secteur_activite", "count": {"$sum": 1}}},
+            {"$sort": {"count": -1}},
+            {"$limit": 10}
+        ]
+        secteur_stats_validated = list(tenders_collection.aggregate(pipeline_validated))
+   
+        current_scraper = get_scraper() if scraper else None
+        stats_tracking = current_scraper.stats_tracking if current_scraper else {}
+   
+        return jsonify({
+            "success": True,
+            "stats": {
+                "total_pending": total_pending,
+                "total_validated": total_validated,
+                "with_keywords": with_keywords,
+                "rejected_no_keywords": stats_tracking.get("rejected_no_keywords", 0),
+                "secteurs_pending": secteur_stats_pending,
+                "secteurs_validated": secteur_stats_validated,
+                "keywords_count": len(BOAMP_KEYWORDS_LIST),
+                "queries_executed": stats_tracking.get("queries_executed", 0)
+            }
+        })
+    except Exception as e:
+        logger.error(f"Erreur get_stats: {e}")
+        return jsonify({"success": False, "message": str(e)}), 500
+
+# ============================================
+# DÉMARRAGE AVEC PORT 5003 EXPLICITE
+# ============================================
+if __name__ == "__main__":
+    print("=" * 80)
+    print("SCRAPER BOAMP - VERSION LIAISON NODE.JS")
+    print("=" * 80)
+    print("CONFIGURATION:")
+    print(f"{len(BOAMP_KEYWORDS_LIST)} mots-cles BOAMP")
+    print(f"{len(BOAMP_TO_API_MAPPING_IMPROVED)} mappings secteur/activite")
+    print("Gestion multi-secteurs pour mots-cles ambigus")
+    print("Port: 5003 (accessible depuis Node.js)")
+    print("Host: 0.0.0.0 (ecoute toutes interfaces)")
+    print("Initialisation differee pour demarrage rapide")
+    print("CORS configuré pour React (localhost:3000)")
+    print("=" * 80)
+    print("Nettoyage...")
+    nettoyer_base_pending()
+    print("Serveur pret - Initialisation du scraper a la premiere requete")
+    print("=" * 80)
+    # CORRECTION PRINCIPALE: Port 5003, host 0.0.0.0, threaded=True
+    app.run(debug=False, port=5003, host='0.0.0.0', threaded=True)

@@ -1,0 +1,43 @@
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environnement virtuel Python
+.venv/
+env/
+venv/
+
+# Logs
+*.log
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Excel files (à ignorer)
+*.xlsx
+*.xls
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# VS Code
+.vscode/
+
+# Mac/Linux hidden files
+*.swp
+*.swo
+*.bak
+*.tmp
+
+# Temporary directories
+tmp/
+temp/
+
+# Git LFS config (déjà ajouté automatiquement)
+.gitattributes
