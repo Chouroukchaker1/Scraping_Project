@@ -2282,11 +2282,24 @@ class TUNEPSScraper:
                         self.logger.warning("Timeout de chargement page")
                         break
                     
-                    rows_data = self.extract_all_rows_data()
-                    self.logger.info(f"{len(rows_data)} lignes extraites sur page {page}")
-                    
-                    rows_data = [r for r in rows_data if self.is_between_dates(r.get("Date Publication", ""), start_date, end_date)]
-                    
+                    all_rows = self.extract_all_rows_data()
+                    self.logger.info(f"{len(all_rows)} lignes extraites sur page {page}")
+
+                    # Check if all dates on this page are older than start_date
+                    if start_date and not end_date:
+                        all_older = True
+                        for r in all_rows:
+                            pub_date_str = r.get("Date Publication", "")
+                            if pub_date_str and self.is_between_dates(pub_date_str, start_date, None):
+                                all_older = False
+                                break
+
+                        if all_older and len(all_rows) > 0:
+                            self.logger.info(f"Arret: Toutes les consultations de la page {page} sont anterieures a {start_date}")
+                            break
+
+                    rows_data = [r for r in all_rows if self.is_between_dates(r.get("Date Publication", ""), start_date, end_date)]
+
                     if not rows_data:
                         empty_pages += 1
                         self.logger.info(f"Aucune consultation dans la plage sur cette page ({empty_pages}/3)")
