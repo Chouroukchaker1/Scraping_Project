@@ -173,9 +173,9 @@ def pg_insert_one(data):
         data.get('description', '')[:500] if data.get('description') else '',  # title
         data.get('description', ''),
         data.get('full_content', ''),
-        data.get('publicationDate'),
-        data.get('expirationDate'),
-        data.get('ouverture_offres'),
+        data.get('publicationDate') or data.get('publication_date'),
+        data.get('expirationDate') or data.get('expiration_date'),
+        data.get('ouverture_offres') or data.get('openingBidsDate') or data.get('opening_date'),
         data.get('region_id'),
         data.get('promoter', ''),
         data.get('sourceId', DEFAULT_SOURCE_ID),
@@ -326,7 +326,20 @@ class OffreBase:
             self.extractionDate = datetime.now().isoformat()
     
     def to_dict(self):
-        return asdict(self)
+        data = asdict(self)
+        # Convert dates from DD/MM/YYYY to ISO format for PostgreSQL
+        date_fields = ['publicationDate', 'expirationDate', 'startBiddingDate', 'ouverture_offres']
+        for field in date_fields:
+            if data.get(field) and isinstance(data[field], str) and '/' in data[field]:
+                try:
+                    # Parse DD/MM/YYYY format
+                    dt = datetime.strptime(data[field].split()[0], '%d/%m/%Y')
+                    # Convert to ISO format
+                    data[field] = dt.isoformat()
+                except (ValueError, IndexError):
+                    # If parsing fails, leave as is (might already be ISO or None)
+                    pass
+        return data
 
 @dataclass
 class OffreTuneps(OffreBase):
