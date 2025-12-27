@@ -376,8 +376,8 @@ class TUNEPSScraper:
         
         # Configuration scraping
         self.BASE_URL = "https://www.tuneps.tn/portail/consultations"
-        self.TIMEOUT = 30
-        self.WAIT_TIME = 1
+        self.TIMEOUT = 60
+        self.WAIT_TIME = 2
         self.DELAY_BETWEEN_CONSULTATIONS = (1.0, 2.0)
         self.DELAY_BETWEEN_PAGES = (2, 4)
         self.MAX_PAGES = None
@@ -498,7 +498,7 @@ class TUNEPSScraper:
         if not self.driver:
             try:
                 options = Options()
-                options.add_argument("--headless")
+                options.add_argument("--headless=new")
                 options.add_argument("--no-sandbox")
                 options.add_argument("--disable-dev-shm-usage")
                 options.add_argument("--disable-gpu")
@@ -511,6 +511,10 @@ class TUNEPSScraper:
                 options.add_argument("--disable-plugins")
                 options.add_argument("--ignore-certificate-errors")
                 options.add_argument("--ignore-ssl-errors")
+                options.add_argument("--disable-setuid-sandbox")
+                options.add_argument("--single-process")
+                options.add_argument("--disable-software-rasterizer")
+                options.page_load_strategy = 'eager'
                 options.add_experimental_option("excludeSwitches", ["enable-automation"])
                 options.add_experimental_option('useAutomationExtension', False)
                 
