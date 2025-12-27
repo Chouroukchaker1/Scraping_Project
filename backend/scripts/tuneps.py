@@ -2025,9 +2025,26 @@ class TUNEPSScraper:
             
             if not pub_date:
                 return False
-            
-            start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date() if start_date_str else None
-            end_date = datetime.strptime(end_date_str, "%Y-%m-%d").date() if end_date_str else None
+
+            # Parse start_date with multiple formats
+            start_date = None
+            if start_date_str:
+                for fmt in date_formats:
+                    try:
+                        start_date = datetime.strptime(start_date_str.strip(), fmt).date()
+                        break
+                    except ValueError:
+                        continue
+
+            # Parse end_date with multiple formats
+            end_date = None
+            if end_date_str:
+                for fmt in date_formats:
+                    try:
+                        end_date = datetime.strptime(end_date_str.strip(), fmt).date()
+                        break
+                    except ValueError:
+                        continue
             
             if start_date and end_date:
                 return start_date <= pub_date <= end_date
