@@ -46,7 +46,12 @@ EXPOSE 5003 5005 5006 5007 5010 5011
 # Variables d'environnement par défaut
 ENV NODE_ENV=production
 ENV PORT=5000
-ENV MONGO_URI=mongodb://mongodb:27017/tunip
+ENV DATABASE_URL=postgresql://tender_user:tender_password_2024@postgres:5432/tenders_db
+ENV DB_HOST=postgres
+ENV DB_PORT=5432
+ENV DB_NAME=tenders_db
+ENV DB_USER=tender_user
+ENV DB_PASSWORD=tender_password_2024
 ENV CHROME_BIN=/usr/bin/chromium
 ENV CHROMEDRIVER_PATH=/usr/bin/chromedriver
 

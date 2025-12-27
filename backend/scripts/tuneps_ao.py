@@ -38,8 +38,8 @@ import traceback
 from dataclasses import dataclass, field, asdict, fields
 from typing import Optional, List, Dict, Tuple
 import base64
-from pymongo import MongoClient
-from pymongo.errors import PyMongoError
+import psycopg2
+from psycopg2.extras import execute_values, RealDictCursor
 from pdf2image import convert_from_path
 from PIL import Image
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -53,25 +53,28 @@ from dotenv import load_dotenv
 warnings.filterwarnings('ignore')
 load_dotenv()
 # ===== CONFIGURATION =====
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/marmouch")
-DB_NAME = "marmouchbd"
-COLLECTION_NAME = "tenders_marmouch"
-PENDING_COLLECTION_NAME = "pending_tenders_marmouch_bd"
+# Configuration PostgreSQL
+DB_HOST = os.getenv("DB_HOST", "postgres")
+DB_PORT = os.getenv("DB_PORT", "5432")
+DB_NAME = os.getenv("DB_NAME", "tenders_db")
+DB_USER = os.getenv("DB_USER", "tender_user")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "tender_password_2024")
+TABLE_NAME = "tenders_tuneps_ao"
 # API Configuration
-API_BASE_URL = "https://be.appeloffres.net/api"
+API_BASE_URL = os.getenv("API_BASE_URL", "https://be.appeloffres.net/api")
 FILES_ENDPOINT = f"{API_BASE_URL}/files/tender"
 LOGIN_ENDPOINT = f"{API_BASE_URL}/auth/login/"
 TENDER_ENDPOINT = f"{API_BASE_URL}/tender"
 TENDER_UPDATE_ENDPOINT = f"{API_BASE_URL}/tenders"
 TENDERS_ENDPOINT = f"{API_BASE_URL}/tenders"
 PROMOTER_ENDPOINT = f"{API_BASE_URL}/promoter"
-EMAIL = "maryam.marmouch@tunipages.tn"
-API_PASSWORD = "Marmouch2345!@"
-DEFAULT_SOURCE_ID = "817"
-DEFAULT_PROMOTER_ID = "223472"
-DEFAULT_AVIS_ID = "2"
-DEFAULT_PAYS_ID = "219"
-DEFAULT_CURRENCY_ID = "111"
+EMAIL = os.getenv("API_EMAIL", "mariem.bousalem@tunipages.tn")
+API_PASSWORD = os.getenv("API_PASSWORD", "L96BhA6ODugl")
+DEFAULT_SOURCE_ID = os.getenv("DEFAULT_SOURCE_ID", "817")
+DEFAULT_PROMOTER_ID = os.getenv("DEFAULT_PROMOTER_ID", "223472")
+DEFAULT_AVIS_ID = os.getenv("DEFAULT_AVIS_ID", "2")
+DEFAULT_PAYS_ID = os.getenv("DEFAULT_PAYS_ID", "219")
+DEFAULT_CURRENCY_ID = os.getenv("DEFAULT_CURRENCY_ID", "111")
 # S3 Configuration
 S3_BUCKET = "tender-s3"
 S3_REGION = "de"
@@ -100,17 +103,144 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
-# MongoDB
-mongo_client = MongoClient(MONGO_URI)
-db = mongo_client[DB_NAME]
-tenders_collection = db[COLLECTION_NAME]
-pending_tenders_collection = db[PENDING_COLLECTION_NAME]
+
+# ================================================
+# POSTGRESQL HELPER FUNCTIONS
+# ================================================
+
+def get_db_connection():
+    """Créer une connexion PostgreSQL"""
+    return psycopg2.connect(
+        host=DB_HOST,
+        port=DB_PORT,
+        database=DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD
+    )
+
+# Test connexion PostgreSQL
 try:
-    db.command('ping')
-    logger.info("MongoDB connecté avec succès")
-except PyMongoError as e:
-    logger.error(f"Erreur MongoDB: {e}")
+    conn = get_db_connection()
+    conn.close()
+    logger.info(f"✅ PostgreSQL connecté: {DB_NAME} (Table: {TABLE_NAME})")
+except Exception as e:
+    logger.error(f"❌ Erreur connexion PostgreSQL: {e}")
     raise
+
+def get_all_tenders(status=None):
+    """Récupère toutes les offres depuis PostgreSQL"""
+    conn = get_db_connection()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        if status:
+            cursor.execute(f"SELECT * FROM {TABLE_NAME} WHERE status = %s ORDER BY created_at DESC", (status,))
+        else:
+            cursor.execute(f"SELECT * FROM {TABLE_NAME} ORDER BY created_at DESC")
+        return cursor.fetchall()
+    finally:
+        cursor.close()
+        conn.close()
+
+def get_existing_references():
+    """Récupère l'ensemble des références existantes"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(f"SELECT reference FROM {TABLE_NAME}")
+        return {row[0] for row in cursor.fetchall() if row[0]}
+    finally:
+        cursor.close()
+        conn.close()
+
+def insert_tender(tender_dict):
+    """Insère une offre en PostgreSQL"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        fields = ['reference', 'title', 'description', 'full_content', 'publication_date',
+                  'expiration_date', 'opening_date', 'region', 'promoter', 'source_id',
+                  'avis_id', 'pays_id', 'currency_id', 'nature', 'external_url', 'pdf_url',
+                  'cautionnement', 'montant', 'batches', 'status', 'extraction_date']
+
+        values = [
+            tender_dict.get('reference'),
+            tender_dict.get('description', '')[:500] if tender_dict.get('description') else None,
+            tender_dict.get('description'),
+            tender_dict.get('full_content'),
+            tender_dict.get('publicationDate'),
+            tender_dict.get('expirationDate'),
+            tender_dict.get('startBiddingDate'),
+            tender_dict.get('region'),
+            tender_dict.get('promoter'),
+            int(tender_dict.get('sourceId', DEFAULT_SOURCE_ID)) if tender_dict.get('sourceId') else int(DEFAULT_SOURCE_ID),
+            int(tender_dict.get('avisId', DEFAULT_AVIS_ID)) if tender_dict.get('avisId') else int(DEFAULT_AVIS_ID),
+            int(tender_dict.get('paysId', DEFAULT_PAYS_ID)) if tender_dict.get('paysId') else int(DEFAULT_PAYS_ID),
+            int(tender_dict.get('currencyId', DEFAULT_CURRENCY_ID)) if tender_dict.get('currencyId') else int(DEFAULT_CURRENCY_ID),
+            tender_dict.get('nature', 'public'),
+            tender_dict.get('external_url'),
+            tender_dict.get('pdf_url'),
+            tender_dict.get('cautionnement'),
+            tender_dict.get('montant'),
+            json.dumps(tender_dict.get('lots', [])) if tender_dict.get('lots') else None,
+            tender_dict.get('status', 'pending'),
+            tender_dict.get('extractionDate')
+        ]
+
+        placeholders = ','.join(['%s'] * len(fields))
+        query = f"""
+            INSERT INTO {TABLE_NAME} ({','.join(fields)})
+            VALUES ({placeholders})
+            ON CONFLICT (reference) DO NOTHING
+            RETURNING id
+        """
+        cursor.execute(query, values)
+        result = cursor.fetchone()
+        conn.commit()
+        return result[0] if result else None
+    finally:
+        cursor.close()
+        conn.close()
+
+def update_tender_api_id(reference, api_id):
+    """Met à jour l'api_id d'une offre"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            f"UPDATE {TABLE_NAME} SET api_id = %s WHERE reference = %s",
+            (api_id, reference)
+        )
+        conn.commit()
+    finally:
+        cursor.close()
+        conn.close()
+
+def delete_tender(reference):
+    """Supprime une offre"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(f"DELETE FROM {TABLE_NAME} WHERE reference = %s", (reference,))
+        deleted_count = cursor.rowcount
+        conn.commit()
+        return deleted_count
+    finally:
+        cursor.close()
+        conn.close()
+
+def update_tender_status(reference, status):
+    """Met à jour le statut d'une offre"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            f"UPDATE {TABLE_NAME} SET status = %s WHERE reference = %s",
+            (status, reference)
+        )
+        conn.commit()
+    finally:
+        cursor.close()
+        conn.close()
 # Régions Tunisie
 REGION_IDS = {
     "Ariana": 1, "Béja": 2, "Ben Arous": 4, "Bizerte": 5, "Gabès": 6,
@@ -215,12 +345,12 @@ class TUNEPSScraper:
         self.default_promoter_id = DEFAULT_PROMOTER_ID
         # URL vers /offres
         self.BASE_URL = "https://www.tuneps.tn/portail/offres"
-       
+     
         self.TIMEOUT = 30
         self.WAIT_TIME = 1
         self.DELAY_BETWEEN_CONSULTATIONS = (1.0, 2.0)
-        self.DELAY_BETWEEN_PAGES = (1, 2)  # Réduit pour plus de vitesse
-        self.MAX_PAGES = 4  # Limite à 4 pages
+        self.DELAY_BETWEEN_PAGES = (1, 2) # Réduit pour plus de vitesse
+        self.MAX_EMPTY_PAGES = 3 # Stop after 3 empty pages
         self.MAX_RETRIES = 2
         self.DATE_CUTOFF_DAYS = 90
         # S3 Client
@@ -256,25 +386,25 @@ class TUNEPSScraper:
             self.logger.error(f"Poppler non fonctionnel: {e}")
     def load_validated_refs(self):
         try:
-            validated_docs = list(tenders_collection.find({"status": "active"}).sort("createdAt", -1))
+            validated_docs = get_all_tenders(status="active")
             self.validated_refs = {doc.get("reference", "") for doc in validated_docs if doc.get("reference")}
             self.logger.info(f"{len(self.validated_refs)} références validées chargées")
-        except PyMongoError as e:
+        except Exception as e:
             self.logger.error(f"Erreur chargement validées: {e}")
     def _load_pending_set(self):
         try:
-            pending_docs = list(pending_tenders_collection.find({"status": "pending"}).sort("createdAt", -1))
+            pending_docs = get_all_tenders(status="pending")
             self.pending_set = set()
             for doc in pending_docs:
                 ref = doc.get("reference", "")
                 desc_hash = hash(doc.get("description", ""))
                 self.pending_set.add((ref, desc_hash))
             self.logger.info(f"{len(self.pending_set)} pending chargés")
-        except PyMongoError as e:
+        except Exception as e:
             self.logger.error(f"Erreur chargement pending set: {e}")
     def load_pending_offers(self):
         try:
-            pending_docs = list(pending_tenders_collection.find({"status": "pending"}).sort("createdAt", -1))
+            pending_docs = get_all_tenders(status="pending")
             self.offres_cache = []
             for doc in pending_docs:
                 clean_doc = {k: v for k, v in doc.items() if k in {f.name for f in fields(OffreTuneps)}}
@@ -307,7 +437,7 @@ class TUNEPSScraper:
                 options.add_argument("--disable-blink-features=AutomationControlled")
                 options.add_experimental_option("excludeSwitches", ["enable-automation"])
                 options.add_experimental_option('useAutomationExtension', False)
-               
+             
                 # Use system ChromeDriver from environment variable or default path
                 chromedriver_path = os.getenv('CHROMEDRIVER_PATH', '/usr/bin/chromedriver')
                 self.driver = webdriver.Chrome(service=Service(chromedriver_path), options=options)
@@ -346,7 +476,7 @@ class TUNEPSScraper:
             date_str = self.clean_date_str(date_str)
             date_str = re.sub(r'h', ':', date_str)
             date_str = re.sub(r'\s+', ' ', date_str).strip()
-           
+         
             try:
                 dt = datetime.strptime(date_str, '%d/%m/%Y %H:%M')
             except ValueError:
@@ -354,7 +484,7 @@ class TUNEPSScraper:
                     dt = datetime.strptime(date_str, '%d/%m/%Y')
                 except ValueError:
                     dt = parse(date_str, fuzzy=True, tzinfos={None: tz.gettz('Africa/Tunis')})
-           
+         
             dt = dt.replace(tzinfo=tz.gettz('Africa/Tunis'))
             return dt.isoformat()
         except Exception as e:
@@ -385,7 +515,7 @@ class TUNEPSScraper:
     def get_or_create_promoter(self, promoter_name: str) -> str:
         if not promoter_name or promoter_name.strip() == "":
             promoter_name = "Promoteur TUNEPS Inconnu"
-       
+     
         clean_name = self.nettoyer_texte(promoter_name)
         if clean_name in self.promoter_cache:
             return self.promoter_cache[clean_name]
@@ -424,7 +554,7 @@ class TUNEPSScraper:
                 f"//table[.//th[contains(translate(text(), 'LOT', 'lot'), 'lot')]]",
                 f"//table[.//td[contains(translate(text(), 'LOT', 'lot'), 'lot')]]"
             ]
-           
+         
             table = None
             for xpath in table_xpaths:
                 try:
@@ -453,13 +583,13 @@ class TUNEPSScraper:
                     try:
                         cells = row.find_elements(By.CSS_SELECTOR, "td, mat-cell, .mat-cell")
                         row_data = [cell.text.strip() for cell in cells]
-                       
+                     
                         if any(row_data):
                             lot_dict = {}
                             for i, header in enumerate(headers):
                                 if i < len(row_data):
                                     header_lower = header.lower()
-                                   
+                                 
                                     # Mapping intelligent des colonnes
                                     if 'objet' in header_lower or 'title' in header_lower or 'désignation' in header_lower or 'description' in header_lower:
                                         lot_dict['title'] = row_data[i]
@@ -474,7 +604,7 @@ class TUNEPSScraper:
                                         lot_dict['numero_lot'] = row_data[i]
                                     else:
                                         lot_dict[header] = row_data[i]
-                           
+                         
                             if lot_dict.get('title') or lot_dict.get('objet') or lot_dict.get('description'):
                                 data.append(lot_dict)
                                 self.logger.info(f"✅ Lot extrait: title='{lot_dict.get('title', 'N/A')}', deposit='{lot_dict.get('deposit', '0')}'")
@@ -499,7 +629,7 @@ class TUNEPSScraper:
                 f"//td[contains(text(), '{label}')]/following-sibling::td[1]",
                 f"//th[contains(text(), '{label}')]/following-sibling::td[1]"
             ]
-           
+         
             for xpath in strategies:
                 try:
                     element = WebDriverWait(driver, timeout).until(
@@ -512,7 +642,7 @@ class TUNEPSScraper:
                         return value
                 except:
                     continue
-           
+         
             # Fallback JS
             try:
                 page_text = driver.execute_script("return document.body.innerText;")
@@ -524,7 +654,7 @@ class TUNEPSScraper:
                     return value
             except:
                 pass
-           
+         
             self.logger.warning(f"Aucune valeur trouvée pour '{label}'")
             return ""
         except Exception as e:
@@ -560,22 +690,22 @@ class TUNEPSScraper:
             for attempt in range(self.MAX_RETRIES):
                 try:
                     self.driver.get(url)
-                    time.sleep(1)  # Réduit pour vitesse
+                    time.sleep(1) # Réduit pour vitesse
                     WebDriverWait(self.driver, 10).until(
                         EC.presence_of_element_located(
                             (By.XPATH, "//*[contains(text(), 'N° référence') or contains(text(), 'Objet')]")
                         )
                     )
-                    time.sleep(0.5)  # Réduit
+                    time.sleep(0.5) # Réduit
                     # Extraction N° référence
                     n_ref = self.get_value_safe(self.driver, "N° référence", timeout=10)
                     num_offre = data.get("N° Offre", "")
-                   
+                 
                     if n_ref and re.search(r'\d+/\d{2,4}', n_ref.strip()):
                         full_reference = f"{n_ref} - {num_offre}" if num_offre else n_ref
                     else:
                         full_reference = num_offre
-                   
+                 
                     data["Reference"] = full_reference
                     self.logger.info(f"Référence complète: {full_reference}")
                     # Extraction dates
@@ -597,7 +727,7 @@ class TUNEPSScraper:
                         lots = json.loads(lots_json)
                         contenu['lots'] = lots
                         self.logger.info(f"✅ {len(lots)} lot(s) extrait(s)")
-                       
+                     
                         if not global_caution and lots:
                             first_lot_caution = lots[0].get("deposit", "0") or lots[0].get("Cautionnement provisoire", "0")
                             contenu['cautionnement_provisoire'] = first_lot_caution
@@ -639,10 +769,10 @@ class TUNEPSScraper:
         try:
             if not pdf_url or not reference:
                 return "", ""
-           
+         
             filename = f"{reference}.pdf"
             pdf_path = os.path.join(self.pdf_dir, filename)
-           
+         
             if os.path.exists(pdf_path):
                 file_size = os.path.getsize(pdf_path)
                 if file_size > 100:
@@ -657,7 +787,7 @@ class TUNEPSScraper:
                 with open(pdf_path, 'wb') as f:
                     for chunk in response.iter_content(chunk_size=8192):
                         f.write(chunk)
-               
+             
                 if os.path.exists(pdf_path):
                     file_size = os.path.getsize(pdf_path)
                     if file_size > 100:
@@ -665,7 +795,7 @@ class TUNEPSScraper:
                         return pdf_path, filename
                     else:
                         os.remove(pdf_path)
-           
+         
             return "", ""
         except Exception as e:
             self.logger.error(f"Erreur téléchargement PDF: {e}")
@@ -681,9 +811,9 @@ class TUNEPSScraper:
                 return False
             tender_dict = offre.to_dict()
             tender_dict["status"] = "pending"
-            result = pending_tenders_collection.insert_one(tender_dict)
-           
-            if result.inserted_id:
+            result_id = insert_tender(tender_dict)
+
+            if result_id:
                 self.pending_set.add((offre.reference, desc_hash))
                 self.logger.info(f"✅ Offre sauvegardée en pending: {offre.reference}")
                 return True
@@ -697,7 +827,7 @@ class TUNEPSScraper:
         start_bidding_ts = self.parse_date(offre.startBiddingDate)
         if start_bidding_ts is None:
             start_bidding_ts = publication_ts
-       
+     
         expiration_ts = self.parse_date(offre.expirationDate)
         opening_ts = self.parse_date(offre.ouverture_offres)
         if expiration_ts is None:
@@ -710,7 +840,7 @@ class TUNEPSScraper:
                 expiration_ts = exp_dt.isoformat()
         # Construction des batches
         batches = []
-       
+     
         def clean_deposit(dep_str):
             if not dep_str:
                 return "0"
@@ -724,7 +854,7 @@ class TUNEPSScraper:
                     lot.get("description") or
                     f"Lot {i}"
                 )
-               
+             
                 lot_deposit = (
                     lot.get("deposit") or
                     lot.get("Cautionnement provisoire") or
@@ -732,32 +862,32 @@ class TUNEPSScraper:
                     "0"
                 )
                 deposit = clean_deposit(lot_deposit)
-               
+             
                 batches.append({
                     "activitiesIds": [],
                     "title": lot_title,
                     "deposit": deposit
                 })
-               
+             
                 self.logger.info(f"✅ Batch {i}: title='{lot_title[:50]}...', deposit='{deposit}'")
-       
+     
         # Fallback: batch unique
         if not batches:
             raw_description = str(offre.description).strip()
             if not raw_description:
                 raw_description = f"Appel d'offres TUNEPS - Référence: {offre.reference}"
-           
+         
             global_deposit = clean_deposit(offre.cautionnement_provisoire)
-           
+         
             batches = [{
                 "activitiesIds": [],
                 "title": raw_description,
                 "deposit": global_deposit
             }]
-           
+         
             self.logger.info(f"Batch unique: title='{raw_description[:50]}...', deposit='{global_deposit}'")
         promoter_id = self.get_or_create_promoter(offre.promoter)
-       
+     
         source_id = int(self.default_source_id)
         currency_id = int(DEFAULT_CURRENCY_ID)
         avis_id = int(DEFAULT_AVIS_ID)
@@ -770,7 +900,7 @@ class TUNEPSScraper:
             lots_titles = [lot.get("title", lot.get("objet", lot.get("description", ""))) for lot in offre.lots if lot.get("title") or lot.get("objet") or lot.get("description")]
             if lots_titles:
                 title_parts.append(f"Lots: {', '.join(lots_titles[:3])}")
-       
+     
         title = " - ".join(title_parts)
         description = raw_description
         addresses = [{"countryId": DEFAULT_PAYS_ID}]
@@ -810,34 +940,35 @@ class TUNEPSScraper:
             "images": images
         }
         filtered_payload = {k: v for k, v in payload.items() if v is not None and v != ""}
-       
+     
         self.logger.info(f"📤 Payload API pour {offre.reference}: {len(batches)} lot(s)")
-       
+     
         return filtered_payload
     @tenacity.retry(stop=tenacity.stop_after_attempt(5), wait=tenacity.wait_exponential(multiplier=2, min=4, max=20))
     def post_tender_to_database(self, offre) -> dict:
-        existing = tenders_collection.find_one({"reference": offre.reference})
-        if existing:
+        existing_refs = get_existing_references()
+        if offre.reference in existing_refs:
             self.logger.info(f"Offre {offre.reference} existe déjà")
             return {"success": False, "message": "Offre déjà validée", "offre_ref": offre.reference}
         tender_dict = offre.to_dict()
         tender_dict["status"] = "active"
         tender_dict["validationDate"] = datetime.now().isoformat()
+        tender_dict["status"] = "active"
         try:
-            result = tenders_collection.insert_one(tender_dict)
-            if result.inserted_id:
-                pending_deleted = pending_tenders_collection.delete_one({"reference": offre.reference})
-                if pending_deleted.deleted_count > 0:
+            result_id = insert_tender(tender_dict)
+            if result_id:
+                pending_deleted = delete_tender(offre.reference)
+                if pending_deleted > 0:
                     to_remove = [(r, h) for r, h in self.pending_set if r == offre.reference]
                     for tup in to_remove:
                         self.pending_set.discard(tup)
-               
+             
                 self.validated_refs.add(offre.reference)
-               
+             
                 api_success = False
                 api_id = None
                 api_message = ""
-               
+             
                 try:
                     if not self.login_appeloffres():
                         api_message = "Échec connexion API"
@@ -849,18 +980,15 @@ class TUNEPSScraper:
                             headers=self.appeloffres_headers,
                             timeout=30
                         )
-                       
+                     
                         if response.status_code in [200, 201]:
                             api_data = response.json()
                             api_id = api_data.get("id")
                             api_success = True
                             api_message = f"Envoi API réussi - ID: {api_id}"
                             self.logger.info(f"✅ ENVOI API RÉUSSI: {offre.reference} - ID: {api_id}")
-                           
-                            tenders_collection.update_one(
-                                {"_id": result.inserted_id},
-                                {"$set": {"api_id": api_id}}
-                            )
+
+                            update_tender_api_id(offre.reference, api_id)
                         else:
                             api_message = f"Échec API: {response.status_code} - {response.text}"
                             self.logger.error(f"❌ ENVOI API ÉCHOUÉ: {api_message}")
@@ -881,8 +1009,8 @@ class TUNEPSScraper:
                     "api_success": api_success
                 }
             else:
-                raise PyMongoError("Insertion échouée")
-        except PyMongoError as e:
+                raise Exception("Insertion échouée")
+        except Exception as e:
             self.logger.error(f"Erreur MongoDB: {e}")
             return {"success": False, "message": f"Erreur MongoDB: {str(e)}", "offre_ref": offre.reference}
     # ⭐ FONCTION AMÉLIORÉE: Extraction robuste de l'ID
@@ -890,10 +1018,10 @@ class TUNEPSScraper:
         """Extraire toutes les lignes du tableau des offres avec extraction robuste de l'ID"""
         consultations = []
         driver = self.driver
-       
+     
         try:
-            time.sleep(0.5)  # Réduit pour vitesse
-           
+            time.sleep(0.5) # Réduit pour vitesse
+         
             # Forcer l'affichage de colonnes cachées
             script = """
             var style = document.createElement('style');
@@ -902,9 +1030,9 @@ class TUNEPSScraper:
             """
             driver.execute_script(script)
             time.sleep(0.5)
-           
+         
             rows = driver.find_elements(By.CSS_SELECTOR, "table tbody tr, mat-row")
-           
+         
             if not rows:
                 return consultations
             self.logger.info(f"\n{len(rows)} lignes détectées")
@@ -922,7 +1050,7 @@ class TUNEPSScraper:
                                 self.logger.info(f"✅ ID extrait depuis href: {id1}")
                     except:
                         pass
-                   
+                 
                     # ⭐ STRATÉGIE 2: Attributs data-*
                     if not id1:
                         try:
@@ -937,7 +1065,7 @@ class TUNEPSScraper:
                                 }
                                 return attrs;
                             """, row)
-                           
+                         
                             for key, value in data_attrs.items():
                                 if value and str(value).isdigit() and len(str(value)) == 6:
                                     id1 = str(value)
@@ -945,11 +1073,11 @@ class TUNEPSScraper:
                                     break
                         except:
                             pass
-                   
+                 
                     # ⭐ STRATÉGIE 3: Cellules visibles
                     all_cells = row.find_elements(By.CSS_SELECTOR, "td, mat-cell, .mat-cell")
                     all_texts = [cell.text.strip() for cell in all_cells]
-                   
+                 
                     js_texts = driver.execute_script("""
                         var row = arguments[0];
                         var cells = row.querySelectorAll('td, mat-cell, .mat-cell');
@@ -959,7 +1087,7 @@ class TUNEPSScraper:
                         });
                         return values;
                     """, row)
-                   
+                 
                     # ⭐ STRATÉGIE 4: Colonnes cachées
                     if not id1:
                         try:
@@ -971,7 +1099,7 @@ class TUNEPSScraper:
                                 "td[data-column='id']",
                                 "mat-cell[data-column='id']"
                             ]
-                           
+                         
                             for selector in selectors:
                                 try:
                                     id1_cell = row.find_element(By.CSS_SELECTOR, selector)
@@ -986,7 +1114,7 @@ class TUNEPSScraper:
                                     continue
                         except:
                             pass
-                   
+                 
                     # ⭐ STRATÉGIE 5: Textes cellules
                     if not id1:
                         for text in all_texts + js_texts:
@@ -994,7 +1122,7 @@ class TUNEPSScraper:
                                 id1 = text
                                 self.logger.info(f"✅ ID extrait depuis texte: {id1}")
                                 break
-                   
+                 
                     # ⭐ STRATÉGIE 6: N° Offre
                     num_offre = all_texts[0] if len(all_texts) > 0 else ""
                     if not id1 and num_offre:
@@ -1002,12 +1130,12 @@ class TUNEPSScraper:
                         if match:
                             id1 = match.group(1)
                             self.logger.info(f"✅ ID extrait depuis N° Offre: {id1}")
-                   
+                 
                     # Warnings si échec
                     if not id1:
                         self.logger.warning(f"⚠️ Ligne {idx+1}: Impossible d'extraire l'ID")
                         self.logger.warning(f" Cellules: {all_texts[:5]}")
-                   
+                 
                     basic_data = {
                         "N° Offre": num_offre,
                         "Acheteur public": all_texts[1] if len(all_texts) > 1 else "",
@@ -1016,9 +1144,9 @@ class TUNEPSScraper:
                         "Dernier Délai": all_texts[4] if len(all_texts) > 4 else "",
                         "_id1": id1
                     }
-                   
+                 
                     consultations.append(basic_data)
-                   
+                 
                 except Exception as e:
                     self.logger.error(f"Erreur ligne {idx+1}: {str(e)[:80]}")
                     continue
@@ -1034,7 +1162,7 @@ class TUNEPSScraper:
                 "button[aria-label*='suivant']",
                 "button[aria-label*='next']"
             ]
-           
+         
             next_button = None
             for selector in next_selectors:
                 try:
@@ -1049,9 +1177,9 @@ class TUNEPSScraper:
             if not next_button:
                 return False
             driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", next_button)
-            time.sleep(0.5)  # Réduit
+            time.sleep(0.5) # Réduit
             driver.execute_script("arguments[0].click();", next_button)
-           
+         
             WebDriverWait(driver, self.TIMEOUT).until(
                 EC.presence_of_all_elements_located((By.CSS_SELECTOR, "table tbody tr, mat-row"))
             )
@@ -1059,11 +1187,55 @@ class TUNEPSScraper:
             return True
         except:
             return False
+    def should_stop_scraping(self, rows_data, page_num):
+        """Condition d'arrêt basée sur dates anciennes (comme tuneps.py)"""
+        if not rows_data:
+            return False
+
+        cutoff_date = datetime.now().date() - timedelta(days=self.DATE_CUTOFF_DAYS)
+        all_old = True
+
+        for r in rows_data:
+            pub_date_str = r.get("Date Publication", "")
+            exp_date_str = r.get("Dernier Délai", "")
+
+            pub_date = None
+            date_formats = ["%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%d %m %Y"]
+
+            for fmt in date_formats:
+                try:
+                    pub_date = datetime.strptime(pub_date_str.strip().split()[0], fmt).date()
+                    break
+                except ValueError:
+                    continue
+
+            if pub_date and pub_date >= cutoff_date:
+                all_old = False
+                break
+
+            exp_date = None
+            for fmt in date_formats:
+                try:
+                    exp_date = datetime.strptime(exp_date_str.strip().split()[0], fmt).date()
+                    break
+                except ValueError:
+                    continue
+
+            if exp_date and exp_date >= cutoff_date:
+                all_old = False
+                break
+
+        if all_old:
+            self.logger.info(f"Arrêt scraping à page {page_num}: Toutes dates (pub/exp) > {self.DATE_CUTOFF_DAYS} jours anciennes ({cutoff_date})")
+            return True
+
+        return False
+
     def is_between_dates(self, date_str, start_date_str, end_date_str):
         try:
             if not date_str or date_str in ["N/A", ""]:
                 return False
-           
+
             date_formats = ["%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%d %m %Y"]
             pub_date = None
             for fmt in date_formats:
@@ -1079,7 +1251,7 @@ class TUNEPSScraper:
             if start_date and end_date:
                 return start_date <= pub_date <= end_date
             elif start_date:
-                return start_date <= pub_date
+                return pub_date >= start_date
             elif end_date:
                 return pub_date <= end_date
             else:
@@ -1092,9 +1264,9 @@ class TUNEPSScraper:
         reference = data.get("Reference", data.get("N° Offre", ""))
         url = data.get("URL_Detail", "")
         i = data.get("index", 0)
-       
+     
         self.logger.info(f"🔍 Thread: Traitement offre {i}: {data.get('N° Offre', 'N/A')}")
-       
+     
         if not url:
             self.logger.warning(f"⚠️ Pas d'URL pour offre {i}: {reference}")
             return None
@@ -1103,7 +1275,7 @@ class TUNEPSScraper:
         region_id = None
         clean_promoter = self.nettoyer_texte(data.get("Acheteur public", ""))
         clean_promoter_words = set(clean_promoter.split())
-       
+     
         for region, rid in REGION_IDS.items():
             clean_region = self.nettoyer_texte(region)
             clean_region_words = set(clean_region.split())
@@ -1159,7 +1331,7 @@ class TUNEPSScraper:
         self.is_processing = True
         self.processing_start_time = time.time()
         self.extraction_complete_mode = extraction_complete
-       
+     
         self.logger.info(f"🚀 Début scraping TUNEPS OFFRES ({datetime.now().strftime('%d/%m/%Y %H:%M')})")
         self.logger.info(f"📅 Dates: {start_date} à {end_date}")
         self.logger.info(f"🔧 Mode complete: {extraction_complete}")
@@ -1188,9 +1360,9 @@ class TUNEPSScraper:
                         else:
                             raise te
                 page = 1
-                while page <= self.MAX_PAGES:  # Limite à 4 pages
+                while True:  # No max pages limit, stop based on dates/empty pages
                     self.logger.info(f"\n📄 Traitement page {page}...")
-                   
+                 
                     try:
                         WebDriverWait(self.driver, self.TIMEOUT).until(
                             EC.presence_of_all_elements_located((By.CSS_SELECTOR, "table tbody tr, mat-row"))
@@ -1200,19 +1372,26 @@ class TUNEPSScraper:
                         break
                     rows_data = self.extract_all_rows_data()
                     self.logger.info(f"📊 {len(rows_data)} lignes extraites sur page {page}")
+
+                    # Filtrer par plage de dates
                     rows_data = [r for r in rows_data if self.is_between_dates(r.get("Date Publication", ""), start_date, end_date)]
+
                     if not rows_data:
                         empty_pages += 1
                         self.logger.info(f"Aucune offre dans la plage ({empty_pages}/3)")
                         if empty_pages >= 3:
-                            self.logger.info("Arrêt: 3 pages vides")
+                            self.logger.info("Arrêt automatique : aucune donnée dans la plage trouvée.")
                             break
                     else:
                         empty_pages = 0
+
+                    # Vérifier si on doit arrêter basé sur les dates anciennes (comme tuneps.py)
+                    if self.should_stop_scraping(rows_data, page):
+                        break
                     for r in rows_data:
                         id1 = r.get("_id1", "")
                         num_offre = r.get("N° Offre", "")
-                       
+                     
                         if id1 and num_offre:
                             r["URL_Detail"] = f"https://www.tuneps.tn/portail/offres/details/{id1}/{num_offre}"
                         else:
@@ -1226,8 +1405,8 @@ class TUNEPSScraper:
                             all_consultations.append(r)
                             all_refs.add(key)
                     self.logger.info(f"{len(rows_data)} offres dans la plage sur page {page}")
-                    if page >= self.MAX_PAGES or not self.click_next_page():
-                        self.logger.info("Fin de pagination (limite atteinte ou fin)")
+                    if not self.click_next_page():
+                        self.logger.info("Fin de pagination")
                         break
                     page += 1
                     time.sleep(random.uniform(*self.DELAY_BETWEEN_PAGES))
@@ -1238,7 +1417,7 @@ class TUNEPSScraper:
                     return []
                 offres = []
                 self.logger.info(f"🚀 Lancement {len(all_consultations)} threads (max_workers=5)")
-               
+             
                 with ThreadPoolExecutor(max_workers=5) as executor:
                     futures = []
                     for i, data in enumerate(all_consultations, 1):
@@ -1262,7 +1441,7 @@ class TUNEPSScraper:
                 self.is_processing = False
                 self.processing_start_time = None
                 self.logger.info(f"⏱️ Durée totale: {processing_duration:.2f}s")
-               
+             
                 if self.driver:
                     try:
                         self.driver.quit()
@@ -1323,14 +1502,16 @@ class TUNEPSScraper:
                 for key, value in updated_data.items():
                     if hasattr(offre, key):
                         setattr(offre, key, value)
-                pending_tenders_collection.replace_one({"reference": reference}, offre.to_dict())
+                # Met à jour l'offre en PostgreSQL
+                delete_tender(reference)
+                insert_tender(offre.to_dict())
                 self.logger.info(f"Offre {reference} mise à jour")
                 return True
         return False
     def delete_pending_offre(self, reference: str) -> bool:
         try:
-            result = pending_tenders_collection.delete_one({"reference": reference, "status": "pending"})
-            if result.deleted_count > 0:
+            deleted_count = delete_tender(reference)
+            if deleted_count > 0:
                 self.offres_cache = [o for o in self.offres_cache if o.reference != reference]
                 to_remove = [(r, h) for r, h in self.pending_set if r == reference]
                 for tup in to_remove:
@@ -1343,8 +1524,8 @@ class TUNEPSScraper:
             return False
     def delete_validated_offre(self, reference: str) -> bool:
         try:
-            result = tenders_collection.delete_one({"reference": reference, "status": "active"})
-            if result.deleted_count > 0:
+            deleted_count = delete_tender(reference)
+            if deleted_count > 0:
                 self.validated_refs.discard(reference)
                 self.logger.info(f"Offre validée supprimée: {reference}")
                 return True
@@ -1354,9 +1535,11 @@ class TUNEPSScraper:
             return False
     def get_tenders_from_db(self, limit=100):
         try:
-            tenders = list(tenders_collection.find({"status": "active"}).limit(limit).sort("createdAt", -1))
+            tenders = get_all_tenders(status="active")
+            if limit:
+                tenders = tenders[:limit]
             for tender in tenders:
-                tender["_id"] = str(tender["_id"])
+                tender["_id"] = str(tender.get("id", ""))
                 tender["extractionDate"] = tender.get("extractionDate", "")
                 tender["validationDate"] = tender.get("validationDate", "")
             return tenders
@@ -1397,28 +1580,54 @@ def test_api():
         "pending_count": len(scraper.offres_cache),
         "processing": scraper.is_processing
     })
-@app.route('/api/scrape', methods=['POST'])
+@app.route('/api/scrape', methods=['POST', 'OPTIONS'])
 def scrape():
-    logger.info("📡 /api/scrape appelée")
+    # Handle CORS preflight
+    if request.method == 'OPTIONS':
+        logger.info("📡 OPTIONS preflight received")
+        response = jsonify({"status": "ok"})
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
+        response.headers.add('Access-Control-Allow-Methods', 'POST')
+        return response
+
+    logger.info("📡 /api/scrape appelée (POST)")
     try:
-        data = request.json or {}
-        start_date = data.get('start_date')
-        end_date = data.get('end_date')
+        # Get JSON data from request
+        logger.info(f"📡 Request content-type: {request.content_type}")
+        logger.info(f"📡 Request data (raw): {request.data}")
+        data = request.get_json(force=True, silent=True) or {}
+        logger.info(f"📡 Data received: {data}")
+
+        # Support both 'start'/'end' and 'start_date'/'end_date'
+        start_date = data.get('start') or data.get('start_date')
+        end_date = data.get('end') or data.get('end_date')
+
+        # Convertir les chaînes vides en None
+        if start_date == "":
+            start_date = None
+        if end_date == "":
+            end_date = None
+
         complete_mode = data.get('extraction_complete', False)
-       
-        logger.info(f"Scraping: {start_date} à {end_date} - Complete: {complete_mode}")
-       
+        logger.info(f"📡 Scraping TUNEPS AO: {start_date} à {end_date} - Complete: {complete_mode}")
+
         thread = threading.Thread(target=scraper.scraper_offres_tuneps, args=(start_date, end_date, complete_mode))
         thread.daemon = True
         thread.start()
-       
-        return jsonify({
+
+        response = jsonify({
             "success": True,
-            "message": f"Scraping OFFRES lancé ({'complet' if complete_mode else 'rapide'})"
+            "message": f"Scraping TUNEPS AO lancé ({'complet' if complete_mode else 'rapide'})"
         })
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response
     except Exception as e:
-        logger.error(f"Erreur /api/scrape: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        logger.error(f"❌ Erreur /api/scrape: {e}")
+        logger.exception(e)
+        response = jsonify({"success": False, "error": str(e)})
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response, 500
 @app.route('/api/status', methods=['GET'])
 def status():
     if scraper.is_processing:
@@ -1437,8 +1646,9 @@ def status():
 @app.route('/api/validate/<path:reference>', methods=['POST'])
 def validate_offre(reference):
     logger.info(f"✅ Validation: {reference}")
-   
-    existing_active = tenders_collection.find_one({"reference": reference, "status": "active"})
+
+    active_tenders = get_all_tenders(status="active")
+    existing_active = next((t for t in active_tenders if t.get("reference") == reference), None)
     if existing_active:
         return jsonify({"success": False, "message": "Offre déjà validée", "offre_ref": reference})
     for offre in scraper.offres_cache[:]:
@@ -1447,13 +1657,14 @@ def validate_offre(reference):
             if result['success']:
                 scraper.offres_cache.remove(offre)
             return jsonify(result)
-    pending_doc = pending_tenders_collection.find_one({"reference": reference, "status": "pending"})
+    pending_tenders = get_all_tenders(status="pending")
+    pending_doc = next((t for t in pending_tenders if t.get("reference") == reference), None)
     if pending_doc:
         offre = OffreTuneps(**pending_doc)
         result = scraper.post_tender_to_database(offre)
         if result['success']:
             scraper.offres_cache = [o for o in scraper.offres_cache if o.reference != reference]
-            pending_tenders_collection.delete_one({"reference": reference})
+            delete_tender(reference)
         return jsonify(result)
     return jsonify({"success": False, "message": "Offre non trouvée", "offre_ref": reference})
 @app.route('/api/update/<path:reference>', methods=['POST'])
@@ -1497,11 +1708,11 @@ def download_pdf(filename):
 def serve_react(path):
     if path != "" and os.path.exists(os.path.join(REACT_BUILD_DIR, path)):
         return send_file(os.path.join(REACT_BUILD_DIR, path))
-   
+ 
     index_path = os.path.join(REACT_BUILD_DIR, 'index.html')
     if os.path.exists(index_path):
         return send_file(index_path)
-   
+ 
     return Response("<h1>TUNEPS OFFRES Scraper - Frontend manquant</h1>", mimetype='text/html')
 if __name__ == "__main__":
     # Fix Windows console encoding for emojis
@@ -1509,7 +1720,6 @@ if __name__ == "__main__":
     if sys.platform == 'win32':
         sys.stdout.reconfigure(encoding='utf-8')
         sys.stderr.reconfigure(encoding='utf-8')
-
     print("="*80)
     print("🚀 SCRAPER TUNEPS - APPELS D'OFFRES (/portail/offres)")
     print("="*80)
@@ -1526,7 +1736,7 @@ if __name__ == "__main__":
     print(" - Extraction CAUTIONNEMENT → batches[].deposit (caution du lot)")
     print(" - Extraction ID robuste (6 stratégies)")
     print(" - Fallback cautionnement global si absent par lot")
-    print(" - Scraping limité à 4 pages")
+    print(" - Scraping sans limite de pages, arrêt basé sur dates")
     print(" - Traitement parallèle (5 threads)")
     print(" - Mode rapide par défaut (extraction_complete=False)")
     print("="*80)

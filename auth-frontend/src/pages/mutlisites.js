@@ -1,0 +1,344 @@
+import React, { useState } from "react";
+import { Bell, Settings, User, ArrowRight, Globe, FileText, Building2, Briefcase, MapPin, Users } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+
+function MultiSitesPage() {
+  const [hoveredCard, setHoveredCard] = useState(null);
+  const navigate = useNavigate();
+
+  const handleSiteClick = (sitePath) => {
+    navigate(sitePath);
+  };
+
+  const sites = [
+    {
+      id: 1,
+      name: "TUNEPS",
+      description: "Marchés publics tunisiens",
+      icon: MapPin,
+      color: "#0066CC",
+      gradient: "linear-gradient(135deg, #0066CC 0%, #004C99 100%)",
+      path: "/tuneps"
+    },
+    {
+      id: 2,
+      name: "PNUD",
+      description: "Programme des Nations Unies",
+      icon: Globe,
+      color: "#00A0DC",
+      gradient: "linear-gradient(135deg, #00A0DC 0%, #0078A8 100%)",
+      path: "/pnud"
+    },
+    {
+      id: 3,
+      name: "HAICOP",
+      description: "Marchés publics Haïti",
+      icon: Building2,
+      color: "#0D9488",
+      gradient: "linear-gradient(135deg, #0D9488 0%, #0F766E 100%)",
+      path: "/haicop"
+    },
+    {
+      id: 4,
+      name: "Banque Mondiale",
+      description: "Appels d'offres internationaux",
+      icon: Briefcase,
+      color: "#7C3AED",
+      gradient: "linear-gradient(135deg, #7C3AED 0%, #6D28D9 100%)",
+      path: "/banque"
+    },
+    {
+      id: 5,
+      name: "BOAMP",
+      description: "Bulletin Officiel des Annonces",
+      icon: FileText,
+      color: "#DC2626",
+      gradient: "linear-gradient(135deg, #DC2626 0%, #B91C1C 100%)",
+      path: "/boamp"
+    },
+    {
+      id: 6,
+      name: "AO_Tuneps",
+      description: "Appels d'Offres TUNEPS",
+      icon: Building2,
+      color: "#1E40AF",
+      gradient: "linear-gradient(135deg, #1E40AF 0%, #1E3A8A 100%)",
+      path: "/tuneps_appel-offres"
+    },
+    {
+      id: 7,
+      name: "ARMP Madagascar",
+      description: "Autorité de Régulation des Marchés Publics",
+      icon: Users,
+      color: "#059669",
+      gradient: "linear-gradient(135deg, #059669 0%, #047857 100%)",
+      path: "/armp"
+    },
+    {
+      id: 8,
+      name: "Expertise France",
+      description: "Agence publique de coopération technique",
+      icon: Globe,
+      color: "#EA580C",
+      gradient: "linear-gradient(135deg, #EA580C 0%, #C2410C 100%)",
+      path: "/expertise"
+    },
+    {
+      id: 9,
+      name: "BENIN",
+      description: "Marchés publics du Bénin",
+      icon: Building2,
+      color: "#16A34A",
+      gradient: "linear-gradient(135deg, #16A34A 0%, #15803D 100%)",
+      path: "/benin"
+    },
+    {
+      id: 10,
+      name: "GIZ",
+      description: "Coopération internationale allemande",
+      icon: Briefcase,
+      color: "#9333EA",
+      gradient: "linear-gradient(135deg, #9333EA 0%, #7E22CE 100%)",
+      path: "/giz"
+    },
+    {
+      id: 11,
+      name: "ReliefWeb",
+      description: "Opportunités d'emploi humanitaires",
+      icon: Globe,
+      color: "#F59E0B",
+      gradient: "linear-gradient(135deg, #F59E0B 0%, #D97706 100%)",
+      path: "/relief"
+    },
+    {
+      id: 12,
+      name: "MediaCongo",
+      description: "Opportunités et médias RDC",
+      icon: Globe,
+      color: "#10B981",
+      gradient: "linear-gradient(135deg, #10B981 0%, #059669 100%)",
+      path: "/mediacongo"
+    }
+  ];
+
+  return (
+    <div className="min-h-screen" style={{ background: "linear-gradient(to bottom, #F8FAFC 0%, #F1F5F9 100%)" }}>
+      {/* Navbar Premium */}
+      <nav className="bg-white shadow-sm" style={{ borderBottom: "1px solid #E2E8F0" }}>
+        <div className="container-fluid px-4 py-3">
+          <div className="d-flex justify-content-between align-items-center">
+            <div className="d-flex align-items-center gap-3">
+              <div style={{
+                width: "40px",
+                height: "40px",
+                background: "linear-gradient(135deg, #0066CC 0%, #00A0DC 100%)",
+                borderRadius: "10px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center"
+              }}>
+                <Globe size={22} color="white" strokeWidth={2.5} />
+              </div>
+              <span style={{ 
+                fontSize: "1.5rem", 
+                fontWeight: "700",
+                background: "linear-gradient(135deg, #0F172A 0%, #334155 100%)",
+                WebkitBackgroundClip: "text",
+                WebkitTextFillColor: "transparent",
+                letterSpacing: "-0.5px"
+              }}>
+                Multi-Sites
+              </span>
+            </div>
+            <div className="d-flex align-items-center gap-2">
+              <button className="btn position-relative" style={{ 
+                width: "44px", 
+                height: "44px",
+                background: "white",
+                border: "1px solid #E2E8F0",
+                borderRadius: "10px",
+                transition: "all 0.2s"
+              }}>
+                <Bell size={18} strokeWidth={2.5} color="#64748B" />
+                <span className="position-absolute top-0 start-100 translate-middle" style={{
+                  width: "20px",
+                  height: "20px",
+                  background: "linear-gradient(135deg, #DC2626 0%, #B91C1C 100%)",
+                  borderRadius: "50%",
+                  fontSize: "0.65rem",
+                  fontWeight: "700",
+                  color: "white",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  border: "2px solid white"
+                }}>3</span>
+              </button>
+              <button className="btn" style={{ 
+                width: "44px", 
+                height: "44px",
+                background: "white",
+                border: "1px solid #E2E8F0",
+                borderRadius: "10px"
+              }}>
+                <Settings size={18} strokeWidth={2.5} color="#64748B" />
+              </button>
+              <button className="btn" style={{ 
+                width: "44px", 
+                height: "44px",
+                background: "linear-gradient(135deg, #0066CC 0%, #00A0DC 100%)",
+                border: "none",
+                borderRadius: "10px"
+              }}>
+                <User size={18} strokeWidth={2.5} color="white" />
+              </button>
+            </div>
+          </div>
+        </div>
+      </nav>
+
+      {/* Hero Section */}
+      <div className="container py-5">
+        <div className="text-center mb-5" style={{ marginTop: "3rem" }}>
+          <h1 style={{ 
+            fontSize: "2.75rem", 
+            fontWeight: "800",
+            background: "linear-gradient(135deg, #0F172A 0%, #334155 100%)",
+            WebkitBackgroundClip: "text",
+            WebkitTextFillColor: "transparent",
+            letterSpacing: "-1px",
+            marginBottom: "1rem"
+          }}>
+            Sélectionnez votre plateforme
+          </h1>
+          <p style={{ 
+            fontSize: "1.1rem", 
+            color: "#64748B",
+            fontWeight: "400",
+            maxWidth: "600px",
+            margin: "0 auto"
+          }}>
+            Accédez aux marchés publics et appels d'offres internationaux
+          </p>
+        </div>
+
+        {/* Cards Grid */}
+        <div className="row g-4 justify-content-center" style={{ maxWidth: "1400px", margin: "0 auto" }}>
+          {sites.map((site) => {
+            const IconComponent = site.icon;
+            return (
+              <div key={site.id} className="col-md-6 col-lg-4">
+                <div
+                  className="card border-0 h-100"
+                  style={{
+                    cursor: "pointer",
+                    transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+                    transform: hoveredCard === site.id ? "translateY(-8px)" : "translateY(0)",
+                    boxShadow: hoveredCard === site.id 
+                      ? "0 20px 40px rgba(0,0,0,0.12)" 
+                      : "0 4px 12px rgba(0,0,0,0.05)",
+                    background: "white",
+                    borderRadius: "16px",
+                    overflow: "hidden"
+                  }}
+                  onClick={() => handleSiteClick(site.path)}
+                  onMouseEnter={() => setHoveredCard(site.id)}
+                  onMouseLeave={() => setHoveredCard(null)}
+                >
+                  {/* Card Header with Gradient */}
+                  <div style={{
+                    background: site.gradient,
+                    height: "8px",
+                    width: "100%"
+                  }} />
+
+                  <div className="card-body" style={{ padding: "2rem 1.75rem" }}>
+                    {/* Icon Container */}
+                    <div style={{
+                      width: "64px",
+                      height: "64px",
+                      background: `${site.color}10`,
+                      borderRadius: "14px",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      marginBottom: "1.5rem",
+                      transition: "all 0.3s",
+                      transform: hoveredCard === site.id ? "scale(1.05)" : "scale(1)"
+                    }}>
+                      <IconComponent 
+                        size={30} 
+                        color={site.color} 
+                        strokeWidth={2.5}
+                      />
+                    </div>
+
+                    {/* Title */}
+                    <h3 style={{ 
+                      fontSize: "1.35rem", 
+                      fontWeight: "700",
+                      color: "#0F172A",
+                      marginBottom: "0.75rem",
+                      letterSpacing: "-0.3px"
+                    }}>
+                      {site.name}
+                    </h3>
+
+                    {/* Description */}
+                    <p style={{ 
+                      fontSize: "0.95rem", 
+                      color: "#64748B",
+                      lineHeight: "1.6",
+                      marginBottom: "1.5rem",
+                      minHeight: "48px"
+                    }}>
+                      {site.description}
+                    </p>
+
+                    {/* Button */}
+                    <button
+                      className="btn d-flex align-items-center justify-content-center gap-2 w-100"
+                      style={{
+                        padding: "0.85rem",
+                        fontWeight: "600",
+                        fontSize: "0.95rem",
+                        background: hoveredCard === site.id ? site.gradient : "white",
+                        border: `2px solid ${site.color}`,
+                        color: hoveredCard === site.id ? "white" : site.color,
+                        borderRadius: "10px",
+                        transition: "all 0.3s"
+                      }}
+                    >
+                      Accéder à la plateforme
+                      <ArrowRight 
+                        size={18} 
+                        strokeWidth={2.5}
+                        style={{
+                          transition: "transform 0.3s",
+                          transform: hoveredCard === site.id ? "translateX(4px)" : "translateX(0)"
+                        }}
+                      />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Footer Info */}
+        <div className="text-center mt-5 pt-4">
+          <p style={{ 
+            color: "#94A3B8", 
+            fontSize: "0.9rem",
+            fontWeight: "500"
+          }}>
+            Plateforme sécurisée • Support 24/7 • Accès aux marchés internationaux
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default MultiSitesPage;

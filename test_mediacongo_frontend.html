@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test MediaCongo Scraping</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #10B981;
+            margin-bottom: 20px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #333;
+        }
+        input, button {
+            width: 100%;
+            padding: 10px;
+            font-size: 16px;
+            border: 2px solid #ddd;
+            border-radius: 5px;
+            box-sizing: border-box;
+        }
+        button {
+            background: #10B981;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-weight: bold;
+            margin-top: 10px;
+        }
+        button:hover {
+            background: #059669;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        #result {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 5px;
+            display: none;
+        }
+        .success {
+            background: #D1FAE5;
+            color: #065F46;
+            border: 2px solid #10B981;
+        }
+        .error {
+            background: #FEE2E2;
+            color: #991B1B;
+            border: 2px solid #EF4444;
+        }
+        .loading {
+            background: #DBEAFE;
+            color: #1E40AF;
+            border: 2px solid #3B82F6;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🇨🇩 Test MediaCongo Scraping</h1>
+
+        <div class="form-group">
+            <label for="start_date">Date Début:</label>
+            <input type="date" id="start_date" value="2025-12-01">
+        </div>
+
+        <div class="form-group">
+            <label for="end_date">Date Fin:</label>
+            <input type="date" id="end_date" value="2025-12-31">
+        </div>
+
+        <div class="form-group">
+            <label for="limit">Limite:</label>
+            <input type="number" id="limit" value="100" min="1" max="500">
+        </div>
+
+        <button id="scrapeBtn" onclick="launchScraping()">🚀 Lancer le Scraping</button>
+
+        <div id="result"></div>
+    </div>
+
+    <script>
+        async function launchScraping() {
+            const btn = document.getElementById('scrapeBtn');
+            const resultDiv = document.getElementById('result');
+
+            // Récupérer les valeurs
+            const start_date = document.getElementById('start_date').value;
+            const end_date = document.getElementById('end_date').value;
+            const limit = parseInt(document.getElementById('limit').value);
+
+            // Validation
+            if (!start_date || !end_date) {
+                showResult('Veuillez sélectionner les dates', 'error');
+                return;
+            }
+
+            if (new Date(start_date) > new Date(end_date)) {
+                showResult('La date de début ne peut pas être après la date de fin', 'error');
+                return;
+            }
+
+            // Désactiver le bouton
+            btn.disabled = true;
+            btn.textContent = '⏳ Scraping en cours...';
+            showResult('Scraping en cours, veuillez patienter...', 'loading');
+
+            try {
+                const response = await fetch('http://localhost:8080/api/mediacongo/api/scrape', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        start_date: start_date,
+                        end_date: end_date,
+                        limit: limit
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    showResult(`✅ SUCCÈS! ${data.message}\n📊 Total: ${data.total} offres\n💾 Sauvegardées: ${data.saved} offres`, 'success');
+                } else {
+                    showResult(`❌ Échec: ${data.message || 'Erreur inconnue'}`, 'error');
+                }
+            } catch (error) {
+                showResult(`❌ Erreur de connexion: ${error.message}\n\nVérifiez que le backend est démarré sur http://localhost:8080`, 'error');
+                console.error('Erreur détaillée:', error);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '🚀 Lancer le Scraping';
+            }
+        }
+
+        function showResult(message, type) {
+            const resultDiv = document.getElementById('result');
+            resultDiv.style.display = 'block';
+            resultDiv.className = type;
+            resultDiv.innerHTML = message.replace(/\n/g, '<br>');
+        }
+
+        // Charger les dates par défaut
+        window.onload = function() {
+            const today = new Date().toISOString().split('T')[0];
+            const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+            document.getElementById('end_date').value = today;
+            document.getElementById('start_date').value = weekAgo;
+        }
+    </script>
+</body>
+</html>

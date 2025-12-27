@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>Test Benin Scraper - Frontend & Backend</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; }
+        .success { background: #d4edda; padding: 15px; margin: 10px 0; border-radius: 5px; color: #155724; }
+        .error { background: #f8d7da; padding: 15px; margin: 10px 0; border-radius: 5px; color: #721c24; }
+        .info { background: #d1ecf1; padding: 15px; margin: 10px 0; border-radius: 5px; color: #0c5460; }
+        button { padding: 10px 20px; margin: 5px; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 5px; }
+        button:hover { background: #0056b3; }
+        input { padding: 8px; margin: 5px; border: 1px solid #ccc; border-radius: 4px; }
+        #logs { background: #f5f5f5; padding: 15px; border-radius: 5px; max-height: 400px; overflow-y: auto; font-family: monospace; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <h1>🧪 Test Benin Scraper - Frontend & Backend</h1>
+
+    <div class="info">
+        <strong>Tests automatiques:</strong><br>
+        1. Backend Health Check (port 5012)<br>
+        2. Frontend Proxy via Nginx (/api/benin/health)<br>
+        3. Scraping avec date_filtre via Nginx
+    </div>
+
+    <div>
+        <h3>Configuration Test Scraping:</h3>
+        <label>Date Filtre (DD-MM-YYYY): <input type="text" id="date_filtre" value="31-12-2025" /></label><br>
+        <label>Max Pages: <input type="number" id="max_pages" value="1" min="1" max="3" /></label><br><br>
+
+        <button onclick="testBackendDirect()">1️⃣ Test Backend Direct (5012)</button>
+        <button onclick="testNginxProxy()">2️⃣ Test Nginx Proxy (/api/benin)</button>
+        <button onclick="testScraping()">3️⃣ Test Scraping Complet</button>
+        <button onclick="clearLogs()">🗑️ Clear Logs</button>
+    </div>
+
+    <div id="results"></div>
+    <h3>📋 Logs:</h3>
+    <div id="logs"></div>
+
+    <script>
+        const resultsDiv = document.getElementById('results');
+        const logsDiv = document.getElementById('logs');
+
+        function log(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const color = type === 'success' ? 'green' : type === 'error' ? 'red' : 'blue';
+            logsDiv.innerHTML += `<div style="color: ${color}">[${timestamp}] ${message}</div>`;
+            logsDiv.scrollTop = logsDiv.scrollHeight;
+        }
+
+        function clearLogs() {
+            logsDiv.innerHTML = '';
+            resultsDiv.innerHTML = '';
+        }
+
+        async function testBackendDirect() {
+            log('🔍 Test 1: Backend Direct sur port 5012...', 'info');
+            try {
+                const response = await fetch('http://localhost:5012/api/health');
+                const data = await response.json();
+                log(`✅ Backend répond: ${JSON.stringify(data)}`, 'success');
+                resultsDiv.innerHTML = `<div class="success">✅ Backend Direct: OK - ${data.pending} pending offres</div>`;
+            } catch (err) {
+                log(`❌ Erreur: ${err.message}`, 'error');
+                resultsDiv.innerHTML = `<div class="error">❌ Backend Direct: FAILED - ${err.message}</div>`;
+            }
+        }
+
+        async function testNginxProxy() {
+            log('🔍 Test 2: Nginx Proxy /api/benin/health...', 'info');
+            try {
+                const response = await fetch('http://localhost:8080/api/benin/health');
+                const data = await response.json();
+                log(`✅ Nginx proxy répond: ${JSON.stringify(data)}`, 'success');
+                resultsDiv.innerHTML += `<div class="success">✅ Nginx Proxy: OK - ${data.pending} pending offres</div>`;
+            } catch (err) {
+                log(`❌ Erreur: ${err.message}`, 'error');
+                resultsDiv.innerHTML += `<div class="error">❌ Nginx Proxy: FAILED - ${err.message}</div>`;
+            }
+        }
+
+        async function testScraping() {
+            const date_filtre = document.getElementById('date_filtre').value;
+            const max_pages = document.getElementById('max_pages').value;
+
+            log(`🔍 Test 3: Scraping avec date_filtre="${date_filtre}", max_pages=${max_pages}...`, 'info');
+            log(`📤 POST /api/benin/scrape`, 'info');
+
+            try {
+                const payload = { date_filtre, max_pages: parseInt(max_pages) };
+                log(`📦 Payload: ${JSON.stringify(payload)}`, 'info');
+
+                const response = await fetch('http://localhost:8080/api/benin/scrape', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                log(`📥 Response status: ${response.status}`, response.ok ? 'success' : 'error');
+
+                if (response.ok) {
+                    const data = await response.json();
+                    log(`✅ Scraping terminé: ${JSON.stringify(data)}`, 'success');
+                    resultsDiv.innerHTML += `<div class="success">✅ Scraping: ${data.message} (${data.count} offres)</div>`;
+                } else {
+                    const errorText = await response.text();
+                    log(`❌ Erreur HTTP ${response.status}: ${errorText}`, 'error');
+                    resultsDiv.innerHTML += `<div class="error">❌ Scraping Failed: HTTP ${response.status}</div>`;
+                }
+            } catch (err) {
+                log(`❌ Exception: ${err.message}`, 'error');
+                resultsDiv.innerHTML += `<div class="error">❌ Scraping Exception: ${err.message}</div>`;
+            }
+        }
+
+        // Auto-run tests on load
+        window.onload = () => {
+            log('🚀 Page chargée, prêt pour les tests!', 'success');
+        };
+    </script>
+</body>
+</html>

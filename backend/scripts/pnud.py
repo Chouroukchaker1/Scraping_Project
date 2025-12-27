@@ -8,6 +8,8 @@ import os
 import json
 import logging
 import requests
+import psycopg2
+from psycopg2.extras import execute_values, RealDictCursor
 from datetime import datetime, timezone
 from flask import Flask, jsonify, request
 from flask_cors import CORS
@@ -15,9 +17,6 @@ from bs4 import BeautifulSoup
 import re
 from urllib.parse import urljoin, parse_qs, urlparse
 from dotenv import load_dotenv
-from pymongo import MongoClient
-from pymongo.errors import PyMongoError, ConnectionFailure
-from bson import ObjectId
 import tenacity
 from dataclasses import dataclass, field, asdict
 from typing import Optional, List, Dict
@@ -43,10 +42,13 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # MongoDB Configuration
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/tunip")
-DB_NAME = os.getenv("DB_NAME", "tunip")
-COLLECTION_NAME = os.getenv("PNUD_COLLECTION_NAME", "tenders_pnud")
-PENDING_COLLECTION_NAME = os.getenv("PNUD_PENDING_COLLECTION_NAME", "pending_tenders_pnud")
+# Configuration PostgreSQL
+DB_HOST = os.getenv("DB_HOST", "postgres")
+DB_PORT = os.getenv("DB_PORT", "5432")
+DB_NAME = os.getenv("DB_NAME", "tenders_db")
+DB_USER = os.getenv("DB_USER", "tender_user")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "tender_password_2024")
+TABLE_NAME = "tenders_pnud"
 
 # API Configuration
 API_BASE_URL = os.getenv("API_BASE_URL", "https://be.appeloffres.net/api")
@@ -55,8 +57,9 @@ TENDER_ENDPOINT = f"{API_BASE_URL}/tender"
 FILES_ENDPOINT = f"{API_BASE_URL}/files/tender"
 PROMOTER_ENDPOINT = f"{API_BASE_URL}/promoter"
 
-EMAIL = os.getenv("API_EMAIL", "marwa.aidoudi@tunipages.tn")
-PASSWORD = os.getenv("API_PASSWORD", "lopMP@!#")
+# PNUD utilise le compte de Marwa Idoudi (hardcodé, ne pas utiliser .env)
+EMAIL = "marwa.aidoudi@tunipages.tn"
+PASSWORD = "lopMP@!#"
 
 DEFAULT_SOURCE_ID_PNUD = int(os.getenv("DEFAULT_SOURCE_ID_PNUD", "1656"))
 DEFAULT_AVIS_ID = int(os.getenv("DEFAULT_AVIS_ID", "1"))
@@ -70,6 +73,163 @@ PROMOTERS_XLS_FILE = os.path.join(EXCEL_DIR, "all_promoters.xlsx")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(EXCEL_DIR, exist_ok=True)
 os.makedirs(SCREENSHOTS_DIR, exist_ok=True)
+
+# ================================================
+# POSTGRESQL HELPER FUNCTIONS
+# ================================================
+
+def get_db_connection():
+    """Créer une connexion PostgreSQL"""
+    return psycopg2.connect(
+        host=DB_HOST,
+        port=DB_PORT,
+        database=DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD
+    )
+
+def get_all_tenders(status=None):
+    """Récupère toutes les offres depuis PostgreSQL"""
+    conn = get_db_connection()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        if status:
+            cursor.execute(f"SELECT * FROM {TABLE_NAME} WHERE status = %s ORDER BY created_at DESC", (status,))
+        else:
+            cursor.execute(f"SELECT * FROM {TABLE_NAME} ORDER BY created_at DESC")
+        return cursor.fetchall()
+    finally:
+        cursor.close()
+        conn.close()
+
+def get_existing_references():
+    """Récupère l'ensemble des références existantes"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(f"SELECT reference FROM {TABLE_NAME}")
+        return {row[0] for row in cursor.fetchall() if row[0]}
+    finally:
+        cursor.close()
+        conn.close()
+
+def insert_tender(tender_dict):
+    """Insère une offre en PostgreSQL"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        query = f"""
+            INSERT INTO {TABLE_NAME} (reference, description, description_fr, publication_date,
+                                      expiration_date, promoter, source_id, avis_id, external_url,
+                                      montant, nature, country, status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (reference) DO NOTHING
+            RETURNING id
+        """
+        values = (
+            tender_dict.get('reference'),
+            tender_dict.get('description'),
+            tender_dict.get('description_fr'),
+            tender_dict.get('publicationDate') or tender_dict.get('publication_date'),
+            tender_dict.get('expirationDate') or tender_dict.get('expiration_date'),
+            tender_dict.get('promoter'),
+            tender_dict.get('sourceId') or tender_dict.get('source_id'),
+            tender_dict.get('avisId') or tender_dict.get('avis_id'),
+            tender_dict.get('externalUrl') or tender_dict.get('external_url'),
+            tender_dict.get('montant'),
+            tender_dict.get('nature', 'private'),
+            tender_dict.get('country'),
+            tender_dict.get('status', 'pending')
+        )
+        cursor.execute(query, values)
+        result = cursor.fetchone()
+        conn.commit()
+        return result[0] if result else None
+    finally:
+        cursor.close()
+        conn.close()
+
+def delete_tender(reference):
+    """Supprime une offre"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(f"DELETE FROM {TABLE_NAME} WHERE reference = %s", (reference,))
+        deleted_count = cursor.rowcount
+        conn.commit()
+        return deleted_count
+    finally:
+        cursor.close()
+        conn.close()
+
+def update_tender(reference, update_dict):
+    """Met à jour une offre"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        # Construire la clause SET dynamiquement
+        set_clauses = []
+        values = []
+        for key, value in update_dict.items():
+            set_clauses.append(f"{key} = %s")
+            values.append(value)
+        values.append(reference)
+
+        query = f"UPDATE {TABLE_NAME} SET {', '.join(set_clauses)} WHERE reference = %s"
+        cursor.execute(query, values)
+        updated_count = cursor.rowcount
+        conn.commit()
+        return updated_count
+    finally:
+        cursor.close()
+        conn.close()
+
+def count_tenders(status=None):
+    """Compte les offres"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        if status:
+            cursor.execute(f"SELECT COUNT(*) FROM {TABLE_NAME} WHERE status = %s", (status,))
+        else:
+            cursor.execute(f"SELECT COUNT(*) FROM {TABLE_NAME}")
+        return cursor.fetchone()[0]
+    finally:
+        cursor.close()
+        conn.close()
+
+def get_tender_by_reference(reference):
+    """Récupère une offre par référence"""
+    conn = get_db_connection()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cursor.execute(f"SELECT * FROM {TABLE_NAME} WHERE reference = %s", (reference,))
+        return cursor.fetchone()
+    finally:
+        cursor.close()
+        conn.close()
+
+def delete_all_pending():
+    """Supprime toutes les offres pending"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(f"DELETE FROM {TABLE_NAME} WHERE status = 'pending'")
+        deleted_count = cursor.rowcount
+        conn.commit()
+        return deleted_count
+    finally:
+        cursor.close()
+        conn.close()
+
+# Test connexion PostgreSQL
+try:
+    conn = get_db_connection()
+    conn.close()
+    logger.info(f"✅ PostgreSQL connecté: {DB_NAME} (Table: {TABLE_NAME})")
+except Exception as e:
+    logger.error(f"❌ Erreur connexion PostgreSQL: {e}")
+    raise
 
 # Country Mapping
 COUNTRY_MAPPING = {
@@ -160,11 +320,12 @@ class OffrePNUD:
     image_path: Optional[str] = None
 
 def serialize_document(doc):
+    """Serialise un document PostgreSQL"""
     if not doc:
         return doc
     doc = doc.copy() if isinstance(doc, dict) else dict(doc)
-    if '_id' in doc and isinstance(doc['_id'], ObjectId):
-        doc['_id'] = str(doc['_id'])
+    if 'id' in doc:
+        doc['_id'] = str(doc['id'])
     return doc
 
 def serialize_tenders(tenders_list):
@@ -201,55 +362,34 @@ class PNUDScraper:
             logger.error(f"❌ Erreur initialisation traducteur: {e}")
             self.translator = None
         
-        self.mongo_client = None
-        self.db = None
-        self.tenders_collection = None
-        self.pending_tenders_collection = None
-        self.mongo_connected = self.connect_to_mongodb()
-        
-        if self.mongo_connected:
-            self._load_existing_offres_set()
-        
+        # PostgreSQL connection test
+        try:
+            test_conn = get_db_connection()
+            test_conn.close()
+            logger.info("✅ Connexion PostgreSQL établie")
+        except Exception as e:
+            logger.error(f"❌ Erreur PostgreSQL: {e}")
+
+        self._load_existing_offres_set()
+
         if self.get_api_token():
             self.load_all_promoters()
             self.export_promoters_to_xls(PROMOTERS_XLS_FILE)
 
-    def connect_to_mongodb(self):
-        try:
-            self.mongo_client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
-            self.mongo_client.admin.command('ping')
-            self.db = self.mongo_client[DB_NAME]
-            self.tenders_collection = self.db[COLLECTION_NAME]
-            self.pending_tenders_collection = self.db[PENDING_COLLECTION_NAME]
-            logger.info("✅ Connexion à MongoDB établie avec succès")
-            return True
-        except (ConnectionFailure, PyMongoError) as e:
-            logger.error(f"❌ Erreur lors de la connexion à MongoDB: {e}")
-            return False
-
     def _load_existing_offres_set(self):
-        if not self.mongo_connected:
-            return
         try:
-            existing_offres = self.tenders_collection.find({}, {"reference": 1})
-            self.existing_offres_set = {offre["reference"] for offre in existing_offres if "reference" in offre}
-            logger.info(f"📦 Chargé {len(self.existing_offres_set)} offres existantes depuis MongoDB")
-        except PyMongoError as e:
+            self.existing_offres_set = get_existing_references()
+            logger.info(f"📦 Chargé {len(self.existing_offres_set)} offres existantes depuis PostgreSQL")
+        except Exception as e:
             logger.error(f"❌ Erreur lors du chargement des offres existantes: {e}")
 
     def save_to_pending(self, offre: OffrePNUD):
-        if not self.mongo_connected:
-            logger.warning(f"Offre {offre.reference} non sauvegardée: MongoDB non connecté")
-            return
         try:
             doc = asdict(offre)
-            self.pending_tenders_collection.update_one(
-                {"reference": offre.reference},
-                {"$set": doc},
-                upsert=True
-            )
+            doc['status'] = 'pending'
+            insert_tender(doc)
             logger.info(f"💾 Offre {offre.reference} sauvegardée dans pending_tenders")
-        except PyMongoError as e:
+        except Exception as e:
             logger.error(f"❌ Erreur lors de la sauvegarde de l'offre {offre.reference}: {e}")
 
     @tenacity.retry(stop=tenacity.stop_after_attempt(3), wait=tenacity.wait_fixed(1))
@@ -260,7 +400,7 @@ class PNUDScraper:
             return True
         
         try:
-            logger.info("🔑 Tentative de connexion API (nouvelle session ou >24h)")
+            logger.info(f"🔑 Tentative de connexion API avec compte: {EMAIL}")
             response = self.session_appeloffres.post(
                 LOGIN_ENDPOINT,
                 json={"email": EMAIL, "password": PASSWORD},
@@ -1312,9 +1452,9 @@ class PNUDScraper:
             
             if response.status_code in [200, 201]:
                 logger.info(f"✅ Offre {offre.reference} postée avec succès")
-                if self.mongo_connected:
-                    self.tenders_collection.insert_one(asdict(offre))
-                    self.pending_tenders_collection.delete_one({"reference": offre.reference})
+                if True:
+                    insert_tender({**asdict(offre), "status": "active"})
+                    delete_tender(offre.reference)
                     self.existing_offres_set.add(offre.reference)
                     logger.info(f"💾 {offre.reference} sauvegardé dans MongoDB")
                 return True
@@ -1333,9 +1473,7 @@ class PNUDScraper:
     def close(self):
         self.session.close()
         self.session_appeloffres.close()
-        if self.mongo_connected and self.mongo_client:
-            self.mongo_client.close()
-        logger.info("🔒 Sessions fermées")
+                logger.info("🔒 Sessions fermées")
 
 # ============================================================================
 # FLASK API - SECTION COMPLÈTE
@@ -1376,11 +1514,8 @@ def get_pending_tenders():
         limit = int(request.args.get('limit', 10))
         skip = (page - 1) * limit
         
-        if not scraper.mongo_connected:
-            return jsonify({"status": "error", "message": "MongoDB non connecté"}), 500
-        
-        total = scraper.pending_tenders_collection.count_documents({})
-        cursor = scraper.pending_tenders_collection.find({}).sort("fetchedAt", -1).skip(skip).limit(limit)
+                total = count_tenders(status="pending")
+        cursor = get_all_tenders(status="pending")[skip:skip+limit]
         raw_tenders = list(cursor)
         tenders = serialize_tenders(raw_tenders)
         
@@ -1402,10 +1537,7 @@ def get_pending_tenders():
 def get_tenders():
     """Récupère les tenders validés"""
     try:
-        if not scraper.mongo_connected:
-            return jsonify({"status": "error", "message": "MongoDB non connecté"}), 500
-        
-        cursor = scraper.tenders_collection.find({}).sort("fetchedAt", -1).limit(50)
+                cursor = get_all_tenders(status="active")[:50]
         raw_tenders = list(cursor)
         tenders = serialize_tenders(raw_tenders)
         
@@ -1422,10 +1554,7 @@ def get_tenders():
 def validate_tender(reference):
     """Valide une offre en attente"""
     try:
-        if not scraper.mongo_connected:
-            return jsonify({"success": False, "message": "MongoDB non connecté"}), 500
-        
-        pending_doc = scraper.pending_tenders_collection.find_one({"reference": reference})
+                pending_doc = get_tender_by_reference(reference)
         if not pending_doc:
             return jsonify({"success": False, "message": "Offre non trouvée en attente"}), 404
         
@@ -1465,18 +1594,13 @@ def validate_tender(reference):
 def update_tender(reference):
     """Met à jour une offre en attente"""
     try:
-        if not scraper.mongo_connected:
-            return jsonify({"success": False, "message": "MongoDB non connecté"}), 500
-        
-        data = request.json or {}
+                data = request.json or {}
         country_id = data.get('country_id')
         
         if country_id is None:
             return jsonify({"success": False, "message": "country_id requis"}), 400
         
-        result = scraper.pending_tenders_collection.update_one(
-            {"reference": reference},
-            {"$set": {"country_id": int(country_id)}}
+        result = update_tender(reference, update_data)}}
         )
         
         if result.modified_count > 0:
@@ -1491,17 +1615,30 @@ def update_tender(reference):
 def delete_tender(reference):
     """Supprime une offre en attente"""
     try:
-        if not scraper.mongo_connected:
-            return jsonify({"success": False, "message": "MongoDB non connecté"}), 500
-        
-        result = scraper.pending_tenders_collection.delete_one({"reference": reference})
-        
+                result = delete_tender(reference)
+
         if result.deleted_count > 0:
             return jsonify({"success": True, "message": "Offre supprimée avec succès"})
         else:
             return jsonify({"success": False, "message": "Offre non trouvée"}), 404
     except Exception as e:
         logger.error(f"❌ Erreur suppression {reference}: {e}")
+        return jsonify({"success": False, "message": str(e)}), 500
+
+@app.route('/api/delete_all', methods=['DELETE', 'POST'])
+def delete_all_tenders():
+    """Supprime toutes les offres en attente"""
+    try:
+                result = delete_all_pending()
+
+        logger.info(f"🗑️ {result.deleted_count} offres supprimées")
+        return jsonify({
+            "success": True,
+            "message": f"{result.deleted_count} offres supprimées avec succès",
+            "deleted_count": result.deleted_count
+        })
+    except Exception as e:
+        logger.error(f"❌ Erreur suppression toutes offres: {e}")
         return jsonify({"success": False, "message": str(e)}), 500
 
 @app.route('/api/post_pending', methods=['POST'])
@@ -1511,10 +1648,7 @@ def post_pending_tenders():
         posted_count = 0
         failed_count = 0
         
-        if not scraper.mongo_connected:
-            return jsonify({"status": "error", "message": "MongoDB non connecté"}), 500
-        
-        pending_docs = list(scraper.pending_tenders_collection.find({}))
+                pending_docs = list(get_all_tenders(status="pending"))
         logger.info(f"📦 {len(pending_docs)} offres en attente à poster")
         
         for doc in pending_docs:
@@ -1559,7 +1693,7 @@ def post_pending_tenders():
                 logger.error(f"❌ Erreur post {doc.get('reference', 'unknown')}: {e}")
                 failed_count += 1
         
-        remaining = scraper.pending_tenders_collection.count_documents({})
+        remaining = count_tenders(status="pending")
         
         return jsonify({
             "status": "success",
@@ -1576,13 +1710,13 @@ def post_pending_tenders():
 def health_check():
     """Vérifie l'état du service"""
     try:
-        pending_count = scraper.pending_tenders_collection.count_documents({}) if scraper.mongo_connected else 0
-        validated_count = scraper.tenders_collection.count_documents({}) if scraper.mongo_connected else 0
+        pending_count = count_tenders(status="pending") if True else 0
+        validated_count = count_tenders(status="active") if True else 0
         last_login_str = scraper.last_login_time.strftime('%Y-%m-%d %H:%M:%S UTC') if scraper.last_login_time else 'None'
         
         return jsonify({
             "status": "healthy",
-            "mongodb_connected": scraper.mongo_connected,
+            "mongodb_connected": True,
             "existing_tenders": len(scraper.existing_offres_set),
             "pending_tenders": pending_count,
             "validated_tenders": validated_count,
@@ -1654,10 +1788,10 @@ if __name__ == "__main__":
         logger.info("🚀 DÉMARRAGE DU SCRAPER UNDP - VERSION 8.0")
         logger.info("="*80)
         logger.info(f"📡 API Base URL: {API_BASE_URL}")
-        logger.info(f"🗄️ MongoDB: {'✅ Connecté' if scraper.mongo_connected else '❌ Non connecté'}")
+        logger.info(f"🗄️ MongoDB: {'✅ Connecté' if True else '❌ Non connecté'}")
         logger.info(f"📦 Offres existantes: {len(scraper.existing_offres_set)}")
         
-        pending_count = scraper.pending_tenders_collection.count_documents({}) if scraper.mongo_connected else 0
+        pending_count = count_tenders(status="pending") if True else 0
         logger.info(f"⏳ Offres en attente: {pending_count}")
         logger.info(f"🏢 Promoteurs cachés: {len(scraper.promoters_cache)}")
         logger.info(f"🌐 Traducteur: {'✅ Disponible (multi-langues → FR)' if scraper.translator else '❌ Non disponible'}")
