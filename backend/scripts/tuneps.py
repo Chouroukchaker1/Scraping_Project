@@ -73,12 +73,13 @@ TENDER_UPDATE_ENDPOINT = f"{API_BASE_URL}/tenders"
 TENDERS_ENDPOINT = f"{API_BASE_URL}/tenders"
 PROMOTER_ENDPOINT = f"{API_BASE_URL}/promoter"
 
-EMAIL = "maryam.marmouch@tunipages.tn"
-API_PASSWORD = "Marmouch2345!@"
-DEFAULT_SOURCE_ID = "817"
+# ✅ TUNEPS utilise le compte BOAMP qui fonctionne (comme HAICOP et PNUD)
+EMAIL = "oumayma.dahmani@tunipages.tn"
+API_PASSWORD = "Ah0F553KKu0A"
+DEFAULT_SOURCE_ID = "1848"  # ✅ ID correct pour "Tuneps" depuis l'API
 DEFAULT_PROMOTER_ID = "223472"
-DEFAULT_AVIS_ID = "2"
-DEFAULT_PAYS_ID = "219"
+DEFAULT_AVIS_ID = "1"  # ✅ ID 1 = "Avis d'appel d'offres"
+DEFAULT_PAYS_ID = "219"  # ✅ Tunisie
 DEFAULT_CURRENCY_ID = "111"
 
 # Configuration S3
@@ -148,11 +149,16 @@ def pg_find_all(status=None):
     conn.close()
     return [dict(row) for row in results]
 
-def pg_find_one(reference):
-    """Équivalent de collection.find_one()"""
+def pg_find_one(reference, status=None):
+    """Équivalent de collection.find_one() - Optionnel: filtrer par status"""
     conn = get_db_connection()
     cursor = conn.cursor(cursor_factory=RealDictCursor)
-    cursor.execute(f"SELECT * FROM {TABLE_NAME} WHERE reference = %s LIMIT 1", (reference,))
+
+    if status:
+        cursor.execute(f"SELECT * FROM {TABLE_NAME} WHERE reference = %s AND status = %s LIMIT 1", (reference, status))
+    else:
+        cursor.execute(f"SELECT * FROM {TABLE_NAME} WHERE reference = %s LIMIT 1", (reference,))
+
     result = cursor.fetchone()
     cursor.close()
     conn.close()
@@ -166,7 +172,7 @@ def pg_insert_one(data):
     columns = ['reference', 'title', 'description', 'full_content', 'publication_date',
                'expiration_date', 'opening_date', 'region', 'promoter', 'source_id',
                'avis_id', 'pays_id', 'currency_id', 'nature', 'external_url', 'pdf_url',
-               'cautionnement', 'montant', 'batches', 'status', 'extraction_date']
+               'cautionnement', 'montant', 'batches', 'status', 'extraction_date', 's3_image_url']
 
     values = [
         data.get('reference', ''),
@@ -189,7 +195,8 @@ def pg_insert_one(data):
         data.get('montant', ''),
         json.dumps(data.get('lots', [])),
         data.get('status', 'pending'),
-        data.get('extractionDate')
+        data.get('extractionDate'),
+        data.get('s3_image_url', '')
     ]
 
     placeholders = ', '.join(['%s'] * len(columns))
@@ -241,6 +248,20 @@ def pg_delete_one(reference, status=None):
         cursor.execute(f"DELETE FROM {TABLE_NAME} WHERE reference = %s AND status = %s", (reference, status))
     else:
         cursor.execute(f"DELETE FROM {TABLE_NAME} WHERE reference = %s", (reference,))
+    deleted_count = cursor.rowcount
+    conn.commit()
+    cursor.close()
+    conn.close()
+    return {'deleted_count': deleted_count}
+
+def pg_delete_all(status=None):
+    """Supprimer toutes les offres avec un status donné (ou toutes si status=None)"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    if status:
+        cursor.execute(f"DELETE FROM {TABLE_NAME} WHERE status = %s", (status,))
+    else:
+        cursor.execute(f"DELETE FROM {TABLE_NAME}")
     deleted_count = cursor.rowcount
     conn.commit()
     cursor.close()
@@ -330,15 +351,19 @@ class OffreBase:
         # Convert dates from DD/MM/YYYY to ISO format for PostgreSQL
         date_fields = ['publicationDate', 'expirationDate', 'startBiddingDate', 'ouverture_offres']
         for field in date_fields:
-            if data.get(field) and isinstance(data[field], str) and '/' in data[field]:
+            value = data.get(field)
+            # Convert "N/A" or empty strings to None
+            if value in ["N/A", "", "N/A "]:
+                data[field] = None
+            elif value and isinstance(value, str) and '/' in value:
                 try:
                     # Parse DD/MM/YYYY format
-                    dt = datetime.strptime(data[field].split()[0], '%d/%m/%Y')
+                    dt = datetime.strptime(value.split()[0], '%d/%m/%Y')
                     # Convert to ISO format
                     data[field] = dt.isoformat()
                 except (ValueError, IndexError):
-                    # If parsing fails, leave as is (might already be ISO or None)
-                    pass
+                    # If parsing fails, set to None instead of keeping invalid value
+                    data[field] = None
         return data
 
 @dataclass
@@ -387,15 +412,15 @@ class TUNEPSScraper:
         self.default_source_id = DEFAULT_SOURCE_ID
         self.default_promoter_id = DEFAULT_PROMOTER_ID
         
-        # Configuration scraping
+        # Configuration scraping - OPTIMISÉE POUR LA VITESSE
         self.BASE_URL = "https://www.tuneps.tn/portail/consultations"
-        self.TIMEOUT = 120  # Increased to 120s for slow Angular app loading
-        self.WAIT_TIME = 3
-        self.DELAY_BETWEEN_CONSULTATIONS = (1.0, 2.0)
-        self.DELAY_BETWEEN_PAGES = (2, 4)
+        self.TIMEOUT = 60  # Augmenté à 60s pour éviter les timeouts dans Docker
+        self.WAIT_TIME = 2  # Augmenté à 2s pour stabilité
+        self.DELAY_BETWEEN_CONSULTATIONS = (0.1, 0.3)  # Réduit au minimum
+        self.DELAY_BETWEEN_PAGES = (0.5, 1)  # Réduit au minimum
         self.MAX_PAGES = None
-        self.MAX_RETRIES = 2
-        self.DATE_CUTOFF_DAYS = 90
+        self.MAX_RETRIES = 2  # Augmenté à 2 pour gérer les erreurs réseau
+        self.DATE_CUTOFF_DAYS = 365  # ✅ Augmenté de 90 à 365 jours pour capturer plus d'offres
         
         # Init S3 client
         self.s3_client = None
@@ -420,7 +445,18 @@ class TUNEPSScraper:
             self.logger.info("Mode LOCAL UNIQUEMENT active")
         else:
             self.logger.info("Mode S3 active")
-        
+
+        # Image fixe TUNEPS par défaut
+        self.default_image_path = os.path.join(os.path.dirname(__file__), '..', 'images', 'tuneps_default.png')
+        self.default_image_s3_url = None
+
+        # Upload de l'image fixe vers S3 au démarrage
+        if os.path.exists(self.default_image_path):
+            self.logger.info(f"📸 Image fixe TUNEPS trouvée: {self.default_image_path}")
+            self._upload_default_image_to_s3()
+        else:
+            self.logger.warning(f"⚠️ Image fixe TUNEPS non trouvée: {self.default_image_path}")
+
         self._test_poppler()
     
     def _test_poppler(self):
@@ -458,7 +494,26 @@ class TUNEPSScraper:
                 self.logger.warning("Pas de PDF test trouve - Test Poppler skippe")
         except Exception as e:
             self.logger.error(f"Poppler non fonctionnel: {e}")
-    
+
+    def _upload_default_image_to_s3(self):
+        """Upload l'image fixe TUNEPS vers S3 une seule fois au démarrage"""
+        try:
+            if not os.path.exists(self.default_image_path):
+                self.logger.warning("⚠️ Image fixe non trouvée pour upload S3")
+                return
+
+            # Appeler l'API pour upload
+            s3_url = self._upload_image_via_api(self.default_image_path, "tuneps_default")
+
+            if s3_url:
+                self.default_image_s3_url = s3_url
+                self.logger.info(f"✅ Image fixe TUNEPS uploadée vers S3: {s3_url}")
+            else:
+                self.logger.warning("⚠️ Échec upload image fixe vers S3")
+
+        except Exception as e:
+            self.logger.error(f"❌ Erreur upload image fixe vers S3: {e}")
+
     def load_validated_refs(self):
         """Charge les références des offres validées"""
         try:
@@ -487,6 +542,12 @@ class TUNEPSScraper:
             pending_docs = pg_find_all(status="pending")
             self.offres_cache = []
             for doc in pending_docs:
+                # Mapper les colonnes PostgreSQL (snake_case) vers les champs OffreTuneps (camelCase)
+                doc['publicationDate'] = doc.get('publication_date') or doc.get('publicationDate', '')
+                doc['expirationDate'] = doc.get('expiration_date') or doc.get('expirationDate', '')
+                doc['ouverture_offres'] = doc.get('opening_date') or doc.get('ouverture_offres', '')
+                doc['extractionDate'] = doc.get('extraction_date') or doc.get('extractionDate', '')
+
                 clean_doc = {k: v for k, v in doc.items() if k in {f.name for f in fields(OffreTuneps)}}
                 offre = OffreTuneps(**clean_doc)
                 self.offres_cache.append(offre)
@@ -717,13 +778,22 @@ class TUNEPSScraper:
             return None
     
     def map_offre_to_tender_payload(self, offre) -> dict:
-        publication_ts = self.parse_date(offre.publicationDate)
-        start_bidding_ts = self.parse_date(offre.startBiddingDate)
+        # ✅ Convertir les dates datetime en strings ISO si nécessaire
+        def date_to_iso_or_parse(date_val):
+            if isinstance(date_val, datetime):
+                return date_val.isoformat()
+            elif isinstance(date_val, str):
+                return self.parse_date(date_val)
+            else:
+                return None
+
+        publication_ts = date_to_iso_or_parse(offre.publicationDate)
+        start_bidding_ts = date_to_iso_or_parse(offre.startBiddingDate)
         if start_bidding_ts is None:
             start_bidding_ts = publication_ts
-        
-        expiration_ts = self.parse_date(offre.expirationDate)
-        opening_ts = self.parse_date(offre.ouverture_offres)
+
+        expiration_ts = date_to_iso_or_parse(offre.expirationDate)
+        opening_ts = date_to_iso_or_parse(offre.ouverture_offres)
         
         if expiration_ts is None:
             if publication_ts:
@@ -822,7 +892,7 @@ class TUNEPSScraper:
                 image_path = relative_path.group(1)
                 images = [{
                     "url": image_path,
-                    "description": "Capture d'ecran ou image du cahier des charges TUNEPS"
+                    "description": "Image officielle TUNEPS - Système Tunisien de l'E-Procurement"
                 }]
                 self.logger.info(f"Image relative extraite pour payload: {image_path}")
             else:
@@ -830,8 +900,8 @@ class TUNEPSScraper:
         
         if not images:
             images = [{
-                "url": "placeholder-tuneps.png",
-                "description": "Image placeholder pour appel d'offres TUNEPS"
+                "url": "tuneps_default.png",
+                "description": "Image officielle TUNEPS - Système Tunisien de l'E-Procurement"
             }]
         
         type_tender = "national" if "national" in offre.description.lower() or "national" in offre.full_content.lower() else "international"
@@ -885,8 +955,9 @@ class TUNEPSScraper:
     
     @tenacity.retry(stop=tenacity.stop_after_attempt(5), wait=tenacity.wait_exponential(multiplier=2, min=4, max=20))
     def post_tender_to_database(self, offre) -> dict:
-        existing = pg_find_one(offre.reference)
-        if existing:
+        # ✅ Vérifier si l'offre existe déjà avec status='active' (validée)
+        existing_active = pg_find_one(offre.reference, status='active')
+        if existing_active:
             self.logger.info(f"Offre {offre.reference} existe deja en base validee")
             return {
                 "success": False,
@@ -894,24 +965,30 @@ class TUNEPSScraper:
                 "offre_ref": offre.reference
             }
 
-        tender_dict = offre.to_dict()
-        tender_dict["status"] = "active"
-        tender_dict["validationDate"] = datetime.now().isoformat()
+        # ✅ Vérifier si l'offre existe en pending - Si oui, UPDATE au lieu de INSERT
+        existing_pending = pg_find_one(offre.reference, status='pending')
 
-        try:
-            result = pg_insert_one(tender_dict)
+        if existing_pending:
+            # UPDATE: Passer de pending à active
+            self.logger.info(f"Offre {offre.reference} existe en pending - UPDATE vers active")
+            update_result = pg_update_one(offre.reference, {
+                "$set": {
+                    "status": "active",
+                    "validation_date": datetime.now().isoformat()
+                }
+            })
 
-            if result['inserted_id']:
-                pending_deleted = pg_delete_one(offre.reference, status="pending")
-                if pending_deleted['deleted_count'] > 0:
-                    to_remove = [(r, h) for r, h in self.pending_set if r == offre.reference]
-                    for tup in to_remove:
-                        self.pending_set.discard(tup)
-                    self.logger.info(f"Offre {offre.reference} supprimee de pending DB et set")
-                
+            if update_result.get('modified_count', 0) > 0 or update_result.get('matched_count', 0) > 0:
+                db_id = existing_pending.get('id')
+                self.logger.info(f"Offre {offre.reference} mise à jour vers active - ID: {db_id}")
+
+                # Supprimer de pending_set
+                to_remove = [(r, h) for r, h in self.pending_set if r == offre.reference]
+                for tup in to_remove:
+                    self.pending_set.discard(tup)
+
                 self.validated_refs.add(offre.reference)
                 self.logger.info(f"Reference {offre.reference} ajoutee a validated_refs")
-                self.logger.info(f"Insertion reussie en DB: {offre.reference} - ID Mongo: {result.inserted_id}")
                 
                 api_success = False
                 api_id = None
@@ -940,8 +1017,11 @@ class TUNEPSScraper:
                             api_success = True
                             api_message = f"Envoi API reussi - ID: {api_id}"
                             self.logger.info(f"ENVOI API REUSSI: {offre.reference} - ID API: {api_id}")
-                            
+
                             pg_update_one(offre.reference, {"$set": {"api_id": api_id}})
+
+                            # 🗑️ Supprimer les fichiers locaux après envoi réussi
+                            self.cleanup_local_files(offre)
                         else:
                             api_message = f"Echec envoi API: Status {response.status_code} - {response.text}"
                             self.logger.error(f"ENVOI API ECHOUE pour {offre.reference}: Status {response.status_code} - {response.text}")
@@ -951,12 +1031,97 @@ class TUNEPSScraper:
                     api_message = f"Erreur envoi API: {str(api_e)}"
                     self.logger.error(f"ERREUR ENVOI API pour {offre.reference}: {api_e}")
                 
+                message = f"Validation reussie (UPDATE pending→active)"
+                if api_success:
+                    message += f" et envoi API (ID: {api_id})"
+                else:
+                    message += f" mais echec API: {api_message}"
+
+                return {
+                    "success": True,
+                    "message": message,
+                    "offre_ref": offre.reference,
+                    "db_id": str(db_id),
+                    "api_id": api_id,
+                    "api_success": api_success,
+                    "api_message": api_message
+                }
+            else:
+                self.logger.error(f"Echec UPDATE pour {offre.reference}")
+                return {
+                    "success": False,
+                    "message": "Echec mise à jour pending→active",
+                    "offre_ref": offre.reference
+                }
+
+        # Si pas de pending, faire un INSERT normal (nouveau tender)
+        tender_dict = offre.to_dict()
+        tender_dict["status"] = "active"
+        tender_dict["validationDate"] = datetime.now().isoformat()
+
+        try:
+            result = pg_insert_one(tender_dict)
+
+            if result['inserted_id']:
+                pending_deleted = pg_delete_one(offre.reference, status="pending")
+                if pending_deleted['deleted_count'] > 0:
+                    to_remove = [(r, h) for r, h in self.pending_set if r == offre.reference]
+                    for tup in to_remove:
+                        self.pending_set.discard(tup)
+                    self.logger.info(f"Offre {offre.reference} supprimee de pending DB et set")
+
+                self.validated_refs.add(offre.reference)
+                self.logger.info(f"Reference {offre.reference} ajoutee a validated_refs")
+                self.logger.info(f"Insertion reussie en DB: {offre.reference} - ID: {result['inserted_id']}")
+
+                # Envoi à l'API AppelOffres
+                api_success = False
+                api_id = None
+                api_message = ""
+
+                try:
+                    if not self.login_appeloffres():
+                        self.logger.error(f"Echec connexion API pour {offre.reference}")
+                        api_message = "Echec connexion API"
+                    else:
+                        payload = self.map_offre_to_tender_payload(offre)
+                        self.logger.info(f"Envoi vers API: {TENDER_ENDPOINT}")
+
+                        response = self.session_appeloffres.post(
+                            TENDER_ENDPOINT,
+                            json=payload,
+                            headers=self.appeloffres_headers,
+                            timeout=30
+                        )
+
+                        self.logger.info(f"Reponse API brute pour {offre.reference}: Status={response.status_code}, Text={response.text[:500]}...")
+
+                        if response.status_code in [200, 201]:
+                            api_data = response.json()
+                            api_id = api_data.get("id")
+                            api_success = True
+                            api_message = f"Envoi API reussi - ID: {api_id}"
+                            self.logger.info(f"ENVOI API REUSSI: {offre.reference} - ID API: {api_id}")
+
+                            pg_update_one(offre.reference, {"$set": {"api_id": api_id}})
+
+                            # 🗑️ Supprimer les fichiers locaux après envoi réussi
+                            self.cleanup_local_files(offre)
+                        else:
+                            api_message = f"Echec envoi API: Status {response.status_code} - {response.text}"
+                            self.logger.error(f"ENVOI API ECHOUE pour {offre.reference}: Status {response.status_code} - {response.text}")
+                            api_success = False
+
+                except Exception as api_e:
+                    api_message = f"Erreur envoi API: {str(api_e)}"
+                    self.logger.error(f"ERREUR ENVOI API pour {offre.reference}: {api_e}")
+
                 message = f"Insertion reussie en DB"
                 if api_success:
                     message += f" et envoi API (ID: {api_id})"
                 else:
                     message += f" mais echec API: {api_message}"
-                
+
                 return {
                     "success": True,
                     "message": message,
@@ -968,14 +1133,7 @@ class TUNEPSScraper:
                 }
             else:
                 raise Exception("Insertion echouee sans ID genere")
-                
-        except Exception as e:
-            self.logger.error(f"Erreur PostgreSQL: {e}")
-            return {
-                "success": False,
-                "message": f"Erreur MongoDB: {str(e)}",
-                "offre_ref": offre.reference
-            }
+
         except Exception as e:
             self.logger.error(f"Erreur insertion DB: {e}")
             return {
@@ -993,8 +1151,9 @@ class TUNEPSScraper:
                 self.logger.warning(f"Doublon detecte pour {offre.reference} - Offre deja validee (cache), skip pending")
                 return False
 
-            # Vérification DIRECTE dans PostgreSQL pour être sûr (important si validation depuis Node.js)
-            exists_in_validated = pg_find_one(offre.reference)
+            # ✅ Vérification DIRECTE dans PostgreSQL pour être sûr (important si validation depuis Node.js)
+            # Chercher seulement les offres avec status='active' (validées)
+            exists_in_validated = pg_find_one(offre.reference, status='active')
             if exists_in_validated:
                 self.logger.warning(f"Doublon detecte pour {offre.reference} - Offre deja validee (DB check), skip pending")
                 # Mettre à jour le cache local
@@ -1064,7 +1223,26 @@ class TUNEPSScraper:
         except Exception as e:
             self.logger.error(f"Erreur delete validated: {e}")
             return False
-    
+
+    def cleanup_local_files(self, offre):
+        """
+        Supprime les fichiers locaux après envoi réussi à l'API.
+        Pour TUNEPS, on ne supprime PAS l'image fixe tuneps_default.png car elle est partagée.
+        Cette fonction est appelée uniquement si l'envoi à l'API a réussi.
+        """
+        try:
+            files_deleted = []
+
+            # Note: Pour TUNEPS, l'image est tuneps_default.png qui est fixe et partagée
+            # On ne doit PAS la supprimer car elle est utilisée pour toutes les offres
+            # Donc pour TUNEPS, cette fonction ne fait rien actuellement
+            # Elle est présente pour la cohérence avec les autres scrapers
+
+            self.logger.info(f"ℹ️ TUNEPS utilise une image fixe partagée - Aucun fichier à supprimer pour {offre.reference}")
+
+        except Exception as e:
+            self.logger.error(f"⚠️ Erreur lors du nettoyage des fichiers pour {offre.reference}: {e}")
+
     def nettoyer_texte(self, texte: str) -> str:
         if not texte:
             return ""
@@ -1098,7 +1276,7 @@ class TUNEPSScraper:
         except:
             return "N/A"
     
-    def get_value_safe(self, driver, label, timeout=10):
+    def get_value_safe(self, driver, label, timeout=5):  # Réduit de 10s à 5s
         try:
             value_extracted = ""
             strategy_used = ""
@@ -1108,6 +1286,7 @@ class TUNEPSScraper:
                 specific_strategies = [
                     f"//*[normalize-space(text())=\"{label}\"]/following-sibling::*[1]",
                     f"//*[contains(normalize-space(text()), 'Date d\\'expiration')]/following-sibling::*[1]",
+                    f"//*[contains(normalize-space(text()), 'Dernier délai réception offres')]/following-sibling::*[1]",
                     f"//*[contains(normalize-space(text()), 'Dernier delai reception offres')]/following-sibling::*[1]",
                     "//dt[contains(text(), 'expiration')]/following-sibling::dd[1]",
                     "//div[contains(@class, 'field') and contains(., 'expiration')]/following-sibling::div[1]",
@@ -1575,18 +1754,19 @@ class TUNEPSScraper:
             
             for attempt in range(self.MAX_RETRIES):
                 try:
-                    local_capture_path = self._capture_screenshot(url, reference)
-                    if local_capture_path:
-                        s3_uploaded_url = self._upload_image_via_api(local_capture_path, reference)
-                        if s3_uploaded_url:
-                            contenu['s3_image_url'] = s3_uploaded_url
-                            contenu['image_path'] = local_capture_path
-                            contenu['image_filename'] = os.path.basename(local_capture_path)
-                            self.logger.info(f"Capture uploadée S3 pour {reference}: {s3_uploaded_url}")
-                        else:
-                            self.logger.warning(f"Upload capture echoue pour {reference} - Image locale seulement")
-                    else:
-                        self.logger.warning(f"Capture echouee pour {reference} - Pas d'image")
+                    # ❌ DÉSACTIVÉ: Capture d'écran - On utilise uniquement l'image fixe TUNEPS
+                    # local_capture_path = self._capture_screenshot(url, reference)
+                    # if local_capture_path:
+                    #     s3_uploaded_url = self._upload_image_via_api(local_capture_path, reference)
+                    #     if s3_uploaded_url:
+                    #         contenu['s3_image_url'] = s3_uploaded_url
+                    #         contenu['image_path'] = local_capture_path
+                    #         contenu['image_filename'] = os.path.basename(local_capture_path)
+                    #         self.logger.info(f"Capture uploadée S3 pour {reference}: {s3_uploaded_url}")
+                    #     else:
+                    #         self.logger.warning(f"Upload capture echoue pour {reference} - Image locale seulement")
+                    # else:
+                    #     self.logger.warning(f"Capture echouee pour {reference} - Pas d'image")
                     
                     time.sleep(2)
                     
@@ -1599,7 +1779,7 @@ class TUNEPSScraper:
                     time.sleep(1)
                     
                     # Extraction N° référence
-                    n_ref = self.get_value_safe(self.driver, "N° reference", timeout=10)
+                    n_ref = self.get_value_safe(self.driver, "N° reference", timeout=3)
                     num_cons = data.get("N° consultation", "")
                     
                     if n_ref and re.search(r'\d+/\d{2,4}', n_ref.strip()):
@@ -1629,9 +1809,9 @@ class TUNEPSScraper:
                     self.logger.info(f"Reference corrigee pour {reference}: {full_reference} (N° reference: '{n_ref}', N° consultation: '{num_cons}')")
                     
                     # Extraction des dates
-                    contenu['publication_date_full'] = self.get_value_safe(self.driver, "Date et heure publication", timeout=10)
-                    contenu['start_bidding_date_full'] = self.get_value_safe(self.driver, "Date et heure du commencement d'envoi des offres", timeout=10)
-                    contenu['expiration_date_full'] = self.get_value_safe(self.driver, "Dernier delai reception offres", timeout=10)
+                    contenu['publication_date_full'] = self.get_value_safe(self.driver, "Date et heure publication", timeout=3)
+                    contenu['start_bidding_date_full'] = self.get_value_safe(self.driver, "Date et heure du commencement d'envoi des offres", timeout=3)
+                    contenu['expiration_date_full'] = self.get_value_safe(self.driver, "Dernier delai reception offres", timeout=3)
                     
                     # Si expiration vide, tentative fallback JS
                     if not contenu['expiration_date_full'] or contenu['expiration_date_full'] == 'N/A':
@@ -1658,7 +1838,7 @@ class TUNEPSScraper:
                     
                     opening_date = None
                     for label_variant in opening_labels:
-                        opening_date = self.get_value_safe(self.driver, label_variant, timeout=10)
+                        opening_date = self.get_value_safe(self.driver, label_variant, timeout=3)
                         if opening_date and opening_date != "N/A" and opening_date.strip():
                             self.logger.info(f"Date d'ouverture trouvee avec label '{label_variant}': {opening_date}")
                             break
@@ -1672,7 +1852,7 @@ class TUNEPSScraper:
                     self.logger.info(f" - OUVERTURE PLIS: {contenu['ouverture_offres']}")
                     
                     # Reste de l'extraction
-                    contenu['offer_validity_duration'] = self.get_value_safe(self.driver, "Duree de validite de l'offre", timeout=10)
+                    contenu['offer_validity_duration'] = self.get_value_safe(self.driver, "Duree de validite de l'offre", timeout=3)
                     
                     global_caution = self.get_value_safe(self.driver, "Cautionnement provisoire", timeout=5)
                     if global_caution:
@@ -1709,61 +1889,62 @@ class TUNEPSScraper:
                             if pdf_path:
                                 contenu['pdf_path'] = pdf_path
                                 contenu['pdf_filename'] = pdf_filename
-                                
-                                image_path, image_filename = self.pdf_to_png(pdf_path, full_reference)
-                                if image_path:
-                                    contenu['image_path'] = image_path
-                                    contenu['image_filename'] = image_filename
-                                    self.logger.info(f"PDF converti en PNG pour {full_reference}: {image_filename}")
-                                else:
-                                    contenu['image_path'] = pdf_path
-                                    contenu['image_filename'] = pdf_filename
+
+                                # ❌ DÉSACTIVÉ: Conversion PDF vers PNG - On utilise uniquement l'image fixe TUNEPS
+                                # image_path, image_filename = self.pdf_to_png(pdf_path, full_reference)
+                                # if image_path:
+                                #     contenu['image_path'] = image_path
+                                #     contenu['image_filename'] = image_filename
+                                #     self.logger.info(f"PDF converti en PNG pour {full_reference}: {image_filename}")
+                                # else:
+                                #     contenu['image_path'] = pdf_path
+                                #     contenu['image_filename'] = pdf_filename
                     
-                    # Gestion images robuste
-                    if not contenu.get('image_filename') and not contenu.get('s3_image_url'):
-                        local_paths = [
-                            self.generer_image_path(f"{full_reference}.png"),
-                            self.generer_image_path(f"{full_reference}_synthetic.png"),
-                            self.generer_pdf_path(f"{full_reference}.pdf"),
-                            self.generer_pdf_path(f"{full_reference}_synthetic.pdf")
-                        ]
-                        
-                        local_found = False
-                        for path in local_paths:
-                            if os.path.exists(path):
-                                file_size = os.path.getsize(path)
-                                if file_size > 100:
-                                    self.logger.info(f"Fichier LOCAL trouve pour {full_reference}: {path} (taille: {file_size} octets)")
-                                    
-                                    if path.endswith('.pdf'):
-                                        img_p, img_f = self.pdf_to_png(path, full_reference)
-                                        if img_p:
-                                            contenu['image_path'] = img_p
-                                            contenu['image_filename'] = img_f
-                                        else:
-                                            contenu['image_path'] = path
-                                            contenu['image_filename'] = os.path.basename(path)
-                                    else:
-                                        contenu['image_path'] = path
-                                        contenu['image_filename'] = os.path.basename(path)
-                                    
-                                    local_found = True
-                                    s3_uploaded_url = self._upload_image_via_api(path, full_reference)
-                                    if s3_uploaded_url:
-                                        contenu['s3_image_url'] = s3_uploaded_url
-                                    break
-                        
-                        if not local_found:
-                            self.logger.info(f"Pas de fichier local - Generation synthetique pour {full_reference}")
-                            synth_image_path, synth_image_filename = self.generate_synthetic_image(full_reference, data, contenu)
-                            if synth_image_path and synth_image_filename:
-                                contenu['image_path'] = synth_image_path
-                                contenu['image_filename'] = synth_image_filename
-                                self.logger.info(f"Image synthetique generee pour {full_reference}: {synth_image_filename}")
-                                
-                                s3_uploaded_url = self._upload_image_via_api(synth_image_path, full_reference)
-                                if s3_uploaded_url:
-                                    contenu['s3_image_url'] = s3_uploaded_url
+                    # ❌ DÉSACTIVÉ: Gestion images multiples - On utilise uniquement l'image fixe TUNEPS
+                    # if not contenu.get('image_filename') and not contenu.get('s3_image_url'):
+                    #     local_paths = [
+                    #         self.generer_image_path(f"{full_reference}.png"),
+                    #         self.generer_image_path(f"{full_reference}_synthetic.png"),
+                    #         self.generer_pdf_path(f"{full_reference}.pdf"),
+                    #         self.generer_pdf_path(f"{full_reference}_synthetic.pdf")
+                    #     ]
+                    #
+                    #     local_found = False
+                    #     for path in local_paths:
+                    #         if os.path.exists(path):
+                    #             file_size = os.path.getsize(path)
+                    #             if file_size > 100:
+                    #                 self.logger.info(f"Fichier LOCAL trouve pour {full_reference}: {path} (taille: {file_size} octets)")
+                    #
+                    #                 if path.endswith('.pdf'):
+                    #                     img_p, img_f = self.pdf_to_png(path, full_reference)
+                    #                     if img_p:
+                    #                         contenu['image_path'] = img_p
+                    #                         contenu['image_filename'] = img_f
+                    #                     else:
+                    #                         contenu['image_path'] = path
+                    #                         contenu['image_filename'] = os.path.basename(path)
+                    #                 else:
+                    #                     contenu['image_path'] = path
+                    #                     contenu['image_filename'] = os.path.basename(path)
+                    #
+                    #                 local_found = True
+                    #                 s3_uploaded_url = self._upload_image_via_api(path, full_reference)
+                    #                 if s3_uploaded_url:
+                    #                     contenu['s3_image_url'] = s3_uploaded_url
+                    #                 break
+                    #
+                    #     if not local_found:
+                    #         self.logger.info(f"Pas de fichier local - Generation synthetique pour {full_reference}")
+                    #         synth_image_path, synth_image_filename = self.generate_synthetic_image(full_reference, data, contenu)
+                    #         if synth_image_path and synth_image_filename:
+                    #             contenu['image_path'] = synth_image_path
+                    #             contenu['image_filename'] = synth_image_filename
+                    #             self.logger.info(f"Image synthetique generee pour {full_reference}: {synth_image_filename}")
+                    #
+                    #             s3_uploaded_url = self._upload_image_via_api(synth_image_path, full_reference)
+                    #             if s3_uploaded_url:
+                    #                 contenu['s3_image_url'] = s3_uploaded_url
                     
                     break  # Sortir de la boucle de retry si succès
                     
@@ -1775,19 +1956,19 @@ class TUNEPSScraper:
                     
         except Exception as e:
             self.logger.error(f"ERREUR EXTRACTION CONTENU: {e}")
-            
-            # Fallback ultime: Générer image synthétique
-            self.logger.info(f"Fallback ultime synthetique pour {reference}")
-            synth_image_path, synth_image_filename = self.generate_synthetic_image(reference, data, contenu)
-            if synth_image_path and synth_image_filename:
-                contenu['image_path'] = synth_image_path
-                contenu['image_filename'] = synth_image_filename
-                img_size = os.path.getsize(synth_image_path) if os.path.exists(synth_image_path) else 0
-                self.logger.info(f"Fallback ultime reussi pour {reference}: {synth_image_filename} (taille: {img_size} octets)")
-                
-                s3_uploaded_url = self._upload_image_via_api(synth_image_path, reference)
-                if s3_uploaded_url:
-                    contenu['s3_image_url'] = s3_uploaded_url
+
+            # ❌ DÉSACTIVÉ: Fallback image synthétique - On utilise uniquement l'image fixe TUNEPS
+            # self.logger.info(f"Fallback ultime synthetique pour {reference}")
+            # synth_image_path, synth_image_filename = self.generate_synthetic_image(reference, data, contenu)
+            # if synth_image_path and synth_image_filename:
+            #     contenu['image_path'] = synth_image_path
+            #     contenu['image_filename'] = synth_image_filename
+            #     img_size = os.path.getsize(synth_image_path) if os.path.exists(synth_image_path) else 0
+            #     self.logger.info(f"Fallback ultime reussi pour {reference}: {synth_image_filename} (taille: {img_size} octets)")
+            #
+            #     s3_uploaded_url = self._upload_image_via_api(synth_image_path, reference)
+            #     if s3_uploaded_url:
+            #         contenu['s3_image_url'] = s3_uploaded_url
         
         # Log final
         self.logger.info(f"Resume dates pour {data.get('Reference', reference)}:")
@@ -1846,7 +2027,12 @@ class TUNEPSScraper:
         type_detected = "national" if "national" in raw_desc.lower() else "international"
         
         start_bidding_full = contenu.get('start_bidding_date_full', contenu.get('publication_date_full', 'N/A')) if extraction_complete else data.get("Date Publication", "N/A")
-        
+
+        # TOUJOURS utiliser l'image fixe TUNEPS (pas d'extraction d'images depuis PDF)
+        image_s3_url = self.default_image_s3_url or ''
+        image_filename = 'tuneps_default.png'
+        image_path = self.default_image_path
+
         offre = OffreTuneps(
             reference=reference,
             description=raw_desc,
@@ -1864,10 +2050,10 @@ class TUNEPSScraper:
             cahier_charge_pdf_filename=contenu.get('pdf_filename', '') if extraction_complete else '',
             cahier_charge_pdf_base64=pdf_base64 if extraction_complete else "",
             cahier_charge_url=contenu.get('cahier_charge_url', '') if extraction_complete else '',
-            image_path=contenu.get('image_path', '') if extraction_complete else '',
-            image_filename=contenu.get('image_filename', '') if extraction_complete else '',
+            image_path=image_path,
+            image_filename=image_filename,
             image_base64=image_base64 if extraction_complete else "",
-            s3_image_url=contenu.get('s3_image_url', '') if extraction_complete else '',
+            s3_image_url=image_s3_url,
             lots=contenu.get('lots', []) if extraction_complete else [],
             mots_cles_detectes=[],
             sourceId=self.default_source_id,
@@ -1910,23 +2096,25 @@ class TUNEPSScraper:
                     pdf_url = urljoin(url, pdf_links[0]['href'])
                     if pdf_url and not self.skip_s3:
                         pdf_path, pdf_filename = self.telecharger_pdf_tuneps(pdf_url, url.split('/')[-1])
-                        if pdf_path:
-                            image_path, image_filename = self.pdf_to_png(pdf_path, url.split('/')[-1])
-                            if image_path:
-                                s3_uploaded_url = self._upload_image_via_api(image_path, url.split('/')[-1])
+                        # ❌ DÉSACTIVÉ: Conversion PDF->PNG - On utilise uniquement l'image fixe TUNEPS
+                        # if pdf_path:
+                        #     image_path, image_filename = self.pdf_to_png(pdf_path, url.split('/')[-1])
+                        #     if image_path:
+                        #         s3_uploaded_url = self._upload_image_via_api(image_path, url.split('/')[-1])
             else:
                 response = self.session.get(url, timeout=30, allow_redirects=True)
                 if response.status_code == 200:
                     soup = BeautifulSoup(response.content, 'html.parser')
-                    
+
                     pdf_links = soup.find_all('a', href=re.compile(r'.pdf$', re.I))
                     if pdf_links and not self.skip_s3:
                         pdf_url = urljoin(url, pdf_links[0]['href'])
                         pdf_path, pdf_filename = self.telecharger_pdf_tuneps(pdf_url, url.split('/')[-1])
-                        if pdf_path:
-                            image_path, image_filename = self.pdf_to_png(pdf_path, url.split('/')[-1])
-                            if image_path:
-                                s3_uploaded_url = self._upload_image_via_api(image_path, url.split('/')[-1])
+                        # ❌ DÉSACTIVÉ: Conversion PDF->PNG - On utilise uniquement l'image fixe TUNEPS
+                        # if pdf_path:
+                        #     image_path, image_filename = self.pdf_to_png(pdf_path, url.split('/')[-1])
+                        #     if image_path:
+                        #         s3_uploaded_url = self._upload_image_via_api(image_path, url.split('/')[-1])
                                 
         except Exception as e:
             self.logger.error(f"ERREUR SOUP: {e}")
@@ -2012,18 +2200,19 @@ class TUNEPSScraper:
         try:
             if not date_str or date_str in ["N/A", ""]:
                 return False
-            
+
             date_formats = ["%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%d %m %Y"]
             pub_date = None
-            
+
             for fmt in date_formats:
                 try:
                     pub_date = datetime.strptime(date_str.strip().split()[0], fmt).date()
                     break
                 except ValueError:
                     continue
-            
+
             if not pub_date:
+                self.logger.warning(f"Date pub non parsee: '{date_str}'")
                 return False
 
             # Parse start_date with multiple formats
@@ -2036,6 +2225,9 @@ class TUNEPSScraper:
                     except ValueError:
                         continue
 
+                if not start_date:
+                    self.logger.warning(f"start_date non parsee: '{start_date_str}'")
+
             # Parse end_date with multiple formats
             end_date = None
             if end_date_str:
@@ -2045,16 +2237,26 @@ class TUNEPSScraper:
                         break
                     except ValueError:
                         continue
-            
+
+                if not end_date:
+                    self.logger.warning(f"end_date non parsee: '{end_date_str}'")
+
+            # Si aucune date n'est fournie, accepter toutes les dates récentes (30 derniers jours)
+            if not start_date and not end_date:
+                cutoff = datetime.now().date() - timedelta(days=30)
+                return pub_date >= cutoff
+
             if start_date and end_date:
-                return start_date <= pub_date <= end_date
+                result = start_date <= pub_date <= end_date
+                return result
             elif start_date:
-                return start_date <= pub_date
+                result = start_date <= pub_date
+                return result
             elif end_date:
                 return pub_date <= end_date
-            else:
-                return True
-                
+
+            return True
+
         except Exception as e:
             self.logger.warning(f"Erreur filtrage date '{date_str}': {e}")
             return False
@@ -2230,16 +2432,20 @@ class TUNEPSScraper:
         self.is_processing = True
         self.processing_start_time = time.time()
         self.extraction_complete_mode = extraction_complete
-        
+
         self.logger.info(f"Flag processing SET a True - Debut scraping ({datetime.now().strftime('%d/%m/%Y %H:%M')}) - Mode complete: {extraction_complete}")
-        
+
+        # Recharger les caches depuis la DB pour éviter les faux doublons
+        self.load_validated_refs()
+        self._load_pending_set()
+
         with self._scrape_lock:
             self._init_driver()
             if not self.use_selenium or not self.driver:
                 self.logger.error("Selenium unavailable - Falling back to requests mode")
                 self.is_processing = False
                 return []
-            
+
             all_consultations = []
             all_refs = set()
             empty_pages = 0
@@ -2285,33 +2491,37 @@ class TUNEPSScraper:
                     all_rows = self.extract_all_rows_data()
                     self.logger.info(f"{len(all_rows)} lignes extraites sur page {page}")
 
+                    # DEBUG: Log des dates
+                    if page == 1 and all_rows:
+                        self.logger.info(f"DEBUG - start_date: {start_date}, end_date: {end_date}")
+                        self.logger.info(f"DEBUG - Exemple date publication: {all_rows[0].get('Date Publication', 'N/A')}")
+
+                    # Filtre par date
+                    rows_data = [r for r in all_rows if self.is_between_dates(r.get("Date Publication", ""), start_date, end_date)]
+                    self.logger.info(f"{len(rows_data)} consultations dans la plage trouvees sur page {page}")
+
                     # Check if all dates on this page are older than start_date
-                    if start_date and not end_date:
+                    if start_date and len(all_rows) > 0:
                         all_older = True
                         for r in all_rows:
                             pub_date_str = r.get("Date Publication", "")
-                            if pub_date_str and self.is_between_dates(pub_date_str, start_date, None):
+                            if pub_date_str and self.is_between_dates(pub_date_str, start_date, end_date):
                                 all_older = False
                                 break
 
-                        if all_older and len(all_rows) > 0:
+                        if all_older:
                             self.logger.info(f"Arret: Toutes les consultations de la page {page} sont anterieures a {start_date}")
                             break
 
-                    rows_data = [r for r in all_rows if self.is_between_dates(r.get("Date Publication", ""), start_date, end_date)]
-
                     if not rows_data:
                         empty_pages += 1
-                        self.logger.info(f"Aucune consultation dans la plage sur cette page ({empty_pages}/3)")
+                        self.logger.info(f"Aucune consultation trouvée sur cette page ({empty_pages}/3)")
                         if empty_pages >= 3:
-                            self.logger.info("Arret automatique : aucune donnee dans la plage trouvee.")
+                            self.logger.info("Arret automatique : aucune donnee trouvee.")
                             break
                     else:
                         empty_pages = 0
-                    
-                    if self.should_stop_scraping(rows_data, page):
-                        break
-                    
+
                     for r in rows_data:
                         id1 = r.get("_id1", "")
                         num_cons = r.get("N° consultation", "")
@@ -2393,24 +2603,20 @@ class TUNEPSScraper:
                 self.logger.info(f"Termine a {datetime.now().strftime('%H:%M:%S')}")
     
     def get_offres_cache(self, page: int = 1, limit: int = 10):
-        if self.is_processing:
-            duration = time.time() - self.processing_start_time if self.processing_start_time else 0
-            return {
-                "processing": True,
-                "message": f"Scraping en cours depuis {duration:.2f}s... Rafraichissez dans 10-20s.",
-                "total": 0,
-                "page": page,
-                "limit": limit,
-                "totalPages": 0,
-                "offres": []
-            }
-        
+        # MODIFIÉ: Retourner les offres MÊME pendant le processing
         total = len(self.offres_cache)
         start = (page - 1) * limit
         end = start + limit
         paginated_offres = self.offres_cache[start:end]
+
+        # Si processing, ajouter un message mais retourner quand même les offres
+        if self.is_processing:
+            duration = time.time() - self.processing_start_time if self.processing_start_time else 0
+            processing_message = f"Scraping en cours depuis {duration:.2f}s... {total} offres trouvées jusqu'à présent."
+        else:
+            processing_message = None
         
-        return {
+        result = {
             "offres": [
                 {
                     "reference": offre.reference,
@@ -2442,8 +2648,14 @@ class TUNEPSScraper:
             "total": total,
             "page": page,
             "limit": limit,
-            "totalPages": (total + limit - 1) // limit
+            "totalPages": (total + limit - 1) // limit,
+            "processing": self.is_processing
         }
+
+        if processing_message:
+            result["message"] = processing_message
+
+        return result
     
     def update_offre_in_cache(self, reference: str, updated_data: dict) -> bool:
         for i, offre in enumerate(self.offres_cache):
@@ -2460,12 +2672,17 @@ class TUNEPSScraper:
 
     def get_tenders_from_db(self, limit=100):
         try:
+            # Retourner les offres ACTIVE (validées et envoyées à l'API) au lieu de pending
             all_tenders = pg_find_all(status="active")
             tenders = all_tenders[:limit] if len(all_tenders) > limit else all_tenders
             for tender in tenders:
                 tender["_id"] = str(tender.get("id", ""))
                 tender["extractionDate"] = tender.get("extraction_date", "")
                 tender["validationDate"] = tender.get("validation_date", "")
+                # Convertir les dates snake_case vers camelCase pour le frontend
+                tender["publicationDate"] = tender.get("publication_date", "")
+                tender["expirationDate"] = tender.get("expiration_date", "")
+                tender["openingDate"] = tender.get("opening_date", "")
 
             return tenders
 
@@ -2483,7 +2700,7 @@ CORS(app, origins=["http://localhost:3000", "http://localhost:3001", "http://127
      allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
      supports_credentials=True)
 
-scraper = TUNEPSScraper(use_selenium=True, skip_s3=True)
+scraper = TUNEPSScraper(use_selenium=True, skip_s3=False)  # ✅ ACTIVER S3 pour upload image TUNEPS
 
 def run_automatic_scrape():
     try:
@@ -2640,19 +2857,56 @@ def delete_offre(reference):
 @app.route('/api/tenders/delete/<reference>', methods=['DELETE'])
 def delete_validated_offre(reference):
     logger.info(f"Route /api/tenders/delete appelee pour {reference}")
-    
+
     if scraper.delete_validated_offre(reference):
         return jsonify({
             "success": True,
             "message": "Offre validee supprimee",
             "offre_ref": reference
         })
-    
+
     return jsonify({
         "success": False,
         "message": "Offre validee non trouvee",
         "offre_ref": reference
     })
+
+@app.route('/api/delete_all', methods=['DELETE'])
+def delete_all_offres():
+    logger.info("Route /api/delete_all appelee - Suppression de TOUTES les offres (pending + validated)")
+
+    try:
+        # Supprimer toutes les offres pending
+        pending_result = pg_delete_all(status="pending")
+        pending_count = pending_result.get('deleted_count', 0)
+
+        # Supprimer toutes les offres validated
+        validated_result = pg_delete_all(status="active")
+        validated_count = validated_result.get('deleted_count', 0)
+
+        # Vider les caches mémoire
+        scraper.offres_cache.clear()
+        scraper.pending_set.clear()
+        scraper.validated_refs.clear()
+
+        total_deleted = pending_count + validated_count
+
+        logger.info(f"✅ Suppression terminée: {pending_count} pending + {validated_count} validated = {total_deleted} total")
+
+        return jsonify({
+            "success": True,
+            "message": f"Toutes les offres supprimées: {total_deleted} offres",
+            "pending_deleted": pending_count,
+            "validated_deleted": validated_count,
+            "total_deleted": total_deleted
+        })
+
+    except Exception as e:
+        logger.error(f"❌ Erreur suppression globale: {e}")
+        return jsonify({
+            "success": False,
+            "message": f"Erreur lors de la suppression: {str(e)}"
+        }), 500
 
 @app.route('/api/tenders', methods=['GET'])
 def get_tenders():
@@ -2663,18 +2917,86 @@ def get_tenders():
 @app.route('/api/pending', methods=['GET'])
 def get_pending():
     logger.info(f"Route /api/pending appelee avec args: {request.args}")
-    
+
     try:
         page = int(request.args.get('page', 1))
         limit = int(request.args.get('limit', 10))
-        
+
+        # ✅ Filtrage par date de publication
+        date_filter = request.args.get('date')  # Format: YYYY-MM-DD ou DD/MM/YYYY
+        start_date = request.args.get('start_date')  # Format: YYYY-MM-DD
+        end_date = request.args.get('end_date')  # Format: YYYY-MM-DD
+
         paginated = scraper.get_offres_cache(page=page, limit=limit)
+
+        # ✅ Appliquer le filtrage par date si demandé
+        if date_filter or start_date or end_date:
+            from datetime import datetime
+            filtered_offres = []
+
+            for offre in paginated.get('offres', []):
+                pub_date_str = offre.get('publication_date') or offre.get('publicationDate')
+                if not pub_date_str:
+                    continue
+
+                try:
+                    # Parser la date de publication (format ISO ou DD/MM/YYYY)
+                    if isinstance(pub_date_str, str):
+                        if 'T' in pub_date_str:  # Format ISO
+                            pub_date = datetime.fromisoformat(pub_date_str.replace('Z', '+00:00'))
+                        else:
+                            for date_format in ['%Y-%m-%d', '%d/%m/%Y', '%d-%m-%Y']:
+                                try:
+                                    pub_date = datetime.strptime(pub_date_str, date_format)
+                                    break
+                                except:
+                                    continue
+                    else:
+                        pub_date = pub_date_str
+
+                    # Filtrer par date exacte
+                    if date_filter:
+                        for date_format in ['%Y-%m-%d', '%d/%m/%Y', '%d-%m-%Y']:
+                            try:
+                                filter_date = datetime.strptime(date_filter, date_format)
+                                if pub_date.date() == filter_date.date():
+                                    filtered_offres.append(offre)
+                                break
+                            except:
+                                continue
+
+                    # Filtrer par plage de dates
+                    elif start_date and end_date:
+                        start = datetime.strptime(start_date, '%Y-%m-%d')
+                        end = datetime.strptime(end_date, '%Y-%m-%d')
+                        if start.date() <= pub_date.date() <= end.date():
+                            filtered_offres.append(offre)
+
+                    # Filtrer par date de début
+                    elif start_date:
+                        start = datetime.strptime(start_date, '%Y-%m-%d')
+                        if pub_date.date() >= start.date():
+                            filtered_offres.append(offre)
+
+                    # Filtrer par date de fin
+                    elif end_date:
+                        end = datetime.strptime(end_date, '%Y-%m-%d')
+                        if pub_date.date() <= end.date():
+                            filtered_offres.append(offre)
+
+                except Exception as e:
+                    logger.warning(f"⚠️ Erreur parsing date {pub_date_str}: {e}")
+                    continue
+
+            paginated['offres'] = filtered_offres
+            paginated['total'] = len(filtered_offres)
+            paginated['totalPages'] = (len(filtered_offres) + limit - 1) // limit
+
         num_offres = len(paginated.get('offres', []))
-        
         logger.info(f"Reponse /api/pending: {num_offres} offres retournees (processing: {paginated.get('processing', False)})")
-        
+
         return jsonify({"success": True, "pending": paginated})
-        
+
     except ValueError as ve:
         logger.error(f"Erreur params /api/pending: {ve}")
         return jsonify({"success": False, "error": "Params invalides (page/limit doivent être des entiers)"}), 400
@@ -2784,9 +3106,9 @@ def main():
     parser.add_argument('--limit', type=int, default=10, help='Limit for pending')
     
     args = parser.parse_args()
-    
-    scraper = TUNEPSScraper(use_selenium=True, skip_s3=True)
-    
+
+    scraper = TUNEPSScraper(use_selenium=True, skip_s3=False)  # ✅ ACTIVER S3 pour upload image TUNEPS
+
     if args.scrape:
         print("Starting TUNEPS scraping...")
         offres = scraper.scraper_offres_tuneps(
@@ -2831,6 +3153,11 @@ def main():
         
     else:
         print("Starting Flask server on port 5001...")
+
+        # ❌ SCRAPING AUTOMATIQUE DÉSACTIVÉ - L'utilisateur lance manuellement avec une date
+        print("⚠️ Scraping automatique TUNEPS désactivé - Utiliser le bouton 'Lancer' dans le frontend")
+        print("="*80)
+
         app.run(debug=False, port=5001, host='0.0.0.0')
 
 if __name__ == "__main__":

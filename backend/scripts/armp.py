@@ -799,8 +799,9 @@ def analyze_extracted_data(excel_file):
         return None
 
 
-if __name__ == "__main__":
-    main()
+# Ancien bloc main() commenté pour permettre à Flask de démarrer
+# if __name__ == "__main__":
+#     main()
 
 
 # ================================================================================
@@ -899,3 +900,327 @@ pip install schedule
 • Notifications plus informatives
 • Meilleure organisation des données
 """
+
+# ================================================================================
+# FLASK API + POSTGRESQL SUPPORT
+# ================================================================================
+
+from flask import Flask, jsonify, request
+from flask_cors import CORS
+import psycopg2
+from psycopg2.extras import RealDictCursor
+import threading
+from urllib.parse import urlparse
+
+app = Flask(__name__)
+CORS(app)
+
+# PostgreSQL configuration
+DB_CONFIG = {
+    'host': os.getenv('DB_HOST', 'localhost'),
+    'port': os.getenv('DB_PORT', '5432'),
+    'database': os.getenv('DB_NAME', 'tender_db'),
+    'user': os.getenv('DB_USER', 'postgres'),
+    'password': os.getenv('DB_PASSWORD', 'postgres')
+}
+
+def get_db_connection():
+    """Create and return a PostgreSQL database connection"""
+    try:
+        conn = psycopg2.connect(**DB_CONFIG)
+        return conn
+    except Exception as e:
+        logger.error(f"Database connection error: {e}")
+        return None
+
+def insert_tender(tender_data):
+    """Insert a tender into PostgreSQL database"""
+    conn = get_db_connection()
+    if not conn:
+        return False
+
+    try:
+        cursor = conn.cursor()
+
+        # Create table if not exists
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS tenders_armp (
+                id SERIAL PRIMARY KEY,
+                reference VARCHAR(255),
+                description TEXT,
+                publication_date VARCHAR(100),
+                expiration_date VARCHAR(100),
+                promoter VARCHAR(500),
+                external_url TEXT,
+                region VARCHAR(255),
+                numero VARCHAR(255),
+                date_info TEXT,
+                status VARCHAR(50) DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # Insert tender
+        cursor.execute("""
+            INSERT INTO tenders_armp
+            (reference, description, publication_date, expiration_date, promoter, external_url, region, numero, date_info, status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+        """, (
+            tender_data.get('ref', ''),
+            tender_data.get('objet', ''),
+            tender_data.get('date_debut', ''),
+            tender_data.get('date_fin', ''),
+            tender_data.get('promoteur', ''),
+            tender_data.get('asap', ''),
+            tender_data.get('localisation', ''),
+            tender_data.get('numero', ''),
+            tender_data.get('date_info', ''),
+            'pending'
+        ))
+
+        tender_id = cursor.fetchone()[0]
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        logger.info(f"Tender inserted with ID: {tender_id}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Error inserting tender: {e}")
+        if conn:
+            conn.rollback()
+            conn.close()
+        return False
+
+def get_all_tenders(status=None):
+    """Get all tenders from database, optionally filtered by status"""
+    conn = get_db_connection()
+    if not conn:
+        return []
+
+    try:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        if status:
+            cursor.execute("""
+                SELECT * FROM tenders_armp
+                WHERE status = %s
+                ORDER BY created_at DESC
+            """, (status,))
+        else:
+            cursor.execute("""
+                SELECT * FROM tenders_armp
+                ORDER BY created_at DESC
+            """)
+
+        tenders = cursor.fetchall()
+        cursor.close()
+        conn.close()
+
+        return [dict(tender) for tender in tenders]
+
+    except Exception as e:
+        logger.error(f"Error fetching tenders: {e}")
+        if conn:
+            conn.close()
+        return []
+
+def count_tenders(status=None):
+    """Count tenders in database, optionally filtered by status"""
+    conn = get_db_connection()
+    if not conn:
+        return 0
+
+    try:
+        cursor = conn.cursor()
+
+        if status:
+            cursor.execute("SELECT COUNT(*) FROM tenders_armp WHERE status = %s", (status,))
+        else:
+            cursor.execute("SELECT COUNT(*) FROM tenders_armp")
+
+        count = cursor.fetchone()[0]
+        cursor.close()
+        conn.close()
+
+        return count
+
+    except Exception as e:
+        logger.error(f"Error counting tenders: {e}")
+        if conn:
+            conn.close()
+        return 0
+
+# Flask Routes
+
+@app.route('/api/health', methods=['GET'])
+def health():
+    """Health check endpoint with tender counts"""
+    try:
+        pending_count = count_tenders('pending')
+        validated_count = count_tenders('active')
+
+        return jsonify({
+            'status': 'ok',
+            'service': 'armp-scraper',
+            'pending_count': pending_count,
+            'validated_count': validated_count
+        }), 200
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+@app.route('/api/status', methods=['GET'])
+def status():
+    """Status endpoint (same as health)"""
+    return health()
+
+@app.route('/api/pending', methods=['GET'])
+def get_pending():
+    """Get all pending tenders"""
+    try:
+        limit = request.args.get('limit', type=int, default=10)
+        tenders = get_all_tenders('pending')
+
+        # Return structured format matching other scrapers (TUNEPS AO, etc.)
+        return jsonify({
+            'success': True,
+            'offres': tenders,
+            'count': len(tenders),
+            'limit': limit
+        }), 200
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'offres': [],
+            'count': 0
+        }), 500
+
+@app.route('/api/pending-all', methods=['GET'])
+def get_pending_all():
+    """Get all pending tenders (same as /api/pending)"""
+    return get_pending()
+
+@app.route('/api/tenders', methods=['GET'])
+def get_tenders():
+    """Get all validated (active) tenders"""
+    try:
+        limit = request.args.get('limit', type=int, default=10)
+        tenders = get_all_tenders('active')
+
+        # Return structured format matching other scrapers
+        return jsonify({
+            'success': True,
+            'offres': tenders,
+            'count': len(tenders),
+            'limit': limit
+        }), 200
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'offres': [],
+            'count': 0
+        }), 500
+
+@app.route('/api/validated', methods=['GET'])
+def get_validated():
+    """Get all validated tenders (same as /api/tenders)"""
+    return get_tenders()
+
+@app.route('/api/scrape', methods=['POST'])
+def scrape():
+    """Launch scraping in background thread and save to PostgreSQL"""
+    def scrape_task():
+        try:
+            print("🚀 [ARMP] Starting ARMP scraping task...")
+            logger.info("Starting ARMP scraping task...")
+            scraper = ARMPTableScraper()
+            tenders = scraper.scrape_all_pages()
+
+            if tenders:
+                print(f"✅ [ARMP] Found {len(tenders)} tenders from ARMP website")
+                logger.info(f"Found {len(tenders)} tenders")
+                success_count = 0
+
+                for tender in tenders:
+                    if insert_tender(tender):
+                        success_count += 1
+
+                print(f"💾 [ARMP] Successfully inserted {success_count}/{len(tenders)} tenders into PostgreSQL")
+                logger.info(f"Successfully inserted {success_count}/{len(tenders)} tenders")
+            else:
+                print("⚠️ [ARMP] No tenders found during scraping - site may be empty or structure changed")
+                logger.warning("No tenders found during scraping")
+
+        except Exception as e:
+            print(f"❌ [ARMP] Error in scraping task: {e}")
+            logger.error(f"Error in scraping task: {e}")
+
+    # Start scraping in background thread
+    thread = threading.Thread(target=scrape_task)
+    thread.daemon = True
+    thread.start()
+
+    return jsonify({
+        'message': 'Scraping started in background',
+        'status': 'running'
+    }), 202
+
+@app.route('/api/validate/<reference>', methods=['POST'])
+def validate_tender(reference):
+    """Mark a tender as active (validated)"""
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({
+            'error': 'Database connection failed'
+        }), 500
+
+    try:
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            UPDATE tenders_armp
+            SET status = 'active', updated_at = CURRENT_TIMESTAMP
+            WHERE reference = %s
+            RETURNING id
+        """, (reference,))
+
+        result = cursor.fetchone()
+
+        if result:
+            conn.commit()
+            cursor.close()
+            conn.close()
+
+            return jsonify({
+                'message': 'Tender validated successfully',
+                'reference': reference
+            }), 200
+        else:
+            cursor.close()
+            conn.close()
+
+            return jsonify({
+                'error': 'Tender not found'
+            }), 404
+
+    except Exception as e:
+        logger.error(f"Error validating tender: {e}")
+        if conn:
+            conn.rollback()
+            conn.close()
+
+        return jsonify({
+            'error': str(e)
+        }), 500
+
+if __name__ == "__main__":
+    logger.info("Starting ARMP Flask API on port 5007...")
+    app.run(host='0.0.0.0', port=5007, debug=True)

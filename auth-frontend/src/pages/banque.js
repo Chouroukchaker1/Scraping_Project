@@ -177,15 +177,18 @@ const PendingList = ({ offres, onValidate, onUpdate, onDelete, processing, onPos
   const [searchTerm, setSearchTerm] = useState('');
   const [itemsPerPage, setItemsPerPage] = useState(50);
 
-  const filteredOffres = useMemo(() => 
-    offres.filter(o => 
+  // Ensure offres is always an array
+  const safeOffres = Array.isArray(offres) ? offres : [];
+
+  const filteredOffres = useMemo(() =>
+    safeOffres.filter(o =>
       o.reference?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       (o.description?.toLowerCase().includes(searchTerm.toLowerCase())) ||
       (o.title?.toLowerCase().includes(searchTerm.toLowerCase())) ||
       (o.pays?.toLowerCase().includes(searchTerm.toLowerCase())) ||
       (o.country?.toLowerCase().includes(searchTerm.toLowerCase()))
     ),
-    [offres, searchTerm]
+    [safeOffres, searchTerm]
   );
 
   const totalPages = Math.max(1, Math.ceil(filteredOffres.length / itemsPerPage));
@@ -639,14 +642,17 @@ const ValidatedList = ({ tenders, loading }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [itemsPerPage, setItemsPerPage] = useState(50);
 
-  const filteredTenders = useMemo(() => 
-    tenders.filter(t => 
+  // Ensure tenders is always an array
+  const safeTenders = Array.isArray(tenders) ? tenders : [];
+
+  const filteredTenders = useMemo(() =>
+    safeTenders.filter(t =>
       t.reference?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       (t.description?.toLowerCase().includes(searchTerm.toLowerCase())) ||
       (t.title?.toLowerCase().includes(searchTerm.toLowerCase())) ||
       (t.pays?.toLowerCase().includes(searchTerm.toLowerCase()))
     ),
-    [tenders, searchTerm]
+    [safeTenders, searchTerm]
   );
 
   const totalPages = Math.max(1, Math.ceil(filteredTenders.length / itemsPerPage));
@@ -975,9 +981,12 @@ const Banque = () => {
 
   const fetchPendingOffres = async () => {
     try {
-      const response = await axios.get(`${API_BASE}/pending`);
+      // Demander toutes les offres (limit=10000 pour être sûr d'avoir tout)
+      const response = await axios.get(`${API_BASE}/pending?page=1&limit=10000`);
       if (response.data.success) {
-        setPendingOffres(response.data.pending || []);
+        // Extract the offres array from the nested pending object
+        const pendingData = response.data.pending || {};
+        setPendingOffres(pendingData.offres || []);
       }
     } catch (err) {
       console.error('Error fetching pending:', err.message);
@@ -988,9 +997,12 @@ const Banque = () => {
   const fetchValidatedTenders = async () => {
     setLoadingValidated(true);
     try {
-      const response = await axios.get(`${API_BASE}/validated`);
+      // Demander toutes les offres validées (limit=10000 pour être sûr d'avoir tout)
+      const response = await axios.get(`${API_BASE}/validated?page=1&limit=10000`);
       if (response.data.success) {
-        setValidatedTenders(response.data.validated || []);
+        // Extract the offres array from the nested validated object
+        const validatedData = response.data.validated || {};
+        setValidatedTenders(validatedData.offres || []);
       }
     } catch (err) {
       console.error('Error fetching validated:', err.message);

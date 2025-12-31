@@ -7,6 +7,7 @@ import AppelOffres from "./pages/appel_offres";
 import MultiSites from "./pages/mutlisites";
 import Boamp from "./pages/boamp";
 import Tuneps from "./pages/tuneps";
+import TunepsAO from "./pages/tuneps_ao";
 import Pnud from "./pages/pnud";
 import Haicop from "./pages/haicop";
 import Banque from "./pages/banque";
@@ -24,7 +25,7 @@ import Navbar from "./components/Navbar";
 const PublicRoute = ({ children }) => {
   const token = localStorage.getItem('token');
   if (token) {
-    return <Navigate to="/dashboard" replace />;
+    return <Navigate to="/multi-sites" replace />;
   }
   return children;
 };
@@ -45,18 +46,19 @@ function App() {
       <Routes>
         <Route path="/" element={<Navigate to="/login" replace />} />
 
-        {/* Routes publiques (login/register) - redirigent vers dashboard si déjà connecté */}
+        {/* Routes publiques (login/register) - redirigent vers multi-sites si déjà connecté */}
         <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
         <Route path="/register" element={<PublicRoute><Register /></PublicRoute>} />
 
         {/* Routes protégées - nécessitent authentification */}
-        <Route path="/dashboard" element={<PrivateRoute><ProtectedPage><Dashboard /></ProtectedPage></PrivateRoute>} />
+        {/* DASHBOARD DÉSACTIVÉ - rediriger vers /multi-sites à la place */}
+        <Route path="/dashboard" element={<Navigate to="/multi-sites" replace />} />
         <Route path="/tuneps" element={<PrivateRoute><ProtectedPage><Tuneps /></ProtectedPage></PrivateRoute>} />
         <Route path="/pnud" element={<PrivateRoute><ProtectedPage><Pnud /></ProtectedPage></PrivateRoute>} />
         <Route path="/haicop" element={<PrivateRoute><ProtectedPage><Haicop /></ProtectedPage></PrivateRoute>} />
         <Route path="/banque" element={<PrivateRoute><ProtectedPage><Banque /></ProtectedPage></PrivateRoute>} />
         <Route path="/boamp" element={<PrivateRoute><ProtectedPage><Boamp /></ProtectedPage></PrivateRoute>} />
-        <Route path="/tuneps_appel-offres" element={<PrivateRoute><ProtectedPage><AppelOffres /></ProtectedPage></PrivateRoute>} />
+        <Route path="/tuneps_appel-offres" element={<PrivateRoute><ProtectedPage><TunepsAO /></ProtectedPage></PrivateRoute>} />
         <Route path="/armp" element={<PrivateRoute><ProtectedPage><Armp /></ProtectedPage></PrivateRoute>} />
         <Route path="/benin" element={<PrivateRoute><ProtectedPage><Benin /></ProtectedPage></PrivateRoute>} />
         <Route path="/expertise" element={<PrivateRoute><ProtectedPage><Expertise /></ProtectedPage></PrivateRoute>} />

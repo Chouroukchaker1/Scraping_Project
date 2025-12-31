@@ -1,10 +1,10 @@
-// src/pages/Tuneps.js - VERSION PROFESSIONNELLE COMPLÈTE
+// src/pages/TunepsAO.js - TUNEPS APPELS D'OFFRES
 import React, { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
 import { Search, Calendar, CheckCircle, Edit2, Trash2, RefreshCw, Play, AlertCircle } from 'lucide-react';
 import './Tuneps.css';
 
-const API_BASE = 'http://localhost:8080/api/tuneps';  // ✅ SERVEUR NODE.JS avec PostgreSQL
+const API_BASE = 'http://localhost:8080/api/tuneps_ao';  // ✅ API TUNEPS Appels d'Offres
 
 const arabicStyle = {
   fontFamily: '"Noto Sans Arabic", "Arial Unicode MS", Tahoma, Arial, sans-serif',
@@ -256,7 +256,7 @@ const PendingList = ({ offres, onValidate, onUpdate, onDelete, processing }) => 
   const handleValidate = async (reference) => {
     if (!window.confirm(`Valider l'offre ${reference} ?`)) return;
     try {
-      const response = await axios.post(`${API_BASE}/validate/${encodeURIComponent(reference)}`);
+      const response = await axios.post(`${API_BASE}/api/validate/${encodeURIComponent(reference)}`);
       if (!response.data.success) throw new Error(response.data.message);
       onValidate(reference);
       alert(`✅ Offre ${reference} validée avec succès`);
@@ -269,7 +269,7 @@ const PendingList = ({ offres, onValidate, onUpdate, onDelete, processing }) => 
     const newRegionId = prompt('Nouveau ID Région:', offre.region_id || '');
     if (newRegionId !== null && newRegionId.trim() !== '') {
       try {
-        const response = await axios.post(`${API_BASE}/update/${encodeURIComponent(offre.reference)}`, {
+        const response = await axios.post(`${API_BASE}/api/update/${encodeURIComponent(offre.reference)}`, {
           region_id: parseInt(newRegionId, 10),
         });
         if (!response.data.success) throw new Error(response.data.message);
@@ -284,7 +284,7 @@ const PendingList = ({ offres, onValidate, onUpdate, onDelete, processing }) => 
   const handleDelete = async (reference) => {
     if (!window.confirm(`Supprimer définitivement l'offre ${reference} ?`)) return;
     try {
-      const response = await axios.delete(`${API_BASE}/delete/${encodeURIComponent(reference)}`);
+      const response = await axios.delete(`${API_BASE}/api/delete/${encodeURIComponent(reference)}`);
       if (!response.data.success) throw new Error(response.data.message);
       onDelete(reference);
       alert(`✅ Offre ${reference} supprimée avec succès`);
@@ -296,7 +296,7 @@ const PendingList = ({ offres, onValidate, onUpdate, onDelete, processing }) => 
   const handleDeleteAll = async () => {
     if (!window.confirm(`ATTENTION: Supprimer TOUTES les offres TUNEPS (pending + validées) ?\n\nCette action est irréversible!`)) return;
     try {
-      const response = await axios.delete(`${API_BASE}/delete-all`);
+      const response = await axios.delete(`${API_BASE}/api/delete-all`);
       if (!response.data.success) throw new Error(response.data.message);
       const total = response.data.total_deleted || 0;
       const pending = response.data.pending_deleted || 0;
@@ -675,8 +675,10 @@ const ValidatedList = ({ tenders, loading, error, currentPage, setCurrentPage, o
   const [searchTerm, setSearchTerm] = useState('');
   const [itemsPerPage, setItemsPerPage] = useState(50);
 
-  const filteredTenders = useMemo(() => 
-    tenders.filter(t => 
+  console.log('📊 ValidatedList received tenders:', tenders?.length, 'tenders');
+
+  const filteredTenders = useMemo(() =>
+    tenders.filter(t =>
       t.reference?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       (t.description && t.description.toLowerCase().includes(searchTerm.toLowerCase()))
     ),
@@ -704,7 +706,7 @@ const ValidatedList = ({ tenders, loading, error, currentPage, setCurrentPage, o
   const handleDelete = async (reference) => {
     if (!window.confirm(`Supprimer définitivement l'offre validée ${reference} ?`)) return;
     try {
-      const response = await axios.delete(`${API_BASE}/validated/delete/${encodeURIComponent(reference)}`);
+      const response = await axios.delete(`${API_BASE}/api/validated/delete/${encodeURIComponent(reference)}`);
       if (!response.data.success) throw new Error(response.data.message);
       onDelete(reference);
       alert(`✅ Offre validée ${reference} supprimée avec succès`);
@@ -1028,7 +1030,7 @@ const ValidatedList = ({ tenders, loading, error, currentPage, setCurrentPage, o
 };
 
 // ===== COMPOSANT PRINCIPAL =====
-const Tuneps = () => {
+const TunepsAO = () => {
   const [pendingOffres, setPendingOffres] = useState([]);
   const [validatedTenders, setValidatedTenders] = useState([]);
   const [processing, setProcessing] = useState(false);
@@ -1041,7 +1043,7 @@ const Tuneps = () => {
   const fetchPendingOffres = async (dateFilter = null) => {
     try {
       // ✅ Ajouter le filtre de date si fourni
-      let url = `${API_BASE}/pending?page=1&limit=100`;
+      let url = `${API_BASE}/api/pending?page=1&limit=100`;
       if (dateFilter) {
         url += `&date=${dateFilter}`;
       }
@@ -1061,12 +1063,18 @@ const Tuneps = () => {
   const fetchValidatedTenders = async () => {
     setLoadingValidated(true);
     try {
-      const response = await axios.get(`${API_BASE}/validated`);
+      console.log('🔄 Fetching validated tenders from:', `${API_BASE}/api/validated`);
+      const response = await axios.get(`${API_BASE}/api/validated`);
+      console.log('📥 Validated response:', response.data);
       if (response.data.success) {
-        setValidatedTenders(response.data.tenders || []);
+        const offres = response.data.validated?.offres || [];
+        console.log('✅ Setting validated tenders:', offres.length, 'offres');
+        setValidatedTenders(offres);
+      } else {
+        console.log('❌ Response success is false');
       }
     } catch (err) {
-      console.error('Error fetching validated:', err.message);
+      console.error('❌ Error fetching validated:', err.message);
       setValidatedTenders([]);
     } finally {
       setLoadingValidated(false);
@@ -1081,7 +1089,7 @@ const Tuneps = () => {
     setSelectedDate(params.start);
 
     try {
-      const response = await axios.post(`${API_BASE}/scrape`, {
+      const response = await axios.post(`${API_BASE}/api/scrape`, {
         start_date: params.start,
         end_date: params.end,
         extraction_complete: params.extraction_complete || false
@@ -1151,7 +1159,7 @@ const Tuneps = () => {
             WebkitTextFillColor: 'transparent',
             marginBottom: '0.5rem'
           }}>
-            🇹🇳 Scraper TUNEPS
+            🇹🇳 TUNEPS - Appels d'Offres
           </h1>
           <p style={{ color: '#64748B', fontSize: '1.1rem' }}>
             Extraction automatique des appels d'offres
@@ -1231,4 +1239,4 @@ const Tuneps = () => {
   );
 };
 
-export default Tuneps;
+export default TunepsAO;

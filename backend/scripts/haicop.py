@@ -33,8 +33,8 @@ from reportlab.pdfgen import canvas
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
 import base64
-from pymongo import MongoClient
-from pymongo.errors import PyMongoError
+import psycopg2
+from psycopg2.extras import RealDictCursor
 import warnings
 import traceback
 from dataclasses import dataclass, field, asdict
@@ -43,11 +43,13 @@ from typing import Optional, List, Dict
 warnings.filterwarnings('ignore')
 load_dotenv()
 
-# Configuration MongoDB pour HAICOP
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://mongodb:27017/appel_offre_haicop_tunisie-bd")
-DB_NAME = os.getenv("DB_NAME", "haicop-tunisie")
-COLLECTION_NAME = "tenders_tunisie_haicop-aprév"
-PENDING_COLLECTION_NAME = "pending_tunisie-haicop"
+# Configuration PostgreSQL pour HAICOP
+DB_HOST = os.getenv("DB_HOST", "postgres")
+DB_PORT = os.getenv("DB_PORT", "5432")
+DB_NAME = os.getenv("DB_NAME", "tenders_db")
+DB_USER = os.getenv("DB_USER", "tender_user")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "tender_password_2024")
+TABLE_NAME = "tenders_haicop"
 
 # Configuration API pour HAICOP
 API_BASE_URL = os.getenv("API_BASE_URL", "https://be.appeloffres.net/api")
@@ -55,13 +57,13 @@ LOGIN_ENDPOINT = f"{API_BASE_URL}/auth/login/"
 TENDER_ENDPOINT = f"{API_BASE_URL}/tender"
 PROMOTER_ENDPOINT = f"{API_BASE_URL}/promoter"
 FILES_ENDPOINT = f"{API_BASE_URL}/files/tender"  # ✅ NOUVEAU: Endpoint pour upload image
-EMAIL = os.getenv("API_EMAIL", "ines.mtiri@tunipages.tn")
-PASSWORD = os.getenv("API_PASSWORD", "InesMTIRI567@!")
-DEFAULT_SOURCE_ID = "279"
-TUNISIE_SOURCE_ID = 279
+EMAIL = os.getenv("API_EMAIL", "oumayma.dahmani@tunipages.tn")  # ✅ Utiliser le compte BOAMP qui fonctionne
+PASSWORD = os.getenv("API_PASSWORD", "Ah0F553KKu0A")  # ✅ Password du compte BOAMP
+DEFAULT_SOURCE_ID = "1706"  # ✅ ID correct pour "Observatoire National des Marchés Publics" (marchespublics.gov.tn)
+TUNISIE_SOURCE_ID = 1706
 DEFAULT_PROMOTER_ID = "223472"
-DEFAULT_AVIS_ID = "13"
-DEFAULT_PAYS_ID = "219"
+DEFAULT_AVIS_ID = "1"  # ✅ ID 1 = "Avis d'appel d'offres"
+DEFAULT_PAYS_ID = "219"  # Tunisie
 TUNISIE_PAYS_ID = 219
 
 # ✅ NOUVEAU: Configuration image fixe
@@ -89,11 +91,209 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Connexion MongoDB
-mongo_client = MongoClient(MONGO_URI)
-db = mongo_client[DB_NAME]
-tenders_collection = db[COLLECTION_NAME]
-pending_tenders_collection = db[PENDING_COLLECTION_NAME]
+# ================================================
+# POSTGRESQL HELPER FUNCTIONS
+# ================================================
+
+def camel_to_snake(name):
+    """Convert camelCase to snake_case"""
+    import re
+    s1 = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', name)
+    return re.sub('([a-z0-9])([A-Z])', r'\1_\2', s1).lower()
+
+def snake_to_camel(name):
+    """Convert snake_case to camelCase"""
+    components = name.split('_')
+    return components[0] + ''.join(x.title() for x in components[1:])
+
+def convert_dict_keys_to_snake(data_dict):
+    """Convert all dictionary keys from camelCase to snake_case"""
+    return {camel_to_snake(k): v for k, v in data_dict.items()}
+
+def convert_dict_keys_to_camel(data_dict):
+    """Convert all dictionary keys from snake_case to camelCase"""
+    return {snake_to_camel(k): v for k, v in data_dict.items()}
+
+def get_db_connection():
+    """Créer une connexion PostgreSQL"""
+    return psycopg2.connect(
+        host=DB_HOST,
+        port=DB_PORT,
+        database=DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD
+    )
+
+def get_all_tenders(status=None, limit=None):
+    """Récupère toutes les offres depuis PostgreSQL"""
+    conn = get_db_connection()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        if status:
+            query = f"SELECT * FROM {TABLE_NAME} WHERE status = %s ORDER BY created_at DESC"
+            params = (status,)
+        else:
+            query = f"SELECT * FROM {TABLE_NAME} ORDER BY created_at DESC"
+            params = ()
+
+        if limit:
+            query += f" LIMIT {limit}"
+
+        cursor.execute(query, params)
+        results = cursor.fetchall()
+        # Convert snake_case keys to camelCase for compatibility
+        return [convert_dict_keys_to_camel(dict(row)) for row in results]
+    finally:
+        cursor.close()
+        conn.close()
+
+def get_tender_by_reference(reference):
+    """Récupère une offre par sa référence"""
+    conn = get_db_connection()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cursor.execute(f"SELECT * FROM {TABLE_NAME} WHERE reference = %s", (reference,))
+        result = cursor.fetchone()
+        # Convert snake_case keys to camelCase for compatibility
+        return convert_dict_keys_to_camel(dict(result)) if result else None
+    finally:
+        cursor.close()
+        conn.close()
+
+def insert_tender(tender_dict):
+    """Insère une nouvelle offre"""
+    from datetime import datetime
+
+    def convert_date(date_str):
+        """Convertit DD-MM-YYYY ou autres formats vers YYYY-MM-DD pour PostgreSQL"""
+        if not date_str:
+            return None
+        if isinstance(date_str, datetime):
+            return date_str.strftime('%Y-%m-%d')
+        try:
+            # Try DD-MM-YYYY format first (HAICOP format)
+            dt = datetime.strptime(str(date_str), '%d-%m-%Y')
+            return dt.strftime('%Y-%m-%d')
+        except:
+            try:
+                # Try YYYY-MM-DD format
+                dt = datetime.strptime(str(date_str), '%Y-%m-%d')
+                return dt.strftime('%Y-%m-%d')
+            except:
+                try:
+                    # Try datetime object or ISO format
+                    if 'T' in str(date_str):
+                        dt = datetime.fromisoformat(str(date_str).replace('Z', '+00:00'))
+                        return dt.strftime('%Y-%m-%d')
+                except:
+                    pass
+                return None
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        pub_date = convert_date(tender_dict.get('publicationDate') or tender_dict.get('publication_date'))
+        exp_date = convert_date(tender_dict.get('expirationDate') or tender_dict.get('expiration_date'))
+
+        query = f"""
+            INSERT INTO {TABLE_NAME}
+            (reference, description, publication_date, expiration_date, promoter,
+             external_url, country, status, source)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (reference) DO NOTHING
+        """
+        cursor.execute(query, (
+            tender_dict.get('reference'),
+            tender_dict.get('description'),
+            pub_date,
+            exp_date,
+            tender_dict.get('promoter', 'HAICOP Tunisie'),
+            tender_dict.get('url_source') or tender_dict.get('external_url'),
+            tender_dict.get('pays', 'Tunisie'),
+            tender_dict.get('status', 'pending'),
+            tender_dict.get('source', 'MarchesPublicsTN')  # ✅ AJOUT DU CHAMP SOURCE
+        ))
+        conn.commit()
+        return cursor.rowcount > 0
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"Error inserting tender: {e}")
+        return False
+    finally:
+        cursor.close()
+        conn.close()
+
+def update_tender(reference, update_dict):
+    """Met à jour une offre"""
+    import json
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        # Convert camelCase keys to snake_case and handle special fields
+        converted_dict = {}
+        for key, value in update_dict.items():
+            snake_key = camel_to_snake(key)
+            # Convert lists/dicts to JSON strings for PostgreSQL
+            if isinstance(value, (list, dict)):
+                value = json.dumps(value)
+            converted_dict[snake_key] = value
+
+        set_clause = ', '.join([f"{k} = %s" for k in converted_dict.keys()])
+        values = list(converted_dict.values())
+        values.append(reference)
+
+        query = f"UPDATE {TABLE_NAME} SET {set_clause}, updated_at = NOW() WHERE reference = %s"
+        cursor.execute(query, values)
+        conn.commit()
+        return cursor.rowcount > 0
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"Error updating tender: {e}")
+        return False
+    finally:
+        cursor.close()
+        conn.close()
+
+def delete_tender(reference):
+    """Supprime une offre"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(f"DELETE FROM {TABLE_NAME} WHERE reference = %s", (reference,))
+        conn.commit()
+        return cursor.rowcount
+    finally:
+        cursor.close()
+        conn.close()
+
+def count_tenders(status=None):
+    """Compte les offres"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        if status:
+            cursor.execute(f"SELECT COUNT(*) FROM {TABLE_NAME} WHERE status = %s", (status,))
+        else:
+            cursor.execute(f"SELECT COUNT(*) FROM {TABLE_NAME}")
+        return cursor.fetchone()[0]
+    finally:
+        cursor.close()
+        conn.close()
+
+def delete_all_tenders(status=None):
+    """Supprime toutes les offres"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        if status:
+            cursor.execute(f"DELETE FROM {TABLE_NAME} WHERE status = %s", (status,))
+        else:
+            cursor.execute(f"DELETE FROM {TABLE_NAME}")
+        conn.commit()
+        return cursor.rowcount
+    finally:
+        cursor.close()
+        conn.close()
 
 @dataclass
 class OffreBase:
@@ -275,28 +475,40 @@ class TunisieScraper:
     def load_existing_offres(self):
         """Charge les offres existantes"""
         try:
-            validated_docs = list(tenders_collection.find(
-                {"source": "MarchesPublicsTN", "status": "active"}
-            ).sort("createdAt", -1))
-            
+            # Get validated tenders from PostgreSQL
+            conn = get_db_connection()
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+            cursor.execute(
+                f"SELECT * FROM {TABLE_NAME} WHERE status = %s ORDER BY created_at DESC",
+                ("active",)
+            )
+            validated_docs = cursor.fetchall()
+
             for doc in validated_docs:
-                doc_without_id = {k: v for k, v in doc.items() if k != '_id'}
-                ref = doc_without_id.get("reference", "")
-                desc_hash = hash(doc_without_id.get("description", ""))
+                ref = doc.get("reference", "")
+                desc_hash = hash(doc.get("description", ""))
                 self.validated_offres_set.add((ref, desc_hash))
-            
-            pending_docs = list(pending_tenders_collection.find(
-                {"source": "MarchesPublicsTN", "status": "pending"}
-            ).sort("createdAt", -1))
-            
+
+            # Get pending tenders from PostgreSQL
+            cursor.execute(
+                f"SELECT * FROM {TABLE_NAME} WHERE status = %s ORDER BY created_at DESC",
+                ("pending",)
+            )
+            pending_docs = cursor.fetchall()
+
             for doc in pending_docs:
-                doc_without_id = {k: v for k, v in doc.items() if k != '_id'}
-                offre = OffreTunisie(**doc_without_id)
+                # Convert snake_case to camelCase
+                doc_dict = convert_dict_keys_to_camel(dict(doc))
+                offre = OffreTunisie(**doc_dict)
                 self.pending_cache.append(offre)
                 self.offres_cache.append(offre)
-            
+
+            cursor.close()
+            conn.close()
+
             self.logger.info(f"✅ {len(pending_docs)} pending + {len(validated_docs)} validées chargées")
-        except PyMongoError as e:
+        except Exception as e:
             self.logger.error(f"Erreur chargement: {e}")
     
     def parse_date_tunisie(self, date_str):
@@ -497,8 +709,8 @@ class TunisieScraper:
             if (reference, desc_hash) in self.validated_offres_set:
                 self.logger.warning(f"⚠️ Doublon validé: {reference}")
                 return False
-            
-            existing_pending = pending_tenders_collection.find_one({"reference": reference})
+
+            existing_pending = get_tender_by_reference(reference)
             
             if existing_pending:
                 existing_desc = existing_pending.get('description', '')
@@ -554,11 +766,8 @@ class TunisieScraper:
             }
             
             if existing_pending:
-                result = pending_tenders_collection.update_one(
-                    {"reference": reference},
-                    {"$set": update_fields}
-                )
-                if result.modified_count > 0:
+                success = update_tender(reference, update_fields)
+                if success:
                     self.logger.info(f"✅ Offre MAJ en pending: {reference}")
                     return True
                 else:
@@ -592,9 +801,9 @@ class TunisieScraper:
                 
                 tender_dict = offre.to_dict()
                 tender_dict["status"] = "pending"
-                
-                result = pending_tenders_collection.insert_one(tender_dict)
-                if result.inserted_id:
+
+                success = insert_tender(tender_dict)
+                if success:
                     self.pending_cache.append(offre)
                     self.offres_cache.append(offre)
                     self.logger.info(f"✅ Offre ajoutée en pending: {reference}")
@@ -781,6 +990,7 @@ class TunisieScraper:
         else:
             self.logger.warning(f"⚠️ Aucune image fixe disponible pour {offre.reference}")
         
+        # ✅ PAYLOAD COMPLET avec nature (comme BOAMP qui fonctionne)
         payload = {
             "title": offre.description,
             "description": offre.description,
@@ -789,31 +999,30 @@ class TunisieScraper:
             "expirationDate": expiration_ts,
             "openingBidsDate": opening_bids_ts,
             "reference": offre.reference,
-            "specificationsPrice": 0,
-            "offerValidityPeriode": 10,
-            "costEstimateMin": None,
-            "costEstimateMax": None,
             "avisId": int(self.avis_id),
             "sourceId": int(self.source_id),
             "promoterId": promoter_id,
-            "type": offre.type,
-            "nature": offre.nature,
+            "type": "national",
+            "nature": "public",  # ✅ Ajouté - requis par l'API
             "isEnabled": True,
-            "images": images,  # ✅ NOUVEAU: Array avec l'image fixe
-            "specificationsReceivingAddress": offre.url_source or "Adresse par défaut",
+            "images": images,
+            "specificationsReceivingAddress": offre.url_source or "Non spécifié",
             "fundingSourceType": "national",
-            "fundingSource": offre.fundingSource or "Source nationale",
-            "currencyId": 111,
-            "isMultiCurrency": offre.isMultiCurrency,
+            "fundingSource": offre.promoter or "Source nationale",
+            "isMultiCurrency": False,  # ✅ Pas de currencyId comme BOAMP
             "batches": [{
-                "activitiesIds": offre.activities_ids or [461], 
-                "title": f"Lot 1: {offre.description}", 
+                "activitiesIds": offre.activities_ids or [461],
+                "title": offre.description,  # ✅ Pas de "Lot 1:" comme BOAMP
                 "deposit": "0"
             }],
-            "addresses": [{"countryId": self.pays_id, "regionId": 18}]
+            "addresses": [{"countryId": self.pays_id}],  # ✅ Pas de regionId comme BOAMP
+            "specificationsPrice": "0",  # ✅ String comme BOAMP
+            # Pas de offerValidityPeriode (BOAMP ne l'envoie pas)
+            "costEstimateMin": None,
+            "costEstimateMax": None,
         }
-        
-        return {k: v for k, v in payload.items() if v is not None and v != ""}
+
+        return payload
     
     @tenacity.retry(
         stop=tenacity.stop_after_attempt(3), 
@@ -830,90 +1039,130 @@ class TunisieScraper:
         return response
     
     def post_tender_to_database_tunisie(self, offre) -> dict:
-        """Validation: Insertion DB + Envoi API"""
+        """
+        Validation: Envoi API HAICOP + Mise à jour DB
+        LOGIQUE CORRECTE:
+        1. Vérifier si déjà validée
+        2. Login API + Créer promoteur automatiquement
+        3. Envoyer à l'API HAICOP
+        4. Si succès API → Mettre à jour status='active' dans DB
+        5. Si échec API → Garder status='pending' dans DB
+        """
         self.load_existing_offres()
-        
-        existing = tenders_collection.find_one({"reference": offre.reference})
-        if existing:
-            return {
-                "success": False, 
-                "message": "Offre déjà validée", 
-                "offre_ref": offre.reference
-            }
-        
-        tender_dict = offre.to_dict()
-        tender_dict["status"] = "active"
-        tender_dict["validationDate"] = datetime.now().isoformat()
-        
-        mongo_id = None
-        
+
         try:
-            result = tenders_collection.insert_one(tender_dict)
-            mongo_id = result.inserted_id
-            
-            if result.inserted_id:
-                self.logger.info(f"✅ Insertion DB: {offre.reference}")
-                pending_tenders_collection.delete_one({"reference": offre.reference})
-                
-                api_success = False
-                api_id = None
-                api_message = ""
-                
-                try:
-                    if self.ensure_authenticated():
-                        payload = self.map_offre_to_tender_payload_tunisie(offre)
-                        response = self.post_to_haicop(payload)
-                        
-                        if response.status_code == 201:
-                            data = response.json()
-                            api_id = data.get('id')
-                            api_success = True
-                            api_message = f"✅ Envoi API réussi - ID: {api_id}"
-                            self.logger.info(api_message)
-                        else:
-                            api_message = f"❌ Erreur API: {response.status_code}"
-                            self.logger.error(f"{api_message} - {response.text}")
-                    else:
-                        api_message = "❌ Échec authentification"
-                        self.logger.error(api_message)
-                        
-                except Exception as api_e:
-                    api_message = f"❌ Erreur API: {str(api_e)}"
+            # Vérifier si déjà validée
+            existing = get_tender_by_reference(offre.reference)
+            if existing and existing.get("status") == "active":
+                return {
+                    "success": False,
+                    "message": "Offre déjà validée",
+                    "offre_ref": offre.reference
+                }
+
+            api_success = False
+            api_id = None
+            api_message = ""
+
+            try:
+                # ÉTAPE 1: Login à l'API
+                if not self.ensure_authenticated():
+                    api_message = "❌ Échec authentification API"
                     self.logger.error(api_message)
-                
-                if not api_success:
-                    if mongo_id:
-                        tenders_collection.delete_one({"_id": mongo_id})
-                        self.logger.info(f"🔄 Rollback DB pour {offre.reference}")
-                    pending_tenders_collection.insert_one(tender_dict)
                     return {
                         "success": False,
-                        "message": f"Échec envoi API. Offre remise en pending. {api_message}",
+                        "message": api_message,
                         "offre_ref": offre.reference,
                         "api_success": False
                     }
-                
-                return {
-                    "success": True,
-                    "message": f"✅ Validation réussie: DB + API - ID: {api_id}",
-                    "offre_ref": offre.reference,
-                    "mongo_id": str(mongo_id),
-                    "api_id": api_id,
-                    "api_success": True
+
+                # ÉTAPE 2: Créer le promoteur automatiquement (avec le nom de l'acheteur)
+                promoter_name = offre.promoter or "Promoteur Tunisie Default"
+                self.logger.info(f"🏢 Création/Recherche promoteur: {promoter_name}")
+                promoter_id = self.create_promoter_if_needed(promoter_name)
+
+                if not promoter_id:
+                    self.logger.warning(f"⚠️ Promoteur non créé, utilisation ID par défaut: {DEFAULT_PROMOTER_ID}")
+                    promoter_id = int(DEFAULT_PROMOTER_ID)
+                else:
+                    self.logger.info(f"✅ Promoteur ID: {promoter_id}")
+
+                # ÉTAPE 3: Préparer le payload et envoyer à l'API
+                payload = self.map_offre_to_tender_payload_tunisie(offre)
+                payload["promoterId"] = promoter_id  # Assurer que le promoter ID est bien dans le payload
+
+                self.logger.info(f"📤 Envoi vers API HAICOP: {TENDER_ENDPOINT}")
+                self.logger.info(f"📦 Payload: reference={offre.reference}, promoterId={promoter_id}")
+                self.logger.info(f"📋 Payload complet: {json.dumps(payload, indent=2, default=str)}")
+
+                response = self.post_to_haicop(payload)
+
+                # ÉTAPE 4: Analyser la réponse de l'API
+                if response.status_code == 201:
+                    data = response.json()
+                    api_id = data.get('id')
+                    api_success = True
+                    api_message = f"✅ Envoi API réussi - ID: {api_id}"
+                    self.logger.info(api_message)
+                    self.logger.info(f"📥 Réponse API complète: {data}")
+                else:
+                    api_message = f"❌ Erreur API (status {response.status_code})"
+                    self.logger.error(f"{api_message} - Réponse: {response.text}")
+
+            except Exception as api_e:
+                api_message = f"❌ Erreur lors de l'envoi API: {str(api_e)}"
+                self.logger.error(api_message)
+                self.logger.error(traceback.format_exc())
+
+            # ÉTAPE 5: Mettre à jour la DB selon le résultat de l'API
+            if api_success:
+                # API OK → Mettre à jour status='active' + apiId
+                update_fields = {
+                    "status": "active",
+                    "apiId": api_id,  # ✅ Enregistrer l'ID de l'API
+                    "validationDate": datetime.now().isoformat()
+                    # ✅ updatedAt est géré automatiquement par update_tender (ligne 245)
                 }
+
+                update_success = update_tender(offre.reference, update_fields)
+
+                if update_success:
+                    self.logger.info(f"✅ DB mise à jour: {offre.reference} → active")
+                    return {
+                        "success": True,
+                        "message": f"✅ Validation réussie: DB + API HAICOP - ID: {api_id}",
+                        "offre_ref": offre.reference,
+                        "db_reference": offre.reference,
+                        "api_id": api_id,
+                        "api_success": True,
+                        "promoter_id": promoter_id
+                    }
+                else:
+                    self.logger.error(f"❌ Échec mise à jour DB après succès API")
+                    return {
+                        "success": False,
+                        "message": "API OK mais échec mise à jour DB",
+                        "offre_ref": offre.reference,
+                        "api_id": api_id,
+                        "api_success": True
+                    }
             else:
+                # API KO → Garder status='pending'
+                self.logger.warning(f"⚠️ Offre {offre.reference} reste en pending (échec API)")
                 return {
-                    "success": False, 
-                    "message": "Échec insertion DB", 
-                    "offre_ref": offre.reference
+                    "success": False,
+                    "message": f"Échec envoi API HAICOP. {api_message}",
+                    "offre_ref": offre.reference,
+                    "api_success": False,
+                    "details": api_message
                 }
-                
+
         except Exception as e:
-            self.logger.error(f"❌ Erreur DB: {e}")
+            self.logger.error(f"❌ Erreur validation: {e}")
             traceback.print_exc()
             return {
-                "success": False, 
-                "message": str(e), 
+                "success": False,
+                "message": f"Erreur lors de la validation: {str(e)}",
                 "offre_ref": offre.reference
             }
     
@@ -948,9 +1197,9 @@ def serve_react(path):
 def health():
     """Endpoint de santé pour vérifier que le serveur fonctionne"""
     try:
-        # Vérifier MongoDB
-        pending_count = pending_tenders_collection.count_documents({})
-        validated_count = tenders_collection.count_documents({})
+        # Vérifier PostgreSQL
+        pending_count = count_tenders(status="pending")
+        validated_count = count_tenders(status="active")
         return jsonify({
             "success": True,
             "status": "healthy",
@@ -963,7 +1212,7 @@ def health():
             "success": False,
             "status": "error",
             "error": str(e),
-            "message": "Erreur de connexion MongoDB"
+            "message": "Erreur de connexion PostgreSQL"
         }), 500
 
 @app.route('/api/scrape-tunisie', methods=['POST'])
@@ -984,29 +1233,75 @@ def scrape_tunisie():
 
 @app.route('/api/validate/<reference>', methods=['POST'])
 def validate_offre(reference):
-    pending_doc = pending_tenders_collection.find_one({
-        "reference": reference, 
-        "status": "pending"
-    })
-    
+    """
+    Endpoint de validation d'une offre HAICOP
+    - Récupère l'offre en pending
+    - Envoie vers l'API HAICOP (avec création automatique du promoteur)
+    - Met à jour le status en 'active' si succès API
+    - Garde en 'pending' si échec API
+    """
+    logger.info(f"📋 Demande validation offre: {reference}")
+
+    pending_doc = get_tender_by_reference(reference)
+
     if not pending_doc:
         return jsonify({
-            "success": False, 
-            "message": "Offre non trouvée en pending", 
+            "success": False,
+            "message": "Offre non trouvée",
             "offre_ref": reference
         })
-    
-    pending_doc_without_id = {k: v for k, v in pending_doc.items() if k != '_id'}
-    
-    if pending_doc_without_id.get("source") == "MarchesPublicsTN":
-        offre = OffreTunisie(**pending_doc_without_id)
-        result = scraper_tunisie.post_tender_to_database_tunisie(offre)
+
+    if pending_doc.get("status") != "pending":
+        return jsonify({
+            "success": False,
+            "message": f"Offre n'est pas en pending (status actuel: {pending_doc.get('status')})",
+            "offre_ref": reference
+        })
+
+    # DEBUG: Logger toutes les clés et la valeur de 'source'
+    logger.info(f"🔍 DEBUG - Clés disponibles dans pending_doc: {list(pending_doc.keys())}")
+    logger.info(f"🔍 DEBUG - Valeur de 'source': '{pending_doc.get('source')}' (type: {type(pending_doc.get('source'))})")
+
+    # Créer l'objet offre - Support de plusieurs noms de source
+    source_value = pending_doc.get("source", "").strip()
+
+    if source_value in ["MarchesPublicsTN", "HAICOP", "Tunisie", "haicop", "marchespublicstn"]:
+        logger.info(f"✅ Source reconnue: '{source_value}' → Traitement comme offre HAICOP/Tunisie")
+
+        try:
+            # Filtrer les champs PostgreSQL pour ne garder que ceux de la dataclass OffreTunisie
+            from dataclasses import fields
+            valid_fields = {f.name for f in fields(OffreTunisie)}
+            filtered_doc = {k: v for k, v in pending_doc.items() if k in valid_fields}
+
+            # ✅ MAPPING: external_url (PostgreSQL) → url_source (dataclass)
+            if 'externalUrl' in pending_doc and 'url_source' not in filtered_doc:
+                filtered_doc['url_source'] = pending_doc['externalUrl']
+
+            logger.info(f"🔧 Champs filtrés: {len(filtered_doc)}/{len(pending_doc)} champs conservés")
+
+            offre = OffreTunisie(**filtered_doc)
+            logger.info(f"✅ Offre HAICOP créée: {offre.reference} - Promoteur: {offre.promoter}")
+
+            # Lancer la validation (envoi API + update DB)
+            result = scraper_tunisie.post_tender_to_database_tunisie(offre)
+
+            logger.info(f"📊 Résultat validation: {result}")
+        except Exception as e:
+            logger.error(f"❌ Erreur création offre: {e}\n{traceback.format_exc()}")
+            result = {
+                "success": False,
+                "message": f"Erreur création offre: {str(e)}",
+                "offre_ref": reference
+            }
     else:
-        result = {"success": False, "message": "Source non supportée"}
-    
-    if result['success']:
-        pending_tenders_collection.delete_one({"reference": reference})
-    
+        logger.error(f"❌ Source non supportée: '{source_value}'")
+        logger.error(f"📋 Données complètes de l'offre: {pending_doc}")
+        result = {
+            "success": False,
+            "message": f"Source non supportée: '{source_value}'. Sources valides: MarchesPublicsTN, HAICOP, Tunisie"
+        }
+
     return jsonify(result)
 
 @app.route('/api/pending', methods=['GET'])
@@ -1014,17 +1309,26 @@ def get_pending():
     """Endpoint avec pagination (ancien, pour compatibilité)"""
     page = int(request.args.get('page', 1))
     limit = int(request.args.get('limit', 10))
-    
+
     try:
-        all_pending_docs = list(pending_tenders_collection.find({
-            "status": "pending"
-        }).sort("createdAt", -1))
-        
+        # Get all pending tenders from PostgreSQL
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        cursor.execute(
+            f"SELECT * FROM {TABLE_NAME} WHERE status = %s ORDER BY created_at DESC",
+            ("pending",)
+        )
+        all_pending_docs = cursor.fetchall()
+        cursor.close()
+        conn.close()
+
         all_pending = []
         for doc in all_pending_docs:
-            doc_without_id = {k: v for k, v in doc.items() if k != '_id'}
-            if doc_without_id.get("source") == "MarchesPublicsTN":
-                offre = OffreTunisie(**doc_without_id)
+            # Convert snake_case to camelCase
+            doc_dict = convert_dict_keys_to_camel(dict(doc))
+            if doc_dict.get("source") == "MarchesPublicsTN":
+                offre = OffreTunisie(**doc_dict)
                 all_pending.append(offre)
         
         total = len(all_pending)
@@ -1059,26 +1363,33 @@ def get_pending():
 def get_pending_all():
     """Endpoint pour récupérer TOUTES les offres en attente (sans pagination)"""
     try:
-        all_pending_docs = list(pending_tenders_collection.find({
-            "status": "pending"
-        }).sort("createdAt", -1))
-        
+        # Get all pending tenders from PostgreSQL
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        cursor.execute(
+            f"SELECT * FROM {TABLE_NAME} WHERE status = %s ORDER BY created_at DESC",
+            ("pending",)
+        )
+        all_pending_docs = cursor.fetchall()
+        cursor.close()
+        conn.close()
+
         all_pending = []
         for doc in all_pending_docs:
-            doc_without_id = {k: v for k, v in doc.items() if k != '_id'}
-            if doc_without_id.get("source") == "MarchesPublicsTN":
-                all_pending.append({
-                    "reference": doc_without_id.get("reference"), 
-                    "description": doc_without_id.get("description"), 
-                    "secteur_activite": doc_without_id.get("secteur_activite"),
-                    "promoter": doc_without_id.get("promoter"),
-                    "source": doc_without_id.get("source"), 
-                    "publicationDate": doc_without_id.get("publicationDate"), 
-                    "expirationDate": doc_without_id.get("expirationDate"), 
-                    "image_filename": doc_without_id.get("image_filename"), 
-                    "secteur_activite_id": doc_without_id.get("secteur_activite_id"),
-                    "createdAt": doc_without_id.get("createdAt")
-                })
+            # Convert snake_case to camelCase
+            doc_dict = convert_dict_keys_to_camel(dict(doc))
+            all_pending.append({
+                "reference": doc_dict.get("reference"),
+                "description": doc_dict.get("description"),
+                "secteur_activite": doc_dict.get("secteurActivite"),
+                "promoter": doc_dict.get("promoter"),
+                "publicationDate": doc_dict.get("publicationDate"),
+                "expirationDate": doc_dict.get("expirationDate"),
+                "image_filename": doc_dict.get("imageFilename"),
+                "secteur_activite_id": doc_dict.get("secteurActiviteId"),
+                "createdAt": doc_dict.get("createdAt")
+            })
         
         return jsonify({
             "success": True,
@@ -1093,26 +1404,34 @@ def get_pending_all():
 def get_validated_all():
     """Endpoint pour récupérer TOUTES les offres validées (sans pagination)"""
     try:
-        all_validated_docs = list(tenders_collection.find({
-            "status": "active",
-            "source": "MarchesPublicsTN"
-        }).sort("validationDate", -1))
-        
+        # Get all validated tenders from PostgreSQL
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        cursor.execute(
+            f"SELECT * FROM {TABLE_NAME} WHERE status = %s ORDER BY created_at DESC",
+            ("active",)
+        )
+        all_validated_docs = cursor.fetchall()
+        cursor.close()
+        conn.close()
+
         all_validated = []
         for doc in all_validated_docs:
-            doc_without_id = {k: v for k, v in doc.items() if k != '_id'}
+            # Convert snake_case to camelCase
+            doc_dict = convert_dict_keys_to_camel(dict(doc))
             all_validated.append({
-                "reference": doc_without_id.get("reference"), 
-                "description": doc_without_id.get("description"), 
-                "secteur_activite": doc_without_id.get("secteur_activite"),
-                "promoter": doc_without_id.get("promoter"),
-                "source": doc_without_id.get("source"), 
-                "publicationDate": doc_without_id.get("publicationDate"), 
-                "expirationDate": doc_without_id.get("expirationDate"), 
-                "validationDate": doc_without_id.get("validationDate"),
-                "image_filename": doc_without_id.get("image_filename"), 
-                "secteur_activite_id": doc_without_id.get("secteur_activite_id"),
-                "createdAt": doc_without_id.get("createdAt")
+                "reference": doc_dict.get("reference"),
+                "description": doc_dict.get("description"),
+                "secteur_activite": doc_dict.get("secteurActivite"),
+                "promoter": doc_dict.get("promoter"),
+                "source": doc_dict.get("source"),
+                "publicationDate": doc_dict.get("publicationDate"),
+                "expirationDate": doc_dict.get("expirationDate"),
+                "validationDate": doc_dict.get("validationDate"),
+                "image_filename": doc_dict.get("imageFilename"),
+                "secteur_activite_id": doc_dict.get("secteurActiviteId"),
+                "createdAt": doc_dict.get("createdAt")
             })
         
         return jsonify({
@@ -1139,51 +1458,110 @@ def download_image(filename):
 @app.route('/api/update/<reference>', methods=['POST'])
 def update_offre(reference):
     data = request.json
-    result = pending_tenders_collection.update_one(
-        {"reference": reference},
-        {"$set": {"secteur_activite_id": data.get("secteur_activite_id")}}
-    )
-    
-    if result.modified_count > 0:
+    success = update_tender(reference, {"secteur_activite_id": data.get("secteur_activite_id")})
+
+    if success:
         return jsonify({
-            "success": True, 
-            "message": "Mise à jour réussie", 
+            "success": True,
+            "message": "Mise à jour réussie",
             "offre_ref": reference
         })
     return jsonify({
-        "success": False, 
-        "message": "Offre non trouvée", 
+        "success": False,
+        "message": "Offre non trouvée",
         "offre_ref": reference
     })
 
 @app.route('/api/delete/<reference>', methods=['DELETE'])
 def delete_offre(reference):
-    result = pending_tenders_collection.delete_one({"reference": reference})
-    
-    if result.deleted_count > 0:
+    success = delete_tender(reference)
+
+    if success:
         return jsonify({
-            "success": True, 
-            "message": "Suppression réussie", 
+            "success": True,
+            "message": "Suppression réussie",
             "offre_ref": reference
         })
     return jsonify({
-        "success": False, 
-        "message": "Offre non trouvée", 
+        "success": False,
+        "message": "Offre non trouvée",
         "offre_ref": reference
     })
+
+@app.route('/api/add-source-column', methods=['POST'])
+def add_source_column():
+    """ENDPOINT TEMPORAIRE: Ajoute la colonne 'source' si elle n'existe pas"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # Vérifier si la colonne existe
+        cursor.execute("""
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_name='tenders_haicop' AND column_name='source'
+        """)
+
+        column_exists = cursor.fetchone() is not None
+
+        if column_exists:
+            logger.info("✅ Colonne 'source' existe déjà")
+            message = "Colonne 'source' existe déjà"
+        else:
+            logger.info("➕ Ajout de la colonne 'source'...")
+            cursor.execute("""
+                ALTER TABLE tenders_haicop
+                ADD COLUMN source VARCHAR(255) DEFAULT 'MarchesPublicsTN'
+            """)
+            conn.commit()
+            logger.info("✅ Colonne 'source' ajoutée avec succès")
+            message = "Colonne 'source' ajoutée avec succès"
+
+        # Mettre à jour les valeurs NULL ou vides
+        cursor.execute("""
+            UPDATE tenders_haicop
+            SET source = 'MarchesPublicsTN'
+            WHERE source IS NULL OR source = ''
+        """)
+
+        updated_count = cursor.rowcount
+        conn.commit()
+
+        logger.info(f"✅ {updated_count} offres mises à jour avec source='MarchesPublicsTN'")
+
+        # Vérifier le résultat
+        cursor.execute("SELECT COUNT(*) FROM tenders_haicop WHERE source = 'MarchesPublicsTN'")
+        total_count = cursor.fetchone()[0]
+
+        cursor.close()
+        conn.close()
+
+        return jsonify({
+            "success": True,
+            "message": message,
+            "updated_count": updated_count,
+            "total_count": total_count
+        })
+
+    except Exception as e:
+        logger.error(f"Erreur add-source-column: {str(e)}")
+        return jsonify({
+            "success": False,
+            "message": str(e)
+        }), 500
 
 @app.route('/api/clear-all', methods=['DELETE'])
 def clear_all():
     """Supprime toutes les offres pending et validated"""
     try:
-        pending_result = pending_tenders_collection.delete_many({})
-        validated_result = tenders_collection.delete_many({})
+        pending_count = delete_all_tenders(status="pending")
+        validated_count = delete_all_tenders(status="active")
 
         return jsonify({
             "success": True,
-            "message": f"{pending_result.deleted_count} pending et {validated_result.deleted_count} validated supprimées",
-            "pending_deleted": pending_result.deleted_count,
-            "validated_deleted": validated_result.deleted_count
+            "message": f"{pending_count} pending et {validated_count} validated supprimées",
+            "pending_deleted": pending_count,
+            "validated_deleted": validated_count
         })
     except Exception as e:
         logger.error(f"Erreur clear-all: {str(e)}")
@@ -1197,28 +1575,50 @@ def clean_duplicates():
     """Nettoie les doublons dans la collection pending"""
     try:
         from collections import defaultdict
-        
-        all_docs = list(pending_tenders_collection.find({"status": "pending"}))
+
+        # Get all pending tenders
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        cursor.execute(
+            f"SELECT * FROM {TABLE_NAME} WHERE status = %s",
+            ("pending",)
+        )
+        all_docs = cursor.fetchall()
         total_before = len(all_docs)
-        
+
         docs_by_reference = defaultdict(list)
         for doc in all_docs:
-            reference = doc.get('reference')
+            # Convert to dict and keep snake_case for DB operations
+            doc_dict = dict(doc)
+            reference = doc_dict.get('reference')
             if reference:
-                docs_by_reference[reference].append(doc)
-        
+                docs_by_reference[reference].append(doc_dict)
+
         deleted_count = 0
-        
+
         for reference, docs in docs_by_reference.items():
             if len(docs) > 1:
-                docs_sorted = sorted(docs, key=lambda x: x.get('createdAt', ''), reverse=True)
+                docs_sorted = sorted(docs, key=lambda x: x.get('created_at', ''), reverse=True)
                 docs_to_delete = docs_sorted[1:]
-                
+
                 for doc in docs_to_delete:
-                    pending_tenders_collection.delete_one({"_id": doc['_id']})
+                    cursor.execute(
+                        f"DELETE FROM {TABLE_NAME} WHERE reference = %s AND created_at = %s",
+                        (doc['reference'], doc['created_at'])
+                    )
                     deleted_count += 1
-        
-        final_count = pending_tenders_collection.count_documents({"status": "pending"})
+
+        conn.commit()
+
+        cursor.execute(
+            f"SELECT COUNT(*) FROM {TABLE_NAME} WHERE status = %s",
+            ("pending",)
+        )
+        final_count = cursor.fetchone()['count']
+
+        cursor.close()
+        conn.close()
         
         return jsonify({
             "success": True,

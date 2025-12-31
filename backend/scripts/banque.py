@@ -10,7 +10,10 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from pymongo import MongoClient
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from flask import Flask, jsonify, request
+from flask_cors import CORS
 import http.server
 import socketserver
 import threading
@@ -18,12 +21,16 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import urllib.parse
 import os
 from textwrap import dedent
+import logging
 
 # ============================== CONFIGURATION ==============================
-MONGO_URI = "mongodb://mongodb:27017/ines"
-DB_NAME = "worldbank_db"
-COLLECTION_NAME = "tenders"
-PENDING_COLLECTION_NAME = "pending_tenders"
+# PostgreSQL Configuration
+DB_HOST = os.getenv("DB_HOST", "postgres")
+DB_PORT = os.getenv("DB_PORT", "5432")
+DB_NAME = os.getenv("DB_NAME", "tenders_db")
+DB_USER = os.getenv("DB_USER", "tender_user")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "tender_password_2024")
+TABLE_NAME = "tenders_banque"
 
 API_BASE_URL = "https://be.appeloffres.net/api"
 LOGIN_ENDPOINT = f"{API_BASE_URL}/auth/login/"
@@ -97,6 +104,110 @@ def translate_to_french(text: str) -> str:
     for eng, fr in TRANSLATION_DICT.items():
         translated = re.sub(r'\b' + re.escape(eng) + r'\b', fr, translated, flags=re.IGNORECASE)
     return re.sub(r'\s+', ' ', translated).strip()
+
+# ============================== POSTGRESQL HELPERS ==============================
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+def get_db_connection():
+    """Créer une connexion PostgreSQL"""
+    return psycopg2.connect(
+        host=DB_HOST,
+        port=DB_PORT,
+        database=DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD
+    )
+
+def get_all_tenders(status=None):
+    """Récupère toutes les offres depuis PostgreSQL"""
+    conn = get_db_connection()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        if status:
+            cursor.execute(f"SELECT * FROM {TABLE_NAME} WHERE status = %s ORDER BY created_at DESC", (status,))
+        else:
+            cursor.execute(f"SELECT * FROM {TABLE_NAME} ORDER BY created_at DESC")
+        results = cursor.fetchall()
+        return [dict(row) for row in results]
+    finally:
+        cursor.close()
+        conn.close()
+
+def insert_tender(data):
+    """Insère une offre dans PostgreSQL"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(f"""
+            INSERT INTO {TABLE_NAME} (
+                reference, description, description_fr, publication_date, expiration_date,
+                promoter, source_id, avis_id, external_url, montant, nature,
+                country, business_sector, activity, status
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (reference) DO NOTHING
+        """, (
+            data.get('reference'),
+            data.get('description'),
+            data.get('description_fr'),
+            data.get('publication_date') or data.get('publicationDate'),
+            data.get('expiration_date') or data.get('expirationDate'),
+            data.get('promoter'),
+            data.get('source_id', DEFAULT_SOURCE_ID),
+            data.get('avis_id', DEFAULT_AVIS_ID),
+            data.get('external_url'),
+            data.get('montant', ''),
+            data.get('nature', 'public'),
+            data.get('country'),
+            data.get('business_sector', ''),
+            data.get('activity', ''),
+            data.get('status', 'pending')
+        ))
+        conn.commit()
+        return cursor.rowcount > 0
+    except Exception as e:
+        logger.error(f"Erreur insertion: {e}")
+        conn.rollback()
+        return False
+    finally:
+        cursor.close()
+        conn.close()
+
+def get_existing_references():
+    """Récupère toutes les références existantes"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(f"SELECT reference FROM {TABLE_NAME}")
+        return {row[0] for row in cursor.fetchall()}
+    finally:
+        cursor.close()
+        conn.close()
+
+def delete_tender(reference):
+    """Supprime une offre"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(f"DELETE FROM {TABLE_NAME} WHERE reference = %s", (reference,))
+        deleted_count = cursor.rowcount
+        conn.commit()
+        return deleted_count
+    finally:
+        cursor.close()
+        conn.close()
+
+def update_tender_status(reference, status):
+    """Met à jour le status d'une offre"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(f"UPDATE {TABLE_NAME} SET status = %s WHERE reference = %s", (status, reference))
+        conn.commit()
+        return cursor.rowcount
+    finally:
+        cursor.close()
+        conn.close()
 
 # ============================== MODÈLE DE DONNÉES ==============================
 class TenderModel:
@@ -752,29 +863,14 @@ class WorldBankCompleteExtractor:
             self.update_status(f"Erreur lors de la sauvegarde: {e}", 100, "Erreur")
             return None
 
-    def save_to_mongodb(self, df):
-        """Sauvegarde les données dans MongoDB"""
+    def save_to_postgresql(self, df):
+        """Sauvegarde les données dans PostgreSQL"""
         try:
-            client = MongoClient(MONGO_URI)
-            db = client[DB_NAME]
-            
-            # Sauvegarder dans la collection principale
-            collection_name = f"avis_{self.start_date.strftime('%Y%m%d')}_{self.end_date.strftime('%Y%m%d')}"
-            collection = db[collection_name]
-            
             # Convertir le DataFrame en dictionnaires
             records = df.to_dict('records')
-            
-            # Insérer ou mettre à jour
-            for record in records:
-                collection.update_one(
-                    {'Référence': record['Référence']},
-                    {'$set': record},
-                    upsert=True
-                )
-            
-            # Sauvegarder aussi dans la collection pending
-            pending_collection = db[PENDING_COLLECTION_NAME]
+
+            # Insérer dans PostgreSQL
+            inserted_count = 0
             for record in records:
                 # Convertir en TenderModel
                 tender = self.map_to_tender_model(record)

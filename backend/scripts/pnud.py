@@ -57,12 +57,13 @@ TENDER_ENDPOINT = f"{API_BASE_URL}/tender"
 FILES_ENDPOINT = f"{API_BASE_URL}/files/tender"
 PROMOTER_ENDPOINT = f"{API_BASE_URL}/promoter"
 
-# PNUD utilise le compte de Marwa Idoudi (hardcodé, ne pas utiliser .env)
-EMAIL = "marwa.aidoudi@tunipages.tn"
-PASSWORD = "lopMP@!#"
+# ✅ PNUD utilise le compte BOAMP qui fonctionne
+EMAIL = "oumayma.dahmani@tunipages.tn"
+PASSWORD = "Ah0F553KKu0A"
 
-DEFAULT_SOURCE_ID_PNUD = int(os.getenv("DEFAULT_SOURCE_ID_PNUD", "1656"))
-DEFAULT_AVIS_ID = int(os.getenv("DEFAULT_AVIS_ID", "1"))
+DEFAULT_SOURCE_ID_PNUD = 1718  # ✅ "Procurement Notices PNUD Tunisie"
+DEFAULT_AVIS_ID = 1  # ✅ "Avis d'appel d'offres"
+DEFAULT_COUNTRY_ID_TUNISIA = 219  # ✅ Tunisie
 
 # Paths
 OUTPUT_DIR = "output"
@@ -198,13 +199,26 @@ def count_tenders(status=None):
         cursor.close()
         conn.close()
 
+def snake_to_camel(snake_str):
+    """Convert snake_case to camelCase"""
+    components = snake_str.split('_')
+    return components[0] + ''.join(x.title() for x in components[1:])
+
+def convert_dict_keys_to_camel(data_dict):
+    """Convert all dictionary keys from snake_case to camelCase"""
+    if not data_dict:
+        return None
+    return {snake_to_camel(k): v for k, v in data_dict.items()}
+
 def get_tender_by_reference(reference):
     """Récupère une offre par référence"""
     conn = get_db_connection()
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     try:
         cursor.execute(f"SELECT * FROM {TABLE_NAME} WHERE reference = %s", (reference,))
-        return cursor.fetchone()
+        result = cursor.fetchone()
+        # Convert snake_case keys to camelCase for compatibility
+        return convert_dict_keys_to_camel(dict(result)) if result else None
     finally:
         cursor.close()
         conn.close()
@@ -1409,15 +1423,21 @@ class PNUDScraper:
         addresses = [{"countryId": offre.country_id}] if offre.country_id else [{"countryId": 226}]
         batches = [{"activitiesIds": [], "title": offre.description_fr[:100], "deposit": "0"}]
         
+        # ✅ Convertir les dates datetime en strings ISO
+        def date_to_iso(date_val):
+            if isinstance(date_val, datetime):
+                return date_val.isoformat()
+            return str(date_val) if date_val else None
+
         tender_data = {
             "sourceId": int(offre.sourceId),
             "avisId": avis_id,
             "reference": offre.reference,
             "description": offre.description_fr,  # ✅ FRANÇAIS
             "description_fr": offre.description_fr,  # ✅ FRANÇAIS
-            "publicationDate": offre.publicationDate,
-            "startBiddingDate": offre.startBiddingDate,
-            "expirationDate": offre.expirationDate,
+            "publicationDate": date_to_iso(offre.publicationDate),
+            "startBiddingDate": date_to_iso(offre.startBiddingDate),
+            "expirationDate": date_to_iso(offre.expirationDate),
             "promoterId": promoter_id,
             "type": offre.category,
             "nature": offre.nature,
@@ -1473,7 +1493,7 @@ class PNUDScraper:
     def close(self):
         self.session.close()
         self.session_appeloffres.close()
-                logger.info("🔒 Sessions fermées")
+        logger.info("🔒 Sessions fermées")
 
 # ============================================================================
 # FLASK API - SECTION COMPLÈTE
@@ -1513,8 +1533,8 @@ def get_pending_tenders():
         page = int(request.args.get('page', 1))
         limit = int(request.args.get('limit', 10))
         skip = (page - 1) * limit
-        
-                total = count_tenders(status="pending")
+
+        total = count_tenders(status="pending")
         cursor = get_all_tenders(status="pending")[skip:skip+limit]
         raw_tenders = list(cursor)
         tenders = serialize_tenders(raw_tenders)
@@ -1537,7 +1557,7 @@ def get_pending_tenders():
 def get_tenders():
     """Récupère les tenders validés"""
     try:
-                cursor = get_all_tenders(status="active")[:50]
+        cursor = get_all_tenders(status="active")[:50]
         raw_tenders = list(cursor)
         tenders = serialize_tenders(raw_tenders)
         
@@ -1554,7 +1574,7 @@ def get_tenders():
 def validate_tender(reference):
     """Valide une offre en attente"""
     try:
-                pending_doc = get_tender_by_reference(reference)
+        pending_doc = get_tender_by_reference(reference)
         if not pending_doc:
             return jsonify({"success": False, "message": "Offre non trouvée en attente"}), 404
         
@@ -1575,8 +1595,19 @@ def validate_tender(reference):
                 pending_doc['description_fr'] = scraper.translate_to_french(pending_doc['description'])
             else:
                 return jsonify({"success": False, "message": "Description manquante, impossible de valider"}), 400
-        
-        offre = OffrePNUD(**pending_doc)
+
+        # ✅ Filtrer les champs PostgreSQL pour ne garder que ceux de la dataclass OffrePNUD
+        from dataclasses import fields
+        valid_fields = {f.name for f in fields(OffrePNUD)}
+        filtered_doc = {k: v for k, v in pending_doc.items() if k in valid_fields}
+
+        # ✅ MAPPING: startBiddingDate = publicationDate (si manquant)
+        if 'startBiddingDate' not in filtered_doc and 'publicationDate' in filtered_doc:
+            filtered_doc['startBiddingDate'] = filtered_doc['publicationDate']
+
+        logger.info(f"🔧 Champs filtrés: {len(filtered_doc)}/{len(pending_doc)} champs conservés")
+
+        offre = OffrePNUD(**filtered_doc)
         
         is_valid, error_msg = scraper.validate_tender_data(offre)
         if not is_valid:
@@ -1594,16 +1625,16 @@ def validate_tender(reference):
 def update_tender(reference):
     """Met à jour une offre en attente"""
     try:
-                data = request.json or {}
+        data = request.json or {}
         country_id = data.get('country_id')
         
         if country_id is None:
             return jsonify({"success": False, "message": "country_id requis"}), 400
-        
-        result = update_tender(reference, update_data)}}
-        )
-        
-        if result.modified_count > 0:
+
+        update_data = {"country_id": country_id}
+        result = update_tender(reference, update_data)
+
+        if result > 0:
             return jsonify({"success": True, "message": "Pays mis à jour avec succès"})
         else:
             return jsonify({"success": False, "message": "Offre non trouvée ou inchangée"}), 404
@@ -1612,12 +1643,12 @@ def update_tender(reference):
         return jsonify({"success": False, "message": str(e)}), 500
 
 @app.route('/api/delete/<reference>', methods=['DELETE'])
-def delete_tender(reference):
+def delete_tender_endpoint(reference):
     """Supprime une offre en attente"""
     try:
-                result = delete_tender(reference)
+        result = delete_tender(reference)
 
-        if result.deleted_count > 0:
+        if result > 0:
             return jsonify({"success": True, "message": "Offre supprimée avec succès"})
         else:
             return jsonify({"success": False, "message": "Offre non trouvée"}), 404
@@ -1629,13 +1660,20 @@ def delete_tender(reference):
 def delete_all_tenders():
     """Supprime toutes les offres en attente"""
     try:
-                result = delete_all_pending()
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(f"SELECT COUNT(*) FROM {TABLE_NAME} WHERE status = 'pending'")
+        count = cursor.fetchone()[0]
+        cursor.execute(f"DELETE FROM {TABLE_NAME} WHERE status = 'pending'")
+        conn.commit()
+        cursor.close()
+        conn.close()
 
-        logger.info(f"🗑️ {result.deleted_count} offres supprimées")
+        logger.info(f"🗑️ {count} offres supprimées")
         return jsonify({
             "success": True,
-            "message": f"{result.deleted_count} offres supprimées avec succès",
-            "deleted_count": result.deleted_count
+            "message": f"{count} offres supprimées avec succès",
+            "deleted_count": count
         })
     except Exception as e:
         logger.error(f"❌ Erreur suppression toutes offres: {e}")
@@ -1647,8 +1685,8 @@ def post_pending_tenders():
     try:
         posted_count = 0
         failed_count = 0
-        
-                pending_docs = list(get_all_tenders(status="pending"))
+
+        pending_docs = list(get_all_tenders(status="pending"))
         logger.info(f"📦 {len(pending_docs)} offres en attente à poster")
         
         for doc in pending_docs:

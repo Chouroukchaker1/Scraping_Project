@@ -730,11 +730,11 @@ const BoampDashboard = () => {
 
   const handleDeleteAll = async () => {
     try {
-      const response = await axios.post(`${API_BASE}/clean-pending`);
-      alert(`🧹 ${response.data.count || 0} offres supprimées avec succès`);
+      const response = await axios.delete(`${API_BASE}/delete-all`);
+      alert(`🗑️ ${response.data.count || 0} offres supprimées avec succès`);
       fetchAllData();
     } catch (err) {
-      alert('❌ Erreur lors du nettoyage');
+      alert('❌ Erreur lors de la suppression');
       console.error(err);
     }
   };

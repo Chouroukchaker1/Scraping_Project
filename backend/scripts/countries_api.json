@@ -1,0 +1,2820 @@
+[
+  {
+    "id": 233,
+    "name": "Assistance ",
+    "createdAt": "2025-11-07T10:07:40.021Z",
+    "updatedAt": "2025-11-07T10:07:40.021Z",
+    "currency": {
+      "id": 2,
+      "name": "Lek albanais",
+      "code": "ALL",
+      "symbol": "ALL"
+    },
+    "regions": []
+  },
+  {
+    "id": 228,
+    "name": "Rép. du Congo",
+    "createdAt": "2025-05-15T18:28:55.316Z",
+    "updatedAt": "2025-05-15T18:28:55.316Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 229,
+    "name": "Zambie",
+    "createdAt": "2025-05-15T18:28:55.316Z",
+    "updatedAt": "2025-05-15T18:28:55.316Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 231,
+    "name": "Yémen",
+    "createdAt": "2025-05-15T18:28:55.316Z",
+    "updatedAt": "2025-05-15T18:28:55.316Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 232,
+    "name": "Monténégro",
+    "createdAt": "2025-05-15T18:28:55.316Z",
+    "updatedAt": "2025-05-15T18:28:55.316Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 230,
+    "name": "Zimbabwe",
+    "createdAt": "2025-05-15T18:28:55.316Z",
+    "updatedAt": "2025-05-16T10:12:31.887Z",
+    "currency": {
+      "id": 44,
+      "name": "Dollar des états-unis",
+      "code": "USD",
+      "symbol": "$"
+    },
+    "regions": [
+      {
+        "id": 29,
+        "createdAt": "2025-05-16T10:12:31.887Z",
+        "updatedAt": "2025-05-16T10:12:31.887Z",
+        "name": "Harare",
+        "zipCode": "0000"
+      }
+    ]
+  },
+  {
+    "id": 7,
+    "name": "Allemagne",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 4,
+      "name": "Euro",
+      "code": "EUR",
+      "symbol": "€"
+    },
+    "regions": []
+  },
+  {
+    "id": 8,
+    "name": "Andorre",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 4,
+      "name": "Euro",
+      "code": "EUR",
+      "symbol": "€"
+    },
+    "regions": []
+  },
+  {
+    "id": 9,
+    "name": "Angola",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 5,
+      "name": "Kwanza angolais",
+      "code": "AOA",
+      "symbol": "AOA"
+    },
+    "regions": []
+  },
+  {
+    "id": 10,
+    "name": "Anguilla",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 6,
+      "name": "Dollar des caraïbes orientales",
+      "code": "XCD",
+      "symbol": "EC$"
+    },
+    "regions": []
+  },
+  {
+    "id": 11,
+    "name": "Antarctique",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 7,
+      "name": "Aqd",
+      "code": "AQD",
+      "symbol": "AQD"
+    },
+    "regions": []
+  },
+  {
+    "id": 12,
+    "name": "Antigua et Barbuda",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 13,
+    "name": "Antilles néerlandaises",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 14,
+    "name": "Arabie saoudite",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 8,
+      "name": "Riyal saoudien",
+      "code": "SAR",
+      "symbol": "SAR"
+    },
+    "regions": []
+  },
+  {
+    "id": 15,
+    "name": "Argentine",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 9,
+      "name": "Peso argentin",
+      "code": "ARS",
+      "symbol": "ARS"
+    },
+    "regions": []
+  },
+  {
+    "id": 16,
+    "name": "Arménie",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 10,
+      "name": "Dram arménien",
+      "code": "AMD",
+      "symbol": "AMD"
+    },
+    "regions": []
+  },
+  {
+    "id": 17,
+    "name": "Aruba",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 11,
+      "name": "Florin antillais",
+      "code": "ANG",
+      "symbol": "ANG"
+    },
+    "regions": []
+  },
+  {
+    "id": 18,
+    "name": "Australie",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 12,
+      "name": "Dollar australien",
+      "code": "AUD",
+      "symbol": "A$"
+    },
+    "regions": []
+  },
+  {
+    "id": 19,
+    "name": "Autriche",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 4,
+      "name": "Euro",
+      "code": "EUR",
+      "symbol": "€"
+    },
+    "regions": []
+  },
+  {
+    "id": 20,
+    "name": "Azerbaïdjan",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 13,
+      "name": "Manat azéri",
+      "code": "AZN",
+      "symbol": "AZN"
+    },
+    "regions": []
+  },
+  {
+    "id": 21,
+    "name": "Bahamas",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 14,
+      "name": "Dollar bahaméen",
+      "code": "BSD",
+      "symbol": "BSD"
+    },
+    "regions": []
+  },
+  {
+    "id": 22,
+    "name": "Bahrain",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 23,
+    "name": "Bangladesh",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 15,
+      "name": "Taka bangladeshi",
+      "code": "BDT",
+      "symbol": "BDT"
+    },
+    "regions": []
+  },
+  {
+    "id": 24,
+    "name": "Belgique",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 4,
+      "name": "Euro",
+      "code": "EUR",
+      "symbol": "€"
+    },
+    "regions": []
+  },
+  {
+    "id": 25,
+    "name": "Belize",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 16,
+      "name": "Dollar bélizéen",
+      "code": "BZD",
+      "symbol": "BZD"
+    },
+    "regions": []
+  },
+  {
+    "id": 26,
+    "name": "Benin",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 27,
+    "name": "Bermudes (Les)",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 28,
+    "name": "Bhoutan",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 17,
+      "name": "Roupie indienne",
+      "code": "INR",
+      "symbol": "₹"
+    },
+    "regions": []
+  },
+  {
+    "id": 29,
+    "name": "Biélorussie",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 18,
+      "name": "Rouble biélorusse (2000–2016)",
+      "code": "BYR",
+      "symbol": "BYR"
+    },
+    "regions": []
+  },
+  {
+    "id": 30,
+    "name": "Bolivie",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 19,
+      "name": "Boliviano bolivien",
+      "code": "BOB",
+      "symbol": "BOB"
+    },
+    "regions": []
+  },
+  {
+    "id": 31,
+    "name": "Bosnie-Herzégovine",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 20,
+      "name": "Mark convertible bosniaque",
+      "code": "BAM",
+      "symbol": "BAM"
+    },
+    "regions": []
+  },
+  {
+    "id": 32,
+    "name": "Botswana",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 21,
+      "name": "Pula botswanais",
+      "code": "BWP",
+      "symbol": "BWP"
+    },
+    "regions": []
+  },
+  {
+    "id": 33,
+    "name": "Bouvet (Îles)",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 34,
+    "name": "Brunei",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 22,
+      "name": "Dollar brunéien",
+      "code": "BND",
+      "symbol": "BND"
+    },
+    "regions": []
+  },
+  {
+    "id": 35,
+    "name": "Brésil",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 23,
+      "name": "Réal brésilien",
+      "code": "BRL",
+      "symbol": "R$"
+    },
+    "regions": []
+  },
+  {
+    "id": 36,
+    "name": "Bulgarie",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 24,
+      "name": "Lev bulgare",
+      "code": "BGN",
+      "symbol": "BGN"
+    },
+    "regions": []
+  },
+  {
+    "id": 37,
+    "name": "Burkina Faso",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 25,
+      "name": "Franc cfa (bceao)",
+      "code": "XOF",
+      "symbol": "F CFA"
+    },
+    "regions": []
+  },
+  {
+    "id": 38,
+    "name": "Burundi",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 26,
+      "name": "Franc burundais",
+      "code": "BIF",
+      "symbol": "BIF"
+    },
+    "regions": []
+  },
+  {
+    "id": 39,
+    "name": "CANADA",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 40,
+    "name": "Cambodge",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 27,
+      "name": "Riel cambodgien",
+      "code": "KHR",
+      "symbol": "KHR"
+    },
+    "regions": []
+  },
+  {
+    "id": 41,
+    "name": "Cameroun",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 28,
+      "name": "Franc cfa (beac)",
+      "code": "XAF",
+      "symbol": "FCFA"
+    },
+    "regions": []
+  },
+  {
+    "id": 42,
+    "name": "Canada",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 29,
+      "name": "Dollar canadien",
+      "code": "CAD",
+      "symbol": "CA$"
+    },
+    "regions": []
+  },
+  {
+    "id": 43,
+    "name": "Cap Vert",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 44,
+    "name": "Cayman (Îles)",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 45,
+    "name": "Chili",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 30,
+      "name": "Peso chilien",
+      "code": "CLP",
+      "symbol": "CLP"
+    },
+    "regions": []
+  },
+  {
+    "id": 46,
+    "name": "Chine (Rép. pop.)",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 47,
+    "name": "Christmas (Île)",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 48,
+    "name": "Chypre",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 31,
+      "name": "Livre chypriote",
+      "code": "CYP",
+      "symbol": "CYP"
+    },
+    "regions": []
+  },
+  {
+    "id": 49,
+    "name": "Cocos (Îles)",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 50,
+    "name": "Colombie",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 32,
+      "name": "Peso colombien",
+      "code": "COP",
+      "symbol": "COP"
+    },
+    "regions": []
+  },
+  {
+    "id": 51,
+    "name": "Comores",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 33,
+      "name": "Franc comorien",
+      "code": "KMF",
+      "symbol": "KMF"
+    },
+    "regions": []
+  },
+  {
+    "id": 52,
+    "name": "Cook (Îles)",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 53,
+    "name": "Corée du Nord",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 34,
+      "name": "Won nord-coréen",
+      "code": "KPW",
+      "symbol": "KPW"
+    },
+    "regions": []
+  },
+  {
+    "id": 54,
+    "name": "Corée, Sud",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 55,
+    "name": "Costa Rica",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 35,
+      "name": "Colón costaricain",
+      "code": "CRC",
+      "symbol": "CRC"
+    },
+    "regions": []
+  },
+  {
+    "id": 56,
+    "name": "Croatie",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 36,
+      "name": "Kuna croate",
+      "code": "HRK",
+      "symbol": "HRK"
+    },
+    "regions": []
+  },
+  {
+    "id": 57,
+    "name": "Cuba",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 37,
+      "name": "Peso cubain",
+      "code": "CUP",
+      "symbol": "CUP"
+    },
+    "regions": []
+  },
+  {
+    "id": 58,
+    "name": "Côte d'Ivoire",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 59,
+    "name": "Danemark",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 38,
+      "name": "Couronne danoise",
+      "code": "DKK",
+      "symbol": "DKK"
+    },
+    "regions": []
+  },
+  {
+    "id": 60,
+    "name": "Djibouti",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 39,
+      "name": "Franc djiboutien",
+      "code": "DJF",
+      "symbol": "DJF"
+    },
+    "regions": []
+  },
+  {
+    "id": 61,
+    "name": "Dominique",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 6,
+      "name": "Dollar des caraïbes orientales",
+      "code": "XCD",
+      "symbol": "EC$"
+    },
+    "regions": []
+  },
+  {
+    "id": 62,
+    "name": "EUROPE",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 63,
+    "name": "El Salvador",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 64,
+    "name": "Espagne",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 4,
+      "name": "Euro",
+      "code": "EUR",
+      "symbol": "€"
+    },
+    "regions": []
+  },
+  {
+    "id": 65,
+    "name": "Estonie",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 40,
+      "name": "Couronne estonienne",
+      "code": "EEK",
+      "symbol": "EEK"
+    },
+    "regions": []
+  },
+  {
+    "id": 66,
+    "name": "Ethiopie",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 67,
+    "name": "Falkland (Île)",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 68,
+    "name": "Fidji (République des)",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 69,
+    "name": "Finlande",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 4,
+      "name": "Euro",
+      "code": "EUR",
+      "symbol": "€"
+    },
+    "regions": []
+  },
+  {
+    "id": 70,
+    "name": "France",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 4,
+      "name": "Euro",
+      "code": "EUR",
+      "symbol": "€"
+    },
+    "regions": []
+  },
+  {
+    "id": 71,
+    "name": "Féroé (Îles)",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 72,
+    "name": "Gabon",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 28,
+      "name": "Franc cfa (beac)",
+      "code": "XAF",
+      "symbol": "FCFA"
+    },
+    "regions": []
+  },
+  {
+    "id": 73,
+    "name": "Gambie",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 41,
+      "name": "Dalasi gambien",
+      "code": "GMD",
+      "symbol": "GMD"
+    },
+    "regions": []
+  },
+  {
+    "id": 74,
+    "name": "Ghana",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 42,
+      "name": "Cédi ghanéen",
+      "code": "GHS",
+      "symbol": "GHS"
+    },
+    "regions": []
+  },
+  {
+    "id": 75,
+    "name": "Gibraltar",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 43,
+      "name": "Livre de gibraltar",
+      "code": "GIP",
+      "symbol": "GIP"
+    },
+    "regions": []
+  },
+  {
+    "id": 76,
+    "name": "Grenade",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 6,
+      "name": "Dollar des caraïbes orientales",
+      "code": "XCD",
+      "symbol": "EC$"
+    },
+    "regions": []
+  },
+  {
+    "id": 77,
+    "name": "Groenland",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 38,
+      "name": "Couronne danoise",
+      "code": "DKK",
+      "symbol": "DKK"
+    },
+    "regions": []
+  },
+  {
+    "id": 78,
+    "name": "Grèce",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 4,
+      "name": "Euro",
+      "code": "EUR",
+      "symbol": "€"
+    },
+    "regions": []
+  },
+  {
+    "id": 79,
+    "name": "Guadeloupe",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 4,
+      "name": "Euro",
+      "code": "EUR",
+      "symbol": "€"
+    },
+    "regions": []
+  },
+  {
+    "id": 80,
+    "name": "Guam",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 44,
+      "name": "Dollar des états-unis",
+      "code": "USD",
+      "symbol": "$"
+    },
+    "regions": []
+  },
+  {
+    "id": 81,
+    "name": "Guatemala",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 45,
+      "name": "Quetzal guatémaltèque",
+      "code": "GTQ",
+      "symbol": "GTQ"
+    },
+    "regions": []
+  },
+  {
+    "id": 82,
+    "name": "Guinée",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 46,
+      "name": "Franc guinéen",
+      "code": "GNF",
+      "symbol": "GNF"
+    },
+    "regions": []
+  },
+  {
+    "id": 83,
+    "name": "Guinée Equatoriale",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 84,
+    "name": "Guinée-Bissau",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 25,
+      "name": "Franc cfa (bceao)",
+      "code": "XOF",
+      "symbol": "F CFA"
+    },
+    "regions": []
+  },
+  {
+    "id": 85,
+    "name": "Guyane",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 86,
+    "name": "Guyane française",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 4,
+      "name": "Euro",
+      "code": "EUR",
+      "symbol": "€"
+    },
+    "regions": []
+  },
+  {
+    "id": 87,
+    "name": "Géorgie",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 47,
+      "name": "Lari géorgien",
+      "code": "GEL",
+      "symbol": "GEL"
+    },
+    "regions": []
+  },
+  {
+    "id": 88,
+    "name": "Géorgie du Sud et Sandwich du Sud (Îles)",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 89,
+    "name": "Haïti",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 48,
+      "name": "Gourde haïtienne",
+      "code": "HTG",
+      "symbol": "HTG"
+    },
+    "regions": []
+  },
+  {
+    "id": 90,
+    "name": "Heard et McDonald (Îles)",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 91,
+    "name": "Honduras",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 49,
+      "name": "Lempira hondurien",
+      "code": "HNL",
+      "symbol": "HNL"
+    },
+    "regions": []
+  },
+  {
+    "id": 92,
+    "name": "Hong Kong",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 93,
+    "name": "Hongrie",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 50,
+      "name": "Forint hongrois",
+      "code": "HUF",
+      "symbol": "HUF"
+    },
+    "regions": []
+  },
+  {
+    "id": 94,
+    "name": "Inde",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 17,
+      "name": "Roupie indienne",
+      "code": "INR",
+      "symbol": "₹"
+    },
+    "regions": []
+  },
+  {
+    "id": 95,
+    "name": "Indonésie",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 51,
+      "name": "Roupie indonésienne",
+      "code": "IDR",
+      "symbol": "IDR"
+    },
+    "regions": []
+  },
+  {
+    "id": 96,
+    "name": "Irak",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 52,
+      "name": "Dinar irakien",
+      "code": "IQD",
+      "symbol": "IQD"
+    },
+    "regions": []
+  },
+  {
+    "id": 97,
+    "name": "Iran",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 53,
+      "name": "Riyal iranien",
+      "code": "IRR",
+      "symbol": "IRR"
+    },
+    "regions": []
+  },
+  {
+    "id": 98,
+    "name": "Irlande",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 4,
+      "name": "Euro",
+      "code": "EUR",
+      "symbol": "€"
+    },
+    "regions": []
+  },
+  {
+    "id": 99,
+    "name": "Islande",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 54,
+      "name": "Couronne islandaise",
+      "code": "ISK",
+      "symbol": "ISK"
+    },
+    "regions": []
+  },
+  {
+    "id": 101,
+    "name": "Italie",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 4,
+      "name": "Euro",
+      "code": "EUR",
+      "symbol": "€"
+    },
+    "regions": []
+  },
+  {
+    "id": 102,
+    "name": "Jamaïque",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 56,
+      "name": "Dollar jamaïcain",
+      "code": "JMD",
+      "symbol": "JMD"
+    },
+    "regions": []
+  },
+  {
+    "id": 103,
+    "name": "Japon",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 57,
+      "name": "Yen japonais",
+      "code": "JPY",
+      "symbol": "¥"
+    },
+    "regions": []
+  },
+  {
+    "id": 104,
+    "name": "Jordanie",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 58,
+      "name": "Dinar jordanien",
+      "code": "JOD",
+      "symbol": "JOD"
+    },
+    "regions": []
+  },
+  {
+    "id": 105,
+    "name": "Kazakhstan",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 59,
+      "name": "Tenge kazakh",
+      "code": "KZT",
+      "symbol": "KZT"
+    },
+    "regions": []
+  },
+  {
+    "id": 106,
+    "name": "Kenya",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 60,
+      "name": "Shilling kényan",
+      "code": "KES",
+      "symbol": "KES"
+    },
+    "regions": []
+  },
+  {
+    "id": 107,
+    "name": "Kirghizistan",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 108,
+    "name": "Kiribati",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 12,
+      "name": "Dollar australien",
+      "code": "AUD",
+      "symbol": "A$"
+    },
+    "regions": []
+  },
+  {
+    "id": 109,
+    "name": "Koweit",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 110,
+    "name": "LES ETATS UNIS (USA)",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 111,
+    "name": "La Barbad",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 112,
+    "name": "Laos",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 61,
+      "name": "Kip laotien",
+      "code": "LAK",
+      "symbol": "LAK"
+    },
+    "regions": []
+  },
+  {
+    "id": 113,
+    "name": "Lesotho",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 62,
+      "name": "Loti lesothan",
+      "code": "LSL",
+      "symbol": "LSL"
+    },
+    "regions": []
+  },
+  {
+    "id": 114,
+    "name": "Lettonie",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 63,
+      "name": "Lats letton",
+      "code": "LVL",
+      "symbol": "LVL"
+    },
+    "regions": []
+  },
+  {
+    "id": 115,
+    "name": "Liban",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 64,
+      "name": "Livre libanaise",
+      "code": "LBP",
+      "symbol": "LBP"
+    },
+    "regions": []
+  },
+  {
+    "id": 116,
+    "name": "Libye",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 65,
+      "name": "Dinar libyen",
+      "code": "LYD",
+      "symbol": "LYD"
+    },
+    "regions": []
+  },
+  {
+    "id": 117,
+    "name": "Libéria",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 118,
+    "name": "Liechtenstein",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 66,
+      "name": "Franc suisse",
+      "code": "CHF",
+      "symbol": "CHF"
+    },
+    "regions": []
+  },
+  {
+    "id": 119,
+    "name": "Lithuanie",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 120,
+    "name": "Luxembourg",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 4,
+      "name": "Euro",
+      "code": "EUR",
+      "symbol": "€"
+    },
+    "regions": []
+  },
+  {
+    "id": 121,
+    "name": "Macau",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 122,
+    "name": "Macédoine",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 123,
+    "name": "Madagascar",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 67,
+      "name": "Ariary malgache",
+      "code": "MGA",
+      "symbol": "MGA"
+    },
+    "regions": []
+  },
+  {
+    "id": 124,
+    "name": "Malaisie",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 68,
+      "name": "Ringgit malais",
+      "code": "MYR",
+      "symbol": "MYR"
+    },
+    "regions": []
+  },
+  {
+    "id": 125,
+    "name": "Malawi",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 69,
+      "name": "Kwacha malawite",
+      "code": "MWK",
+      "symbol": "MWK"
+    },
+    "regions": []
+  },
+  {
+    "id": 126,
+    "name": "Maldives (Îles)",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 127,
+    "name": "Mali",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 25,
+      "name": "Franc cfa (bceao)",
+      "code": "XOF",
+      "symbol": "F CFA"
+    },
+    "regions": []
+  },
+  {
+    "id": 128,
+    "name": "Malte",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 70,
+      "name": "Lire maltaise",
+      "code": "MTL",
+      "symbol": "MTL"
+    },
+    "regions": []
+  },
+  {
+    "id": 129,
+    "name": "Mariannes du Nord (Îles)",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 130,
+    "name": "Maroc",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 71,
+      "name": "Dirham marocain",
+      "code": "MAD",
+      "symbol": "MAD"
+    },
+    "regions": []
+  },
+  {
+    "id": 131,
+    "name": "Marshall (Îles)",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 132,
+    "name": "Martinique",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 4,
+      "name": "Euro",
+      "code": "EUR",
+      "symbol": "€"
+    },
+    "regions": []
+  },
+  {
+    "id": 133,
+    "name": "Maurice",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 72,
+      "name": "Roupie mauricienne",
+      "code": "MUR",
+      "symbol": "MUR"
+    },
+    "regions": []
+  },
+  {
+    "id": 134,
+    "name": "Mauritanie",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 73,
+      "name": "Ouguiya mauritanien (1973–2017)",
+      "code": "MRO",
+      "symbol": "MRO"
+    },
+    "regions": []
+  },
+  {
+    "id": 135,
+    "name": "Mayotte",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 4,
+      "name": "Euro",
+      "code": "EUR",
+      "symbol": "€"
+    },
+    "regions": []
+  },
+  {
+    "id": 136,
+    "name": "Mexique",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 74,
+      "name": "Peso mexicain",
+      "code": "MXN",
+      "symbol": "MX$"
+    },
+    "regions": []
+  },
+  {
+    "id": 137,
+    "name": "Micronésie (États fédérés de)",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 138,
+    "name": "Moldavie",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 75,
+      "name": "Leu moldave",
+      "code": "MDL",
+      "symbol": "MDL"
+    },
+    "regions": []
+  },
+  {
+    "id": 139,
+    "name": "Monaco",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 4,
+      "name": "Euro",
+      "code": "EUR",
+      "symbol": "€"
+    },
+    "regions": []
+  },
+  {
+    "id": 140,
+    "name": "Mongolie",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 76,
+      "name": "Tugrik mongol",
+      "code": "MNT",
+      "symbol": "MNT"
+    },
+    "regions": []
+  },
+  {
+    "id": 141,
+    "name": "Montserrat",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 6,
+      "name": "Dollar des caraïbes orientales",
+      "code": "XCD",
+      "symbol": "EC$"
+    },
+    "regions": []
+  },
+  {
+    "id": 142,
+    "name": "Mozambique",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 77,
+      "name": "Metical mozambicain",
+      "code": "MZN",
+      "symbol": "MZN"
+    },
+    "regions": []
+  },
+  {
+    "id": 143,
+    "name": "Myanmar",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 144,
+    "name": "Namibie",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 145,
+    "name": "Nauru",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 12,
+      "name": "Dollar australien",
+      "code": "AUD",
+      "symbol": "A$"
+    },
+    "regions": []
+  },
+  {
+    "id": 146,
+    "name": "Nepal",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 147,
+    "name": "Nicaragua",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 78,
+      "name": "Córdoba oro nicaraguayen",
+      "code": "NIO",
+      "symbol": "NIO"
+    },
+    "regions": []
+  },
+  {
+    "id": 148,
+    "name": "Niger",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 25,
+      "name": "Franc cfa (bceao)",
+      "code": "XOF",
+      "symbol": "F CFA"
+    },
+    "regions": []
+  },
+  {
+    "id": 149,
+    "name": "Nigeria",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 79,
+      "name": "Naira nigérian",
+      "code": "NGN",
+      "symbol": "NGN"
+    },
+    "regions": []
+  },
+  {
+    "id": 150,
+    "name": "Niue",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 80,
+      "name": "Dollar néo-zélandais",
+      "code": "NZD",
+      "symbol": "NZ$"
+    },
+    "regions": []
+  },
+  {
+    "id": 151,
+    "name": "Norfolk (Îles)",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 152,
+    "name": "Norvège",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 81,
+      "name": "Couronne norvégienne",
+      "code": "NOK",
+      "symbol": "NOK"
+    },
+    "regions": []
+  },
+  {
+    "id": 153,
+    "name": "Nouvelle Calédonie",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 154,
+    "name": "Nouvelle-Zélande",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 80,
+      "name": "Dollar néo-zélandais",
+      "code": "NZD",
+      "symbol": "NZ$"
+    },
+    "regions": []
+  },
+  {
+    "id": 155,
+    "name": "Oman",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 82,
+      "name": "Riyal omanais",
+      "code": "OMR",
+      "symbol": "OMR"
+    },
+    "regions": []
+  },
+  {
+    "id": 156,
+    "name": "Ouganda",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 83,
+      "name": "Shilling ougandais",
+      "code": "UGX",
+      "symbol": "UGX"
+    },
+    "regions": []
+  },
+  {
+    "id": 157,
+    "name": "Ouzbékistan",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 84,
+      "name": "Sum ouzbek",
+      "code": "UZS",
+      "symbol": "UZS"
+    },
+    "regions": []
+  },
+  {
+    "id": 158,
+    "name": "PAYS DU GOLFE",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 159,
+    "name": "Pakistan",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 85,
+      "name": "Roupie pakistanaise",
+      "code": "PKR",
+      "symbol": "PKR"
+    },
+    "regions": []
+  },
+  {
+    "id": 160,
+    "name": "Palau",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 161,
+    "name": "Panama",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 86,
+      "name": "Balboa panaméen",
+      "code": "PAB",
+      "symbol": "PAB"
+    },
+    "regions": []
+  },
+  {
+    "id": 162,
+    "name": "Papouasie-Nouvelle-Guinée",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 87,
+      "name": "Kina papouan-néo-guinéen",
+      "code": "PGK",
+      "symbol": "PGK"
+    },
+    "regions": []
+  },
+  {
+    "id": 163,
+    "name": "Paraguay",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 88,
+      "name": "Guaraní paraguayen",
+      "code": "PYG",
+      "symbol": "PYG"
+    },
+    "regions": []
+  },
+  {
+    "id": 164,
+    "name": "Pays-Bas",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 4,
+      "name": "Euro",
+      "code": "EUR",
+      "symbol": "€"
+    },
+    "regions": []
+  },
+  {
+    "id": 165,
+    "name": "Philippines",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 89,
+      "name": "Peso philippin",
+      "code": "PHP",
+      "symbol": "₱"
+    },
+    "regions": []
+  },
+  {
+    "id": 166,
+    "name": "Pitcairn (Îles)",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 167,
+    "name": "Pologne",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 90,
+      "name": "Zloty polonais",
+      "code": "PLN",
+      "symbol": "PLN"
+    },
+    "regions": []
+  },
+  {
+    "id": 168,
+    "name": "Polynésie française",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 91,
+      "name": "Franc cfp",
+      "code": "XPF",
+      "symbol": "CFPF"
+    },
+    "regions": []
+  },
+  {
+    "id": 169,
+    "name": "Porto Rico",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 44,
+      "name": "Dollar des états-unis",
+      "code": "USD",
+      "symbol": "$"
+    },
+    "regions": []
+  },
+  {
+    "id": 170,
+    "name": "Portugal",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 4,
+      "name": "Euro",
+      "code": "EUR",
+      "symbol": "€"
+    },
+    "regions": []
+  },
+  {
+    "id": 171,
+    "name": "Pérou",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 92,
+      "name": "Sol péruvien",
+      "code": "PEN",
+      "symbol": "PEN"
+    },
+    "regions": []
+  },
+  {
+    "id": 172,
+    "name": "Qatar",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 93,
+      "name": "Riyal qatari",
+      "code": "QAR",
+      "symbol": "QAR"
+    },
+    "regions": []
+  },
+  {
+    "id": 173,
+    "name": "Roumanie",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 94,
+      "name": "Leu roumain",
+      "code": "RON",
+      "symbol": "RON"
+    },
+    "regions": []
+  },
+  {
+    "id": 174,
+    "name": "Royaume-Uni",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 95,
+      "name": "Livre sterling",
+      "code": "GBP",
+      "symbol": "£"
+    },
+    "regions": []
+  },
+  {
+    "id": 175,
+    "name": "Russie",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 96,
+      "name": "Rouble russe",
+      "code": "RUB",
+      "symbol": "RUB"
+    },
+    "regions": []
+  },
+  {
+    "id": 1,
+    "name": "AMERIQUE LATINE",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 177,
+    "name": "Rép. Dém. du Congo",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 178,
+    "name": "République Dominicaine",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 179,
+    "name": "République centrafricaine",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 28,
+      "name": "Franc cfa (beac)",
+      "code": "XAF",
+      "symbol": "FCFA"
+    },
+    "regions": []
+  },
+  {
+    "id": 180,
+    "name": "République tchèque",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 181,
+    "name": "Réunion (La)",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 182,
+    "name": "Sahara Occidental",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 183,
+    "name": "Saint Pierre et Miquelon",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 184,
+    "name": "Saint Vincent et les Grenadines",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 185,
+    "name": "Saint-Kitts et Nevis",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 186,
+    "name": "Saint-Marin (Rép. de)",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 187,
+    "name": "Sainte Hélène",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 188,
+    "name": "Sainte Lucie",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 189,
+    "name": "Samoa",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 4,
+      "name": "Euro",
+      "code": "EUR",
+      "symbol": "€"
+    },
+    "regions": []
+  },
+  {
+    "id": 190,
+    "name": "Seychelles",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 98,
+      "name": "Roupie des seychelles",
+      "code": "SCR",
+      "symbol": "SCR"
+    },
+    "regions": []
+  },
+  {
+    "id": 191,
+    "name": "Sierra Leone",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 99,
+      "name": "Leone sierra-léonais (1964—2022)",
+      "code": "SLL",
+      "symbol": "SLL"
+    },
+    "regions": []
+  },
+  {
+    "id": 192,
+    "name": "Singapour",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 100,
+      "name": "Dollar de singapour",
+      "code": "SGD",
+      "symbol": "SGD"
+    },
+    "regions": []
+  },
+  {
+    "id": 193,
+    "name": "Slovaquie",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 101,
+      "name": "Couronne slovaque",
+      "code": "SKK",
+      "symbol": "SKK"
+    },
+    "regions": []
+  },
+  {
+    "id": 194,
+    "name": "Slovénie",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 4,
+      "name": "Euro",
+      "code": "EUR",
+      "symbol": "€"
+    },
+    "regions": []
+  },
+  {
+    "id": 195,
+    "name": "Somalie",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 102,
+      "name": "Shilling somalien",
+      "code": "SOS",
+      "symbol": "SOS"
+    },
+    "regions": []
+  },
+  {
+    "id": 176,
+    "name": "Rwanda",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 97,
+      "name": "Franc rwandais",
+      "code": "RWF",
+      "symbol": "RWF"
+    },
+    "regions": []
+  },
+  {
+    "id": 2,
+    "name": "AUTRES PAYS D'AFRIQUE",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 3,
+    "name": "Afghanistan",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 1,
+      "name": "Afghani afghan",
+      "code": "AFN",
+      "symbol": "AFN"
+    },
+    "regions": []
+  },
+  {
+    "id": 4,
+    "name": "Afrique du sud",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 5,
+    "name": "Albanie",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 2,
+      "name": "Lek albanais",
+      "code": "ALL",
+      "symbol": "ALL"
+    },
+    "regions": []
+  },
+  {
+    "id": 6,
+    "name": "Algérie",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 3,
+      "name": "Dinar algérien",
+      "code": "DZD",
+      "symbol": "DZD"
+    },
+    "regions": []
+  },
+  {
+    "id": 219,
+    "name": "Tunisie",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 111,
+      "name": "Dinar tunisien",
+      "code": "TND",
+      "symbol": "TND"
+    },
+    "regions": [
+      {
+        "id": 27,
+        "createdAt": "2025-04-26T13:16:26.132Z",
+        "updatedAt": "2025-04-26T13:16:26.132Z",
+        "name": "Tunis",
+        "zipCode": "0000"
+      },
+      {
+        "id": 1,
+        "createdAt": "2025-04-26T13:16:26.132Z",
+        "updatedAt": "2025-04-26T13:16:26.132Z",
+        "name": "Ariana",
+        "zipCode": "0000"
+      },
+      {
+        "id": 2,
+        "createdAt": "2025-04-26T13:16:26.132Z",
+        "updatedAt": "2025-04-26T13:16:26.132Z",
+        "name": "Béja",
+        "zipCode": "0000"
+      },
+      {
+        "id": 4,
+        "createdAt": "2025-04-26T13:16:26.132Z",
+        "updatedAt": "2025-04-26T13:16:26.132Z",
+        "name": "Ben Arous",
+        "zipCode": "0000"
+      },
+      {
+        "id": 5,
+        "createdAt": "2025-04-26T13:16:26.132Z",
+        "updatedAt": "2025-04-26T13:16:26.132Z",
+        "name": "Bizerte",
+        "zipCode": "0000"
+      },
+      {
+        "id": 6,
+        "createdAt": "2025-04-26T13:16:26.132Z",
+        "updatedAt": "2025-04-26T13:16:26.132Z",
+        "name": "Gabès",
+        "zipCode": "0000"
+      },
+      {
+        "id": 7,
+        "createdAt": "2025-04-26T13:16:26.132Z",
+        "updatedAt": "2025-04-26T13:16:26.132Z",
+        "name": "Gafsa",
+        "zipCode": "0000"
+      },
+      {
+        "id": 8,
+        "createdAt": "2025-04-26T13:16:26.132Z",
+        "updatedAt": "2025-04-26T13:16:26.132Z",
+        "name": "Jendouba",
+        "zipCode": "0000"
+      },
+      {
+        "id": 9,
+        "createdAt": "2025-04-26T13:16:26.132Z",
+        "updatedAt": "2025-04-26T13:16:26.132Z",
+        "name": "Kairouan",
+        "zipCode": "0000"
+      },
+      {
+        "id": 10,
+        "createdAt": "2025-04-26T13:16:26.132Z",
+        "updatedAt": "2025-04-26T13:16:26.132Z",
+        "name": "Kasserine",
+        "zipCode": "0000"
+      },
+      {
+        "id": 11,
+        "createdAt": "2025-04-26T13:16:26.132Z",
+        "updatedAt": "2025-04-26T13:16:26.132Z",
+        "name": "Kébelli",
+        "zipCode": "0000"
+      },
+      {
+        "id": 13,
+        "createdAt": "2025-04-26T13:16:26.132Z",
+        "updatedAt": "2025-04-26T13:16:26.132Z",
+        "name": "La Mannouba",
+        "zipCode": "0000"
+      },
+      {
+        "id": 15,
+        "createdAt": "2025-04-26T13:16:26.132Z",
+        "updatedAt": "2025-04-26T13:16:26.132Z",
+        "name": "Le Kef",
+        "zipCode": "0000"
+      },
+      {
+        "id": 16,
+        "createdAt": "2025-04-26T13:16:26.132Z",
+        "updatedAt": "2025-04-26T13:16:26.132Z",
+        "name": "Medenine",
+        "zipCode": "0000"
+      },
+      {
+        "id": 17,
+        "createdAt": "2025-04-26T13:16:26.132Z",
+        "updatedAt": "2025-04-26T13:16:26.132Z",
+        "name": "Mahdia",
+        "zipCode": "0000"
+      },
+      {
+        "id": 18,
+        "createdAt": "2025-04-26T13:16:26.132Z",
+        "updatedAt": "2025-04-26T13:16:26.132Z",
+        "name": "Monastir",
+        "zipCode": "0000"
+      },
+      {
+        "id": 19,
+        "createdAt": "2025-04-26T13:16:26.132Z",
+        "updatedAt": "2025-04-26T13:16:26.132Z",
+        "name": "Nabeul",
+        "zipCode": "0000"
+      },
+      {
+        "id": 20,
+        "createdAt": "2025-04-26T13:16:26.132Z",
+        "updatedAt": "2025-04-26T13:16:26.132Z",
+        "name": "Sfax",
+        "zipCode": "0000"
+      },
+      {
+        "id": 22,
+        "createdAt": "2025-04-26T13:16:26.132Z",
+        "updatedAt": "2025-04-26T13:16:26.132Z",
+        "name": "Sidi Bouzid",
+        "zipCode": "0000"
+      },
+      {
+        "id": 23,
+        "createdAt": "2025-04-26T13:16:26.132Z",
+        "updatedAt": "2025-04-26T13:16:26.132Z",
+        "name": "Siliana",
+        "zipCode": "0000"
+      },
+      {
+        "id": 24,
+        "createdAt": "2025-04-26T13:16:26.132Z",
+        "updatedAt": "2025-04-26T13:16:26.132Z",
+        "name": "Sousse",
+        "zipCode": "0000"
+      },
+      {
+        "id": 25,
+        "createdAt": "2025-04-26T13:16:26.132Z",
+        "updatedAt": "2025-04-26T13:16:26.132Z",
+        "name": "Tataouine",
+        "zipCode": "0000"
+      },
+      {
+        "id": 26,
+        "createdAt": "2025-04-26T13:16:26.132Z",
+        "updatedAt": "2025-04-26T13:16:26.132Z",
+        "name": "Tozeur",
+        "zipCode": "0000"
+      },
+      {
+        "id": 28,
+        "createdAt": "2025-04-26T13:16:26.132Z",
+        "updatedAt": "2025-04-26T13:16:26.132Z",
+        "name": "Zaghouan",
+        "zipCode": "0000"
+      }
+    ]
+  },
+  {
+    "id": 209,
+    "name": "Tanzanie",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 109,
+      "name": "Shilling tanzanien",
+      "code": "TZS",
+      "symbol": "TZS"
+    },
+    "regions": []
+  },
+  {
+    "id": 214,
+    "name": "Timor",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 213,
+    "name": "Thailande",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 218,
+    "name": "Trinité et Tobago",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 196,
+    "name": "Soudan",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 103,
+      "name": "Livre soudanaise",
+      "code": "SDG",
+      "symbol": "SDG"
+    },
+    "regions": []
+  },
+  {
+    "id": 198,
+    "name": "Suisse",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 66,
+      "name": "Franc suisse",
+      "code": "CHF",
+      "symbol": "CHF"
+    },
+    "regions": []
+  },
+  {
+    "id": 211,
+    "name": "Territoire britannique de l'océan Indien",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 226,
+    "name": "États-Unis",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 44,
+      "name": "Dollar des états-unis",
+      "code": "USD",
+      "symbol": "$"
+    },
+    "regions": []
+  },
+  {
+    "id": 221,
+    "name": "Ukraine",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 113,
+      "name": "Hryvnia ukrainienne",
+      "code": "UAH",
+      "symbol": "UAH"
+    },
+    "regions": []
+  },
+  {
+    "id": 215,
+    "name": "Togo",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 25,
+      "name": "Franc cfa (bceao)",
+      "code": "XOF",
+      "symbol": "F CFA"
+    },
+    "regions": []
+  },
+  {
+    "id": 216,
+    "name": "Tokelau",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 80,
+      "name": "Dollar néo-zélandais",
+      "code": "NZD",
+      "symbol": "NZ$"
+    },
+    "regions": []
+  },
+  {
+    "id": 202,
+    "name": "Swaziland",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 204,
+    "name": "São Tomé et Príncipe (Rép.)",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 205,
+    "name": "Sénégal",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 25,
+      "name": "Franc cfa (bceao)",
+      "code": "XOF",
+      "symbol": "F CFA"
+    },
+    "regions": []
+  },
+  {
+    "id": 197,
+    "name": "Sri Lanka",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 104,
+      "name": "Roupie srilankaise",
+      "code": "LKR",
+      "symbol": "LKR"
+    },
+    "regions": []
+  },
+  {
+    "id": 224,
+    "name": "Équateur",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 116,
+      "name": "Sucre équatorien",
+      "code": "ECS",
+      "symbol": "ECS"
+    },
+    "regions": []
+  },
+  {
+    "id": 203,
+    "name": "Syrie",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 107,
+      "name": "Livre syrienne",
+      "code": "SYP",
+      "symbol": "SYP"
+    },
+    "regions": []
+  },
+  {
+    "id": 207,
+    "name": "Tadjikistan",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 108,
+      "name": "Somoni tadjik",
+      "code": "TJS",
+      "symbol": "TJS"
+    },
+    "regions": []
+  },
+  {
+    "id": 227,
+    "name": "Îles Mineures Éloignées des États-Unis",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 208,
+    "name": "Taiwan",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 200,
+    "name": "Suède",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 106,
+      "name": "Couronne suédoise",
+      "code": "SEK",
+      "symbol": "SEK"
+    },
+    "regions": []
+  },
+  {
+    "id": 222,
+    "name": "Égypte",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 114,
+      "name": "Livre égyptienne",
+      "code": "EGP",
+      "symbol": "EGP"
+    },
+    "regions": []
+  },
+  {
+    "id": 206,
+    "name": "TURQUIE",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 225,
+    "name": "Érythrée",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 117,
+      "name": "Birr éthiopien",
+      "code": "ETB",
+      "symbol": "ETB"
+    },
+    "regions": []
+  },
+  {
+    "id": 199,
+    "name": "Suriname",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 105,
+      "name": "Dollar surinamais",
+      "code": "SRD",
+      "symbol": "SRD"
+    },
+    "regions": []
+  },
+  {
+    "id": 220,
+    "name": "Turquie",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 112,
+      "name": "Livre turque",
+      "code": "TRY",
+      "symbol": "TRY"
+    },
+    "regions": []
+  },
+  {
+    "id": 201,
+    "name": "Svalbard et Jan Mayen (Îles)",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  },
+  {
+    "id": 210,
+    "name": "Tchad",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 28,
+      "name": "Franc cfa (beac)",
+      "code": "XAF",
+      "symbol": "FCFA"
+    },
+    "regions": []
+  },
+  {
+    "id": 223,
+    "name": "Émirats arabes unis",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 115,
+      "name": "Dirham des émirats arabes unis",
+      "code": "AED",
+      "symbol": "AED"
+    },
+    "regions": []
+  },
+  {
+    "id": 217,
+    "name": "Tonga",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": {
+      "id": 110,
+      "name": "Pa’anga tongan",
+      "code": "TOP",
+      "symbol": "TOP"
+    },
+    "regions": []
+  },
+  {
+    "id": 212,
+    "name": "Territoires français du sud",
+    "createdAt": "2025-04-26T13:16:25.932Z",
+    "updatedAt": "2025-04-26T13:16:25.932Z",
+    "currency": null,
+    "regions": []
+  }
+]

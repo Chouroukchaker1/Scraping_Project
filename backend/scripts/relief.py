@@ -208,7 +208,16 @@ class ReliefWebScraper:
                     return promoter_id
 
             # Créer nouveau promoteur
-            payload = {"name": promoter_name}
+            payload = {
+                "name": promoter_name,
+                "companyName": promoter_name,  # Requis par l'API
+                "address": {
+                    "street": "International",
+                    "city": "Global",
+                    "zipCode": "00000",
+                    "country": "International"
+                }
+            }
             create_response = self.session_appeloffres.post(
                 PROMOTER_ENDPOINT,
                 json=payload,
@@ -221,7 +230,10 @@ class ReliefWebScraper:
                 self.promoters_cache[promoter_clean] = promoter_id
                 logger.info(f"✅ Promoteur créé: {promoter_name} (ID: {promoter_id})")
                 return promoter_id
+            else:
+                logger.error(f"❌ Échec création promoteur {promoter_name}: {create_response.status_code} - {create_response.text[:300]}")
 
+            logger.warning(f"⚠️ Utilisation promoteur par défaut pour {promoter_name}")
             return 223472
         except Exception as e:
             logger.error(f"❌ Erreur promoteur: {e}")
@@ -533,7 +545,8 @@ class ReliefWebScraper:
                         conn.commit()
                         logger.info(f"✅ API OK: {offre.reference} - ID: {api_id}")
                     else:
-                        error_detail = f"Status {response.status_code}"
+                        error_detail = f"Status {response.status_code} - {response.text[:500]}"
+                        logger.error(f"❌ API Error {response.status_code}: {response.text[:500]}")
             except Exception as e:
                 error_detail = str(e)[:200]
 
@@ -559,12 +572,17 @@ class ReliefWebScraper:
         """Map offer to API payload"""
         promoter_id = self.get_or_create_promoter(offre.promoter)
 
+        # Convert datetime objects to ISO string
+        pub_date = offre.publicationDate.isoformat() if isinstance(offre.publicationDate, datetime) else offre.publicationDate
+        start_date = offre.startBiddingDate.isoformat() if isinstance(offre.startBiddingDate, datetime) else offre.startBiddingDate
+        exp_date = offre.expirationDate.isoformat() if isinstance(offre.expirationDate, datetime) else offre.expirationDate
+
         payload = {
             "title": offre.description[:200],
             "description": offre.description_fr[:500],
-            "publicationDate": offre.publicationDate,
-            "startBiddingDate": offre.startBiddingDate,
-            "expirationDate": offre.expirationDate,
+            "publicationDate": pub_date,
+            "startBiddingDate": start_date,
+            "expirationDate": exp_date,
             "reference": offre.reference,
             "avisId": offre.avisId,
             "sourceId": offre.sourceId,
@@ -582,6 +600,7 @@ class ReliefWebScraper:
                 "deposit": 0
             }],
             "addresses": [{"countryId": 219}],
+            "images": []
         }
 
         return {k: v for k, v in payload.items() if v is not None}

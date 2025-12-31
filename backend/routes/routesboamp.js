@@ -138,13 +138,29 @@ router.delete('/delete/:reference', async (req, res) => {
 router.post('/clean-pending', async (req, res) => {
     try {
         console.log('🧹 Nettoyage offres pending BOAMP');
-        
+
         const response = await axios.post(
             `${PYTHON_SERVER_URL}/api/clean_pending`,
             {},
             { timeout: 30000 }
         );
-        
+
+        res.json(response.data);
+    } catch (error) {
+        handlePythonApiError(error, res);
+    }
+});
+
+// 6b. Supprimer TOUTES les offres en attente
+router.delete('/delete-all', async (req, res) => {
+    try {
+        console.log('🗑️ Suppression de TOUTES les offres pending BOAMP');
+
+        const response = await axios.delete(
+            `${PYTHON_SERVER_URL}/api/delete_all`,
+            { timeout: 30000 }
+        );
+
         res.json(response.data);
     } catch (error) {
         handlePythonApiError(error, res);

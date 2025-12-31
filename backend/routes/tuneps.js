@@ -6,7 +6,19 @@ const path = require('path');
 const fs = require('fs');
 const mongoose = require('mongoose');
 const axios = require('axios');
+const { Pool } = require('pg');
 require('dotenv').config();
+
+// ===== CONNEXION POSTGRESQL =====
+const pgPool = new Pool({
+  host: process.env.DB_HOST || 'localhost',  // ✅ localhost par défaut
+  port: process.env.DB_PORT || 5432,
+  database: process.env.DB_NAME || 'tenders_db',
+  user: process.env.DB_USER || 'tender_user',
+  password: process.env.DB_PASSWORD || 'tender_password_2024',
+});
+
+console.log('📊 PostgreSQL Pool created for TUNEPS routes');
 
 // ===== SCHÉMA MONGODB =====
 const OffreSchema = new mongoose.Schema({
@@ -105,12 +117,17 @@ async function loginAppelOffres() {
 
 // Fonction pour parser et formater les dates en ISO
 function parseDate(dateStr) {
-  if (!dateStr || dateStr === 'N/A' || dateStr.trim() === '') return null;
+  if (!dateStr || dateStr === 'N/A') return null;
+
+  // Convertir en string si ce n'est pas déjà le cas
+  const dateString = typeof dateStr === 'string' ? dateStr : String(dateStr);
+
+  if (dateString.trim() === '') return null;
 
   try {
     // Format français: DD/MM/YYYY HH:MM
     const frenchDatePattern = /^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})$/;
-    const match = dateStr.match(frenchDatePattern);
+    const match = dateString.match(frenchDatePattern);
 
     if (match) {
       const [, day, month, year, hour, minute] = match;
@@ -130,7 +147,7 @@ function parseDate(dateStr) {
     }
 
     // Sinon, essayer le parsing standard
-    const date = new Date(dateStr);
+    const date = new Date(dateString);
     if (isNaN(date.getTime())) return null;
     return date.toISOString();
   } catch (e) {
@@ -216,18 +233,17 @@ function mapOffreToTenderPayload(offre) {
     if (match) {
       images = [{
         url: match[1],
-        description: "Capture d'écran ou image du cahier des charges TUNEPS"
+        description: "Image officielle TUNEPS - Système Tunisien de l'E-Procurement"
       }];
     }
   }
 
-  // Si pas d'images, utiliser un placeholder
-  if (images.length === 0) {
-    images = [{
-      url: "placeholder-tuneps.png",
-      description: "Image placeholder pour appel d'offres TUNEPS"
-    }];
-  }
+  // ✅ TOUJOURS utiliser l'image fixe TUNEPS (pas besoin d'URL S3)
+  // L'image sera uploadée automatiquement par l'API AppelOffres
+  images = [{
+    url: "tuneps_default.png",
+    description: "Image officielle TUNEPS - Système Tunisien de l'E-Procurement"
+  }];
 
   // Déterminer le type (national/international)
   const fullText = (offre.description || '') + ' ' + (offre.full_content || '');
@@ -537,24 +553,47 @@ router.post('/scrape', async (req, res) => {
   }
 });
 
-// Route pour obtenir les offres en attente (pending)
+// Route pour obtenir les offres en attente (pending) - POSTGRESQL VERSION
 router.get('/pending', async (req, res) => {
-  console.log('✅ Route /api/tuneps/pending appelée avec query:', req.query);
-  
+  console.log('✅ Route /api/tuneps/pending appelée (PostgreSQL)');
+
   try {
     const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
-    const skip = (page - 1) * limit;
+    const limit = parseInt(req.query.limit) || 100;
+    const offset = (page - 1) * limit;
 
-    const offers = await Offre.find({ status: 'pending' })
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit)
-      .lean();
+    // Interroger PostgreSQL pour les offres avec status='pending'
+    const countQuery = `
+      SELECT COUNT(*) as total
+      FROM tenders_tuneps
+      WHERE status = 'pending'
+    `;
 
-    const total = await Offre.countDocuments({ status: 'pending' });
+    const offersQuery = `
+      SELECT *
+      FROM tenders_tuneps
+      WHERE status = 'pending'
+      ORDER BY extraction_date DESC
+      LIMIT $1 OFFSET $2
+    `;
 
-    console.log(`📊 Réponse pending: ${offers.length} offres sur ${total} total`);
+    const countResult = await pgPool.query(countQuery);
+    const total = parseInt(countResult.rows[0]?.total || 0);
+
+    const offersResult = await pgPool.query(offersQuery, [limit, offset]);
+    const offers = offersResult.rows.map(row => ({
+      ...row,
+      _id: row.id?.toString() || '',
+      extractionDate: row.extraction_date || '',
+      publicationDate: row.publication_date || '',
+      expirationDate: row.expiration_date || '',
+      openingDate: row.opening_date || '',
+      startBiddingDate: row.start_bidding_date || '',
+      promoter: row.promoter || '',
+      s3_image_url: row.s3_image_url || ''
+    }));
+
+    console.log(`📊 Réponse pending (PostgreSQL): ${offers.length} offres sur ${total} total`);
 
     res.json({
       success: true,
@@ -573,73 +612,68 @@ router.get('/pending', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('❌ Erreur récupération offres pending:', error);
-    
+    console.error('❌ Erreur récupération offres pending (PostgreSQL):', error);
+
     res.json({
       success: true,
       data: {
         offers: [],
         pagination: {
           page: 1,
-          limit: 10,
+          limit: 100,
           total: 0,
           totalPages: 0
         }
       },
       scraping: {
         isProcessing: false,
-        message: "MongoDB error - check connection"
+        message: "PostgreSQL error - check connection"
       },
       error: error.message
     });
   }
 });
 
-// ✅ ROUTE POUR OBTENIR LES OFFRES VALIDÉES (AJOUT CRITIQUE)
+// ✅ ROUTE POUR OBTENIR LES OFFRES VALIDÉES - POSTGRESQL VERSION
 router.get('/validated', async (req, res) => {
-  console.log('✅ Route /api/tuneps/validated appelée');
-  
+  console.log('✅ Route /api/tuneps/validated appelée (PostgreSQL)');
+
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 100;
-    const skip = (page - 1) * limit;
+    const offset = (page - 1) * limit;
 
-    // Accès direct à la collection MongoDB tenders_marmoucha
-    const db = mongoose.connection.db;
-    
-    if (!db) {
-      console.error('❌ MongoDB database non disponible');
-      return res.json({
-        success: true,
-        tenders: [],
-        count: 0,
-        error: 'Database not connected'
-      });
-    }
+    // Interroger PostgreSQL pour les offres avec status='active' (validées et envoyées à l'API)
+    const countQuery = `
+      SELECT COUNT(*) as total
+      FROM tenders_tuneps
+      WHERE status = 'active'
+    `;
 
-    const collection = db.collection('tenders_marmoucha');
-    
-    // Chercher toutes les offres validées ou actives
-    const tenders = await collection
-      .find({ 
-        $or: [
-          { status: 'validated' },
-          { status: 'active' }
-        ]
-      })
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit)
-      .toArray();
+    const tendersQuery = `
+      SELECT *
+      FROM tenders_tuneps
+      WHERE status = 'active'
+      ORDER BY extraction_date DESC
+      LIMIT $1 OFFSET $2
+    `;
 
-    const total = await collection.countDocuments({ 
-      $or: [
-        { status: 'validated' },
-        { status: 'active' }
-      ]
-    });
+    const countResult = await pgPool.query(countQuery);
+    const total = parseInt(countResult.rows[0]?.total || 0);
 
-    console.log(`📊 Réponse validated: ${tenders.length} offres sur ${total} total (collection: tenders_marmoucha)`);
+    const tendersResult = await pgPool.query(tendersQuery, [limit, offset]);
+    const tenders = tendersResult.rows.map(row => ({
+      ...row,
+      _id: row.id?.toString() || '',
+      extractionDate: row.extraction_date || '',
+      validationDate: row.validation_date || '',
+      publicationDate: row.publication_date || '',
+      expirationDate: row.expiration_date || '',
+      openingDate: row.opening_date || '',
+      startBiddingDate: row.start_bidding_date || ''
+    }));
+
+    console.log(`📊 Réponse validated (PostgreSQL): ${tenders.length} offres sur ${total} total (table: tenders_tuneps, status=active)`);
 
     res.json({
       success: true,
@@ -663,56 +697,99 @@ router.get('/validated', async (req, res) => {
   }
 });
 
-// Route pour valider une offre (déplacer de pending vers validated + envoyer vers API)
+// Route pour valider une offre (PostgreSQL + envoyer vers API) - COMME BOAMP
 router.post('/validate/:reference', async (req, res) => {
   console.log('✅ Route /api/tuneps/validate appelée pour:', req.params.reference);
 
   try {
     const reference = req.params.reference;
 
-    // Trouver dans pending
-    const pendingOffer = await Offre.findOne({ reference: reference, status: 'pending' });
+    // 1. Récupérer l'offre depuis PostgreSQL (n'importe quel status - PERMETTRE RE-VALIDATION)
+    const pendingQuery = 'SELECT * FROM tenders_tuneps WHERE reference = $1 LIMIT 1';
+    const pendingResult = await pgPool.query(pendingQuery, [reference]);
 
-    if (!pendingOffer) {
+    if (pendingResult.rows.length === 0) {
       return res.status(404).json({
         success: false,
-        message: `Offre ${reference} non trouvée dans pending`
+        message: `Offre ${reference} non trouvée dans la base`
       });
     }
 
-    // 1. ENVOYER VERS L'API APPELOFFRES
-    console.log(`📤 Tentative d'envoi de l'offre ${reference} vers l'API AppelOffres...`);
-    const apiResult = await postTenderToAPI(pendingOffer);
+    const pendingOffer = pendingResult.rows[0];
 
-    if (!apiResult.success) {
-      console.warn(`⚠️ Échec envoi API pour ${reference}: ${apiResult.message}`);
-      // Continuer quand même pour sauvegarder en base
-    } else {
-      console.log(`✅ Offre ${reference} envoyée avec succès à l'API AppelOffres`);
+    // ✅ Log du status actuel
+    console.log(`📊 Offre ${reference} trouvée - Status actuel: ${pendingOffer.status || 'pending'}`);
+    if (pendingOffer.status === 'active') {
+      console.log(`⚠️ ATTENTION: Cette offre est déjà validée (active) - RE-VALIDATION en cours...`);
     }
 
-    // 2. CRÉER DANS VALIDATED COLLECTION (MongoDB)
-    const db = mongoose.connection.db;
-    const validatedCollection = db.collection('tenders_marmoucha');
+    // Convertir les noms de colonnes PostgreSQL en format attendu
+    const offreFormatted = {
+      reference: pendingOffer.reference,
+      description: pendingOffer.description,
+      full_content: pendingOffer.full_content,
+      promoter: pendingOffer.promoter,
+      publicationDate: pendingOffer.publication_date,
+      expirationDate: pendingOffer.expiration_date,
+      openingDate: pendingOffer.opening_date,
+      startBiddingDate: pendingOffer.start_bidding_date,
+      region_id: pendingOffer.region_id,
+      promoterId: pendingOffer.promoter_id,
+      sourceId: pendingOffer.source_id || DEFAULT_SOURCE_ID,
+      avisId: pendingOffer.avis_id || DEFAULT_AVIS_ID,
+      paysId: pendingOffer.pays_id || DEFAULT_PAYS_ID,
+      currencyId: pendingOffer.currency_id || DEFAULT_CURRENCY_ID,
+      nature: pendingOffer.nature || 'public',
+      s3_image_url: pendingOffer.s3_image_url || '',
+      url_source: pendingOffer.external_url || '',
+      lots: Array.isArray(pendingOffer.batches) ? pendingOffer.batches :
+            (typeof pendingOffer.batches === 'string' && pendingOffer.batches && pendingOffer.batches !== '' && pendingOffer.batches !== 'null') ?
+            JSON.parse(pendingOffer.batches) : [],
+      offer_validity_duration: pendingOffer.offer_validity_period,
+      cautionnement_provisoire: pendingOffer.cautionnement || '0'
+    };
 
-    const validatedData = pendingOffer.toObject();
-    validatedData.status = 'validated';
-    validatedData.validationDate = new Date().toISOString();
-    delete validatedData._id;
+    // 2. ENVOYER VERS L'API APPELOFFRES AVEC IMAGE
+    console.log(`📤 Tentative d'envoi de l'offre ${reference} vers l'API AppelOffres...`);
+    console.log(`📸 Image utilisée: tuneps_default.png (image fixe TUNEPS)`);
 
-    await validatedCollection.insertOne(validatedData);
+    const apiResult = await postTenderToAPI(offreFormatted);
 
-    // 3. SUPPRIMER DE PENDING
-    await Offre.deleteOne({ reference: reference });
+    // ❌ SI L'API ÉCHOUE, NE PAS VALIDER L'OFFRE
+    if (!apiResult.success) {
+      console.error(`❌ ÉCHEC ENVOI API pour ${reference}: ${apiResult.message}`);
+      console.error(`⚠️ L'offre reste en PENDING - elle ne sera PAS validée`);
+      return res.status(500).json({
+        success: false,
+        message: `❌ Échec de l'envoi vers l'API AppelOffres: ${apiResult.message}`,
+        details: apiResult,
+        reference: reference,
+        note: "L'offre reste en pending - corrigez l'erreur et réessayez"
+      });
+    }
 
-    console.log(`✅ Offre ${reference} validée et déplacée vers tenders_marmoucha`);
+    console.log(`✅ Offre ${reference} envoyée avec SUCCÈS à l'API AppelOffres`);
+    console.log(`✅ API Response ID: ${apiResult.apiResponse?.id}`);
+
+    // 3. SEULEMENT MAINTENANT, marquer comme validée dans PostgreSQL
+    const updateQuery = `
+      UPDATE tenders_tuneps
+      SET status = 'active', validation_date = $1, api_id = $2
+      WHERE reference = $3
+    `;
+    const validationDate = new Date().toISOString();
+    const apiId = apiResult.apiResponse?.id || null;
+
+    await pgPool.query(updateQuery, [validationDate, apiId, reference]);
+
+    console.log(`✅ Offre ${reference} validée et marquée active dans PostgreSQL (API ID: ${apiId})`);
 
     res.json({
       success: true,
-      message: `Offre ${reference} validée avec succès`,
+      message: `Offre ${reference} validée et envoyée à l'API avec succès`,
       reference: reference,
-      validationDate: validatedData.validationDate,
-      apiSent: apiResult.success,
+      validationDate: validationDate,
+      apiSent: true,
       apiMessage: apiResult.message,
       apiResponse: apiResult.apiResponse || null
     });
@@ -726,23 +803,29 @@ router.post('/validate/:reference', async (req, res) => {
   }
 });
 
-// Route pour supprimer une offre pending
+// Route pour supprimer une offre pending - POSTGRESQL VERSION
 router.delete('/delete/:reference', async (req, res) => {
   console.log('✅ Route /api/tuneps/delete appelée pour:', req.params.reference);
 
   try {
     const reference = req.params.reference;
 
-    const result = await Offre.deleteOne({ reference: reference, status: 'pending' });
+    const deleteQuery = `
+      DELETE FROM tenders_tuneps
+      WHERE reference = $1 AND status = 'pending'
+      RETURNING *
+    `;
 
-    if (result.deletedCount === 0) {
+    const result = await pgPool.query(deleteQuery, [reference]);
+
+    if (result.rowCount === 0) {
       return res.status(404).json({
         success: false,
         message: `Offre ${reference} non trouvée dans pending`
       });
     }
 
-    console.log(`✅ Offre pending ${reference} supprimée`);
+    console.log(`✅ Offre pending ${reference} supprimée de PostgreSQL`);
 
     res.json({
       success: true,
@@ -750,7 +833,7 @@ router.delete('/delete/:reference', async (req, res) => {
       reference: reference
     });
   } catch (error) {
-    console.error('❌ Erreur suppression:', error);
+    console.error('❌ Erreur suppression (PostgreSQL):', error);
     res.status(500).json({
       success: false,
       message: 'Erreur lors de la suppression',
@@ -759,22 +842,28 @@ router.delete('/delete/:reference', async (req, res) => {
   }
 });
 
-// Route pour supprimer TOUTES les offres pending
+// Route pour supprimer TOUTES les offres pending - POSTGRESQL VERSION
 router.delete('/delete-all', async (req, res) => {
   console.log('✅ Route /api/tuneps/delete-all appelée');
 
   try {
-    const result = await Offre.deleteMany({ status: 'pending' });
+    const deleteQuery = `
+      DELETE FROM tenders_tuneps
+      WHERE status = 'pending'
+    `;
 
-    console.log(`✅ ${result.deletedCount} offres pending supprimées`);
+    const result = await pgPool.query(deleteQuery);
+    const deletedCount = result.rowCount;
+
+    console.log(`✅ ${deletedCount} offres pending supprimées de PostgreSQL`);
 
     res.json({
       success: true,
-      message: `${result.deletedCount} offres supprimées`,
-      deletedCount: result.deletedCount
+      message: `${deletedCount} offres supprimées`,
+      deletedCount: deletedCount
     });
   } catch (error) {
-    console.error('❌ Erreur suppression globale:', error);
+    console.error('❌ Erreur suppression globale (PostgreSQL):', error);
     res.status(500).json({
       success: false,
       message: 'Erreur lors de la suppression',
@@ -783,26 +872,30 @@ router.delete('/delete-all', async (req, res) => {
   }
 });
 
-// ✅ ROUTE POUR SUPPRIMER UNE OFFRE VALIDÉE
+// ✅ ROUTE POUR SUPPRIMER UNE OFFRE VALIDÉE - POSTGRESQL VERSION
 router.delete('/validated/delete/:reference', async (req, res) => {
   console.log('✅ Route /api/tuneps/validated/delete appelée pour:', req.params.reference);
-  
+
   try {
     const reference = req.params.reference;
-    
-    const db = mongoose.connection.db;
-    const collection = db.collection('tenders_marmoucha');
-    
-    const result = await collection.deleteOne({ reference: reference });
-    
-    if (result.deletedCount === 0) {
+
+    // Supprimer de PostgreSQL
+    const deleteQuery = `
+      DELETE FROM tenders_tuneps
+      WHERE reference = $1 AND status = 'active'
+      RETURNING *
+    `;
+
+    const result = await pgPool.query(deleteQuery, [reference]);
+
+    if (result.rowCount === 0) {
       return res.status(404).json({
         success: false,
-        message: `Offre validée ${reference} non trouvée`
+        message: `Offre validée ${reference} non trouvée dans PostgreSQL`
       });
     }
 
-    console.log(`✅ Offre validée ${reference} supprimée de tenders_marmoucha`);
+    console.log(`✅ Offre validée ${reference} supprimée de tenders_tuneps (PostgreSQL)`);
 
     res.json({
       success: true,
@@ -810,7 +903,7 @@ router.delete('/validated/delete/:reference', async (req, res) => {
       reference: reference
     });
   } catch (error) {
-    console.error('❌ Erreur suppression validated:', error);
+    console.error('❌ Erreur suppression validated (PostgreSQL):', error);
     res.status(500).json({
       success: false,
       message: 'Erreur lors de la suppression',

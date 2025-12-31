@@ -234,4 +234,18 @@ router.get('/download_excel/:filename', async (req, res) => {
     }
 });
 
+// Supprimer TOUTES les offres (pending + validated)
+router.delete('/delete-all', async (req, res) => {
+    try {
+        console.log('🗑️ Suppression de TOUTES les offres TUNEPS (pending + validated)');
+        const response = await axios.delete(
+            `${PYTHON_SERVER_URL}/api/delete_all`,
+            { timeout: 30000 }
+        );
+        res.json(response.data);
+    } catch (error) {
+        handlePythonApiError(error, res);
+    }
+});
+
 module.exports = router;

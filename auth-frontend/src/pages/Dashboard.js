@@ -230,10 +230,10 @@ const Dashboard = () => {
 
   const handleDelete = async (reference) => {
     if (!window.confirm('Confirmer la suppression?')) return;
-    
+
     try {
       const res = await axios.delete(`${API_URL}/api/delete/${reference}`);
-      
+
       if (res.data && res.data.success) {
         await loadOffres(currentPage);
         showSnackbar('Offre supprimée');
@@ -243,6 +243,30 @@ const Dashboard = () => {
     } catch (err) {
       console.error('❌ Erreur suppression:', err);
       showSnackbar('Erreur: ' + (err.response?.data?.message || err.message), 'error');
+    }
+  };
+
+  const handleDeleteAll = async () => {
+    if (!window.confirm('⚠️ ATTENTION : Voulez-vous vraiment supprimer TOUTES les offres pending?\n\nCette action est irréversible!')) return;
+
+    setLoading(true);
+    try {
+      const res = await axios.delete(`${API_URL}/api/delete_all`);
+
+      if (res.data && res.data.success) {
+        const count = res.data.count || 0;
+        setOffres([]);
+        setTotalPages(1);
+        setCurrentPage(1);
+        showSnackbar(`✅ ${count} offres supprimées avec succès`, 'success');
+      } else {
+        showSnackbar('Erreur suppression', 'error');
+      }
+    } catch (err) {
+      console.error('❌ Erreur suppression toutes offres:', err);
+      showSnackbar('Erreur: ' + (err.response?.data?.message || err.message), 'error');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -432,6 +456,15 @@ const Dashboard = () => {
               disabled={offres.length === 0}
             >
               📊 Export XLS
+            </Button>
+            <Button
+              variant="outlined"
+              color="error"
+              onClick={handleDeleteAll}
+              disabled={offres.length === 0 || loading}
+              sx={{ fontWeight: 'bold' }}
+            >
+              🗑️ Supprimer Tous
             </Button>
           </Box>
         </Box>

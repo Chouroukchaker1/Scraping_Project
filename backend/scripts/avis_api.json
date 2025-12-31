@@ -1,0 +1,75 @@
+{
+  "results": [
+    {
+      "id": 1,
+      "name": "Avis d'appel d'offres",
+      "type": "tender"
+    },
+    {
+      "id": 2,
+      "name": "Avis de consultation",
+      "type": "tender"
+    },
+    {
+      "id": 3,
+      "name": "Avis d'annulation",
+      "type": "tender"
+    },
+    {
+      "id": 4,
+      "name": "Avis de report",
+      "type": "tender"
+    },
+    {
+      "id": 5,
+      "name": "Avis d'appel à manifestation d'intérêt",
+      "type": "tender"
+    },
+    {
+      "id": 6,
+      "name": "Avis de concours",
+      "type": "tender"
+    },
+    {
+      "id": 7,
+      "name": "Avis de ventes aux enchères",
+      "type": "auction"
+    },
+    {
+      "id": 9,
+      "name": "Avis rectificatif",
+      "type": "tender"
+    },
+    {
+      "id": 10,
+      "name": "Avis additifs",
+      "type": "tender"
+    },
+    {
+      "id": 11,
+      "name": "Avis de candidature",
+      "type": "tender"
+    },
+    {
+      "id": 12,
+      "name": "Avis divers",
+      "type": "tender"
+    },
+    {
+      "id": 13,
+      "name": "Avis d'appel d'offres à prévoir",
+      "type": "tender"
+    },
+    {
+      "id": 8,
+      "name": "Avis d'attribution",
+      "type": "tender"
+    }
+  ],
+  "total": 13,
+  "currentPage": 1,
+  "totalPerPage": 13,
+  "nextPage": null,
+  "previousPage": null,
+  "lastPage": 1
+}

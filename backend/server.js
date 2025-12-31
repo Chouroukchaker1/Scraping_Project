@@ -10,12 +10,12 @@ const { createProxyMiddleware } = require('http-proxy-middleware');
 require('dotenv').config();
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 8080;
 
 // ==================== IMPORTATION DES ROUTES ====================
 const authRoutes = require('./routes/auth');
 const userRoutes = require('./routes/users');
-const tunepsRoutes = require('./routes/tuneps_proxy');
+const tunepsRoutes = require('./routes/tuneps');  // ✅ UTILISER tuneps.js avec PostgreSQL au lieu de tuneps_proxy.js
 const boampRoutes = require('./routes/routesboamp');
 
 // ==================== REACT FRONTEND ====================
@@ -46,7 +46,7 @@ app.use('/api/boamp', boampRoutes);
 app.use('/api/pnud', createProxyMiddleware({
   target: 'http://localhost:5006',
   changeOrigin: true,
-  pathRewrite: { '^/api/pnud': '' },
+  pathRewrite: { '^/api/pnud': '/api' },  // ✅ Fixed: was '' now '/api'
   onProxyReq: (proxyReq, req, res) => {
     console.log(`➡️  Proxy PNUD: ${req.method} ${req.originalUrl} → ${proxyReq.path}`);
   },
@@ -63,11 +63,56 @@ app.use('/api/pnud', createProxyMiddleware({
   }
 }));
 
-// HAICOP : Proxy vers le serveur Flask
+// HAICOP SCRAPE ENDPOINT - Must be BEFORE the proxy to intercept POST /scrape
+app.post('/api/haicop/api/scrape-tunisie', async (req, res) => {
+  try {
+    const axios = require('axios');
+    console.log('📤 Forwarding HAICOP scrape-tunisie request:', req.body);
+
+    const response = await axios.post('http://localhost:5011/api/scrape-tunisie', req.body, {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 120000  // 2 minutes pour le scraping
+    });
+
+    console.log('✅ HAICOP scrape-tunisie response:', response.data);
+    res.json(response.data);
+  } catch (error) {
+    console.error('❌ HAICOP scrape-tunisie error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// HAICOP VALIDATE ENDPOINT
+app.post('/api/haicop/api/validate/:reference', async (req, res) => {
+  try {
+    const axios = require('axios');
+    const reference = req.params.reference;
+    console.log('📤 Forwarding HAICOP validate request:', reference);
+
+    const response = await axios.post(`http://localhost:5011/api/validate/${encodeURIComponent(reference)}`, req.body, {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 30000
+    });
+
+    console.log('✅ HAICOP validate response:', response.data);
+    res.json(response.data);
+  } catch (error) {
+    console.error('❌ HAICOP validate error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: error.response?.data?.message || error.message
+    });
+  }
+});
+
+// HAICOP : Proxy pour les autres endpoints
 app.use('/api/haicop', createProxyMiddleware({
   target: 'http://localhost:5011',
   changeOrigin: true,
-  pathRewrite: { '^/api/haicop': '' },
+  pathRewrite: { '^/api/haicop': '/api' },
   onError: (err, req, res) => {
     console.error('❌ Proxy HAICOP error:', err.message);
     res.status(502).json({
@@ -86,7 +131,7 @@ app.post('/api/banque/api/scrape', async (req, res) => {
 
     const response = await axios.post('http://localhost:5010/api/scrape', req.body, {
       headers: { 'Content-Type': 'application/json' },
-      timeout: 10000
+      timeout: 120000  // 2 minutes pour le scraping
     });
 
     console.log('✅ BANQUE scrape response:', response.data);
@@ -104,7 +149,7 @@ app.post('/api/banque/api/scrape', async (req, res) => {
 app.use('/api/banque', createProxyMiddleware({
   target: 'http://localhost:5010',
   changeOrigin: true,
-  pathRewrite: { '^/api/banque': '' },
+  pathRewrite: { '^/api/banque': '/api' },
   onError: (err, req, res) => {
     console.error('❌ Proxy BANQUE error:', err.message);
     res.status(502).json({
@@ -137,11 +182,34 @@ app.post('/api/tuneps_ao/api/scrape', async (req, res) => {
   }
 });
 
+// TUNEPS AO VALIDATE ENDPOINT - Must be BEFORE the proxy to intercept
+app.post('/api/tuneps_ao/api/validate/:reference', async (req, res) => {
+  try {
+    const axios = require('axios');
+    const reference = req.params.reference;
+    console.log('📤 Forwarding TUNEPS AO validate request:', reference);
+
+    const response = await axios.post(`http://localhost:5005/api/validate/${encodeURIComponent(reference)}`, req.body, {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 90000  // 90 secondes pour l'API
+    });
+
+    console.log('✅ TUNEPS AO validate response:', response.data);
+    res.json(response.data);
+  } catch (error) {
+    console.error('❌ TUNEPS AO validate error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 // TUNEPS AO : Proxy vers le serveur Flask (port 5005) for other endpoints
 app.use('/api/tuneps_ao', createProxyMiddleware({
   target: 'http://localhost:5005',
   changeOrigin: true,
-  pathRewrite: { '^/api/tuneps_ao': '' },
+  pathRewrite: { '^/api/tuneps_ao': '/api' },  // ✅ Fixed: was '' now '/api'
   timeout: 300000, // 5 minutes timeout for long scraping operations
   proxyTimeout: 300000,
   onProxyReq: (proxyReq, req, res) => {
@@ -499,13 +567,13 @@ function startBoampPythonScraper() {
     return;
   }
 
-  const pythonScriptPath = path.join(__dirname, 'scripts', 'france.py');
+  const pythonScriptPath = path.join(__dirname, 'scripts', 'boamp_official.py');
   if (!fs.existsSync(pythonScriptPath)) {
-    console.error('❌ scraper.py non trouvé !');
+    console.error('❌ boamp_official.py non trouvé !');
     return;
   }
 
-  console.log('🚀 Démarrage automatique du scraper Python BOAMP...');
+  console.log('🚀 Démarrage automatique du scraper Python BOAMP OFFICIEL...');
   const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
 
   pythonProcess = spawn(pythonCmd, [pythonScriptPath], {
@@ -614,9 +682,9 @@ function startBanquePythonScraper() {
     return;
   }
 
-  const scriptPath = path.join(__dirname, 'scripts', 'banque_flask.py');
+  const scriptPath = path.join(__dirname, 'scripts', 'banque_simple.py');
   if (!fs.existsSync(scriptPath)) {
-    console.error('❌ banque_flask.py non trouvé !');
+    console.error('❌ banque_simple.py non trouvé !');
     return;
   }
 
@@ -700,9 +768,9 @@ function startArmpPythonScraper() {
     return;
   }
 
-  const scriptPath = path.join(__dirname, 'scripts', 'armp_flask.py');
+  const scriptPath = path.join(__dirname, 'scripts', 'armp.py');
   if (!fs.existsSync(scriptPath)) {
-    console.error('❌ armp_flask.py non trouvé !');
+    console.error('❌ armp.py non trouvé !');
     return;
   }
 
@@ -1076,14 +1144,14 @@ app.listen(PORT, '0.0.0.0', async () => {
 
   // Démarrer tous les scrapers Python au démarrage
   startBoampPythonScraper();
-  startPnudPythonScraper();
-  startHaicopPythonScraper();
-  startBanquePythonScraper();
+  startPnudPythonScraper();  // ✅ ACTIVÉ - PostgreSQL Ready
+  startBanquePythonScraper();  // ✅ ACTIVÉ - PostgreSQL Ready
+  startHaicopPythonScraper();  // ✅ ACTIVÉ - PostgreSQL Ready (migrated)
   startTunepsAoPythonScraper();        // Maintenant correctement lancé
   startTunepsPythonScraper();
-  startArmpPythonScraper();
+  startArmpPythonScraper();  // ✅ ACTIVÉ - PostgreSQL Ready
   startBeninPythonScraper();
-  startExpertisePythonScraper();
+  startExpertisePythonScraper();  // ✅ ACTIVÉ - PostgreSQL Ready
   startGizPythonScraper();
   startReliefPythonScraper();
   startMediaCongoPythonScraper();

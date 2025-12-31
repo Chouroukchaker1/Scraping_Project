@@ -142,61 +142,98 @@ def get_all_tenders(status=None):
         conn.close()
 
 def get_existing_references():
-    """Récupère l'ensemble des références existantes"""
+    """Récupère l'ensemble des références validées (status='active')"""
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        cursor.execute(f"SELECT reference FROM {TABLE_NAME}")
+        cursor.execute(f"SELECT reference FROM {TABLE_NAME} WHERE status = 'active'")
         return {row[0] for row in cursor.fetchall() if row[0]}
     finally:
         cursor.close()
         conn.close()
 
+def convert_date_to_postgres(date_str):
+    """Convertit DD/MM/YYYY vers YYYY-MM-DD pour PostgreSQL"""
+    if not date_str:
+        return None
+    try:
+        # Si déjà au format YYYY-MM-DD, retourner tel quel
+        if isinstance(date_str, str) and len(date_str) == 10 and date_str[4] == '-':
+            return date_str
+        # Convertir DD/MM/YYYY vers YYYY-MM-DD
+        from datetime import datetime
+        dt = datetime.strptime(str(date_str), "%d/%m/%Y")
+        return dt.strftime('%Y-%m-%d')
+    except:
+        return None
+
 def insert_tender(tender_dict):
-    """Insère une offre en PostgreSQL"""
+    """Insère ou met à jour une offre en PostgreSQL (validation = UPDATE status)"""
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        fields = ['reference', 'title', 'description', 'full_content', 'publication_date',
-                  'expiration_date', 'opening_date', 'region', 'promoter', 'source_id',
-                  'avis_id', 'pays_id', 'currency_id', 'nature', 'external_url', 'pdf_url',
-                  'cautionnement', 'montant', 'batches', 'status', 'extraction_date']
+        # Si c'est une validation (status='active'), on UPDATE au lieu d'INSERT
+        if tender_dict.get('status') == 'active':
+            # UPDATE: Passer de pending à active
+            reference = tender_dict.get('reference')
+            print(f"🔄 UPDATE tender {reference} de pending → active")
+            cursor.execute(f"""
+                UPDATE {TABLE_NAME}
+                SET status = 'active',
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE reference = %s AND status = 'pending'
+                RETURNING id
+            """, (reference,))
+            result = cursor.fetchone()
+            conn.commit()
+            if result:
+                print(f"✅ UPDATE réussi pour {reference}, ID: {result[0]}")
+                return result[0]
+            else:
+                print(f"❌ UPDATE échoué pour {reference} - Aucune ligne pending trouvée")
+                return None
+        else:
+            # INSERT normal pour les nouvelles offres pending
+            fields = ['reference', 'title', 'description', 'full_content', 'publication_date',
+                      'expiration_date', 'opening_date', 'region', 'promoter', 'source_id',
+                      'avis_id', 'pays_id', 'currency_id', 'nature', 'external_url', 'pdf_url',
+                      'cautionnement', 'montant', 'batches', 'status', 'extraction_date']
 
-        values = [
-            tender_dict.get('reference'),
-            tender_dict.get('description', '')[:500] if tender_dict.get('description') else None,
-            tender_dict.get('description'),
-            tender_dict.get('full_content'),
-            tender_dict.get('publicationDate'),
-            tender_dict.get('expirationDate'),
-            tender_dict.get('startBiddingDate'),
-            tender_dict.get('region'),
-            tender_dict.get('promoter'),
-            int(tender_dict.get('sourceId', DEFAULT_SOURCE_ID)) if tender_dict.get('sourceId') else int(DEFAULT_SOURCE_ID),
-            int(tender_dict.get('avisId', DEFAULT_AVIS_ID)) if tender_dict.get('avisId') else int(DEFAULT_AVIS_ID),
-            int(tender_dict.get('paysId', DEFAULT_PAYS_ID)) if tender_dict.get('paysId') else int(DEFAULT_PAYS_ID),
-            int(tender_dict.get('currencyId', DEFAULT_CURRENCY_ID)) if tender_dict.get('currencyId') else int(DEFAULT_CURRENCY_ID),
-            tender_dict.get('nature', 'public'),
-            tender_dict.get('external_url'),
-            tender_dict.get('pdf_url'),
-            tender_dict.get('cautionnement'),
-            tender_dict.get('montant'),
-            json.dumps(tender_dict.get('lots', [])) if tender_dict.get('lots') else None,
-            tender_dict.get('status', 'pending'),
-            tender_dict.get('extractionDate')
-        ]
+            values = [
+                tender_dict.get('reference'),
+                tender_dict.get('description', '')[:500] if tender_dict.get('description') else None,
+                tender_dict.get('description'),
+                tender_dict.get('full_content'),
+                convert_date_to_postgres(tender_dict.get('publicationDate')),
+                convert_date_to_postgres(tender_dict.get('expirationDate')),
+                convert_date_to_postgres(tender_dict.get('startBiddingDate')),
+                tender_dict.get('region'),
+                tender_dict.get('promoter'),
+                int(tender_dict.get('sourceId', DEFAULT_SOURCE_ID)) if tender_dict.get('sourceId') else int(DEFAULT_SOURCE_ID),
+                int(tender_dict.get('avisId', DEFAULT_AVIS_ID)) if tender_dict.get('avisId') else int(DEFAULT_AVIS_ID),
+                int(tender_dict.get('paysId', DEFAULT_PAYS_ID)) if tender_dict.get('paysId') else int(DEFAULT_PAYS_ID),
+                int(tender_dict.get('currencyId', DEFAULT_CURRENCY_ID)) if tender_dict.get('currencyId') else int(DEFAULT_CURRENCY_ID),
+                tender_dict.get('nature', 'public'),
+                tender_dict.get('external_url'),
+                tender_dict.get('pdf_url'),
+                tender_dict.get('cautionnement'),
+                tender_dict.get('montant'),
+                json.dumps(tender_dict.get('lots', [])) if tender_dict.get('lots') else None,
+                tender_dict.get('status', 'pending'),
+                tender_dict.get('extractionDate')
+            ]
 
-        placeholders = ','.join(['%s'] * len(fields))
-        query = f"""
-            INSERT INTO {TABLE_NAME} ({','.join(fields)})
-            VALUES ({placeholders})
-            ON CONFLICT (reference) DO NOTHING
-            RETURNING id
-        """
-        cursor.execute(query, values)
-        result = cursor.fetchone()
-        conn.commit()
-        return result[0] if result else None
+            placeholders = ','.join(['%s'] * len(fields))
+            query = f"""
+                INSERT INTO {TABLE_NAME} ({','.join(fields)})
+                VALUES ({placeholders})
+                ON CONFLICT (reference) DO NOTHING
+                RETURNING id
+            """
+            cursor.execute(query, values)
+            result = cursor.fetchone()
+            conn.commit()
+            return result[0] if result else None
     finally:
         cursor.close()
         conn.close()
@@ -345,9 +382,9 @@ class TUNEPSScraper:
         self.default_promoter_id = DEFAULT_PROMOTER_ID
         # URL vers /offres
         self.BASE_URL = "https://www.tuneps.tn/portail/offres"
-     
-        self.TIMEOUT = 30
-        self.WAIT_TIME = 1
+
+        self.TIMEOUT = 60  # Augmenté de 30 à 60 secondes
+        self.WAIT_TIME = 3  # Augmenté de 1 à 3 secondes
         self.DELAY_BETWEEN_CONSULTATIONS = (1.0, 2.0)
         self.DELAY_BETWEEN_PAGES = (1, 2) # Réduit pour plus de vitesse
         self.MAX_EMPTY_PAGES = 3 # Stop after 3 empty pages
@@ -660,6 +697,77 @@ class TUNEPSScraper:
         except Exception as e:
             self.logger.error(f"Erreur get_value_safe pour '{label}': {e}")
             return ""
+    def extraire_dates_rapide(self, url: str) -> dict:
+        """Extrait rapidement la date de publication ET la date limite depuis la page de détail"""
+        try:
+            self._init_driver()
+            if not self.driver:
+                return {'publication': 'N/A', 'expiration': 'N/A'}
+
+            self.driver.get(url)
+            time.sleep(2)
+
+            dates = {'publication': 'N/A', 'expiration': 'N/A'}
+
+            # Chercher la date de publication
+            pub_labels = [
+                "Date de publication",
+                "Date publication",
+                "Publiée le",
+                "Publication"
+            ]
+
+            for label in pub_labels:
+                try:
+                    date_elem = self.driver.find_element(
+                        By.XPATH,
+                        f"//*[contains(translate(text(), 'ÉÈÊË', 'EEEE'), '{label.upper()}')]/following-sibling::*[1] | " +
+                        f"//*[contains(translate(text(), 'ÉÈÊË', 'EEEE'), '{label.upper()}')]/parent::*/following-sibling::*[1]"
+                    )
+                    date_text = date_elem.text.strip()
+                    if date_text and len(date_text) < 50:  # Vraisemblablement une date
+                        self.logger.info(f"✅ Date publication trouvée: {date_text}")
+                        dates['publication'] = date_text
+                        break
+                except:
+                    continue
+
+            # Chercher la date limite
+            exp_labels = [
+                "Dernier délai réception des offres",
+                "Dernier délai de réception des offres",
+                "Dernier délai",
+                "Date limite de réception des offres",
+                "Date limite réception",
+                "Date limite",
+                "Délai de réception"
+            ]
+
+            for label in exp_labels:
+                try:
+                    date_elem = self.driver.find_element(
+                        By.XPATH,
+                        f"//*[contains(translate(text(), 'ÉÈÊË', 'EEEE'), '{label.upper()}')]/following-sibling::*[1] | " +
+                        f"//*[contains(translate(text(), 'ÉÈÊË', 'EEEE'), '{label.upper()}')]/parent::*/following-sibling::*[1]"
+                    )
+                    date_text = date_elem.text.strip()
+                    if date_text and len(date_text) < 50:  # Vraisemblablement une date
+                        self.logger.info(f"✅ Date limite trouvée: {date_text}")
+                        dates['expiration'] = date_text
+                        break
+                except:
+                    continue
+
+            if dates['publication'] == 'N/A':
+                self.logger.warning(f"⚠️ Date publication non trouvée pour {url}")
+            if dates['expiration'] == 'N/A':
+                self.logger.warning(f"⚠️ Date limite non trouvée pour {url}")
+
+            return dates
+        except Exception as e:
+            self.logger.error(f"Erreur extraction dates: {e}")
+            return {'publication': 'N/A', 'expiration': 'N/A'}
+
     def extraire_contenu_detaille(self, url: str, data: dict, reference: str) -> dict:
         """Extraire le contenu détaillé d'une offre avec lots et cautionnements"""
         contenu = {
@@ -800,6 +908,39 @@ class TUNEPSScraper:
         except Exception as e:
             self.logger.error(f"Erreur téléchargement PDF: {e}")
             return "", ""
+
+    def cleanup_local_files(self, offre):
+        """
+        Supprime les fichiers locaux (PDFs, images) après envoi réussi à l'API.
+        Cette fonction est appelée uniquement si l'envoi à l'API a réussi.
+        """
+        try:
+            files_deleted = []
+
+            # Supprimer le PDF si présent
+            if offre.cahier_charge_pdf_filename:
+                pdf_path = os.path.join(self.pdf_dir, offre.cahier_charge_pdf_filename)
+                if os.path.exists(pdf_path):
+                    os.remove(pdf_path)
+                    files_deleted.append(f"PDF: {offre.cahier_charge_pdf_filename}")
+                    self.logger.info(f"🗑️ PDF supprimé: {pdf_path}")
+
+            # Supprimer l'image si présente
+            if offre.image_filename:
+                image_path = os.path.join(IMAGES_DIR, offre.image_filename)
+                if os.path.exists(image_path):
+                    os.remove(image_path)
+                    files_deleted.append(f"Image: {offre.image_filename}")
+                    self.logger.info(f"🗑️ Image supprimée: {image_path}")
+
+            if files_deleted:
+                self.logger.info(f"✅ Nettoyage réussi pour {offre.reference}: {', '.join(files_deleted)}")
+            else:
+                self.logger.info(f"ℹ️ Aucun fichier local à supprimer pour {offre.reference}")
+
+        except Exception as e:
+            self.logger.error(f"⚠️ Erreur lors du nettoyage des fichiers pour {offre.reference}: {e}")
+
     def save_to_pending(self, offre):
         try:
             desc_hash = hash(offre.description)
@@ -824,6 +965,12 @@ class TUNEPSScraper:
     def map_offre_to_tender_payload(self, offre) -> dict:
         """Mapper l'offre vers le payload API avec batches[].title + batches[].deposit"""
         publication_ts = self.parse_date(offre.publicationDate)
+
+        # Si pas de publicationDate, utiliser maintenant
+        if not publication_ts:
+            publication_ts = datetime.now(tz=tz.gettz('Africa/Tunis')).isoformat()
+            self.logger.warning(f"⚠️ Pas de publicationDate pour {offre.reference}, utilisation de maintenant: {publication_ts}")
+
         start_bidding_ts = self.parse_date(offre.startBiddingDate)
         if start_bidding_ts is None:
             start_bidding_ts = publication_ts
@@ -957,12 +1104,12 @@ class TUNEPSScraper:
         try:
             result_id = insert_tender(tender_dict)
             if result_id:
-                pending_deleted = delete_tender(offre.reference)
-                if pending_deleted > 0:
-                    to_remove = [(r, h) for r, h in self.pending_set if r == offre.reference]
-                    for tup in to_remove:
-                        self.pending_set.discard(tup)
-             
+                # Pas besoin de delete_tender() car on fait un UPDATE status de pending → active
+                # Nettoyer le cache pending
+                to_remove = [(r, h) for r, h in self.pending_set if r == offre.reference]
+                for tup in to_remove:
+                    self.pending_set.discard(tup)
+
                 self.validated_refs.add(offre.reference)
              
                 api_success = False
@@ -989,6 +1136,9 @@ class TUNEPSScraper:
                             self.logger.info(f"✅ ENVOI API RÉUSSI: {offre.reference} - ID: {api_id}")
 
                             update_tender_api_id(offre.reference, api_id)
+
+                            # 🗑️ Supprimer les fichiers locaux après envoi réussi
+                            self.cleanup_local_files(offre)
                         else:
                             api_message = f"Échec API: {response.status_code} - {response.text}"
                             self.logger.error(f"❌ ENVOI API ÉCHOUÉ: {api_message}")
@@ -1004,15 +1154,15 @@ class TUNEPSScraper:
                     "success": True,
                     "message": message,
                     "offre_ref": offre.reference,
-                    "mongo_id": str(result.inserted_id),
+                    "db_id": str(result_id),
                     "api_id": api_id,
                     "api_success": api_success
                 }
             else:
                 raise Exception("Insertion échouée")
         except Exception as e:
-            self.logger.error(f"Erreur MongoDB: {e}")
-            return {"success": False, "message": f"Erreur MongoDB: {str(e)}", "offre_ref": offre.reference}
+            self.logger.error(f"Erreur PostgreSQL: {e}")
+            return {"success": False, "message": f"Erreur PostgreSQL: {str(e)}", "offre_ref": offre.reference}
     # ⭐ FONCTION AMÉLIORÉE: Extraction robuste de l'ID
     def extract_all_rows_data(self):
         """Extraire toutes les lignes du tableau des offres avec extraction robuste de l'ID"""
@@ -1136,6 +1286,13 @@ class TUNEPSScraper:
                         self.logger.warning(f"⚠️ Ligne {idx+1}: Impossible d'extraire l'ID")
                         self.logger.warning(f" Cellules: {all_texts[:5]}")
                  
+                    # DEBUG: Log all_texts pour comprendre la structure
+                    if idx < 2:  # Log les 2 premières lignes
+                        self.logger.info(f"🔍 DEBUG Ligne {idx} - Nombre cellules: {len(all_texts)}")
+                        for cell_idx, cell_text in enumerate(all_texts):
+                            if cell_text:  # Afficher seulement cellules non-vides
+                                self.logger.info(f"    [{cell_idx}] = {cell_text[:80]}")
+
                     basic_data = {
                         "N° Offre": num_offre,
                         "Acheteur public": all_texts[1] if len(all_texts) > 1 else "",
@@ -1144,6 +1301,10 @@ class TUNEPSScraper:
                         "Dernier Délai": all_texts[4] if len(all_texts) > 4 else "",
                         "_id1": id1
                     }
+
+                    # DEBUG: Log basic_data extrait
+                    if idx < 2:
+                        self.logger.info(f"🔍 DEBUG Ligne {idx} - Extrait: Date Pub='{basic_data.get('Date Publication')}', Dernier Délai='{basic_data.get('Dernier Délai')}'")
                  
                     consultations.append(basic_data)
                  
@@ -1272,10 +1433,17 @@ class TUNEPSScraper:
             return None
         extraction_complete = getattr(self, 'extraction_complete_mode', True)
         contenu = self.extraire_contenu_detaille(url, data, reference) if extraction_complete else {}
+
+        # En mode rapide, extraire quand même les dates (publication + limite) depuis la page de détail
+        dates_rapides = None
+        if not extraction_complete:
+            self.logger.info(f"📅 Extraction rapide des dates pour {reference}...")
+            dates_rapides = self.extraire_dates_rapide(url)
+
         region_id = None
         clean_promoter = self.nettoyer_texte(data.get("Acheteur public", ""))
         clean_promoter_words = set(clean_promoter.split())
-     
+
         for region, rid in REGION_IDS.items():
             clean_region = self.nettoyer_texte(region)
             clean_region_words = set(clean_region.split())
@@ -1285,15 +1453,33 @@ class TUNEPSScraper:
         raw_desc = self.nettoyer_texte(data.get("Objet Offre", ""))
         if not raw_desc.strip():
             raw_desc = f"Appel d'offres TUNEPS - Référence: {reference}"
-        start_bidding_full = contenu.get('start_bidding_date_full', contenu.get('publication_date_full', 'N/A')) if extraction_complete else data.get("Date Publication", "N/A")
+        # Utiliser les dates extraites rapidement si disponibles (avec heure et minute)
+        if not extraction_complete and dates_rapides:
+            # Date de publication avec heure/minute depuis page détail
+            publication_date_value = dates_rapides.get('publication', 'N/A')
+            if publication_date_value == 'N/A':
+                publication_date_value = data.get("Date Publication", "N/A")
+
+            # Date limite avec heure/minute depuis page détail
+            expiration_date_value = dates_rapides.get('expiration', 'N/A')
+            if expiration_date_value == 'N/A':
+                expiration_date_value = data.get("Dernier Délai", "N/A")
+
+            start_bidding_full = publication_date_value
+        else:
+            # Mode extraction complète
+            publication_date_value = contenu.get('publication_date_full', data.get("Date Publication", "N/A")) if extraction_complete else data.get("Date Publication", "N/A")
+            expiration_date_value = contenu.get('expiration_date_full', data.get("Dernier Délai", "N/A")) if extraction_complete else data.get("Dernier Délai", "N/A")
+            start_bidding_full = contenu.get('start_bidding_date_full', contenu.get('publication_date_full', 'N/A')) if extraction_complete else data.get("Date Publication", "N/A")
+
         offre = OffreTuneps(
             reference=reference,
             description=raw_desc,
             full_content=contenu.get('texte_integral', '') if extraction_complete else raw_desc,
             promoter=self.nettoyer_texte(data.get("Acheteur public", "")),
-            publicationDate=contenu.get('publication_date_full', data.get("Date Publication", "N/A")) if extraction_complete else data.get("Date Publication", "N/A"),
+            publicationDate=publication_date_value,
             startBiddingDate=start_bidding_full,
-            expirationDate=contenu.get('expiration_date_full', data.get("Dernier Délai", "N/A")) if extraction_complete else data.get("Dernier Délai", "N/A"),
+            expirationDate=expiration_date_value,
             ouverture_offres=contenu.get('ouverture_offres', "N/A") if extraction_complete else "N/A",
             offer_validity_duration=contenu.get('offer_validity_duration', 'N/A') if extraction_complete else 'N/A',
             cautionnement_provisoire=contenu.get('cautionnement_provisoire', '0') if extraction_complete else '0',
@@ -1692,11 +1878,235 @@ def get_pending():
     try:
         page = int(request.args.get('page', 1))
         limit = int(request.args.get('limit', 10))
-        paginated = scraper.get_offres_cache(page=page, limit=limit)
+
+        # ✅ Filtrage par date de publication
+        date_filter = request.args.get('date')  # Format: YYYY-MM-DD ou DD/MM/YYYY
+        start_date_param = request.args.get('start_date')  # Format: YYYY-MM-DD
+        end_date_param = request.args.get('end_date')  # Format: YYYY-MM-DD
+
+        # Lire depuis PostgreSQL au lieu du cache mémoire pour avoir les dates correctes
+        all_tenders = get_all_tenders(status='pending')
+
+        # Convertir les timestamps PostgreSQL en chaînes de caractères pour le frontend
+        offres = []
+        for tender in all_tenders:
+            offre_dict = dict(tender)
+
+            # Convertir les dates timestamp en chaînes DD/MM/YYYY HH:MM
+            if offre_dict.get('publication_date'):
+                pub_date = offre_dict['publication_date']
+                if hasattr(pub_date, 'strftime'):
+                    offre_dict['publicationDate'] = pub_date.strftime('%d/%m/%Y %H:%M')
+                else:
+                    offre_dict['publicationDate'] = str(pub_date)
+            else:
+                offre_dict['publicationDate'] = ''
+
+            if offre_dict.get('expiration_date'):
+                exp_date = offre_dict['expiration_date']
+                if hasattr(exp_date, 'strftime'):
+                    offre_dict['expirationDate'] = exp_date.strftime('%d/%m/%Y %H:%M')
+                else:
+                    offre_dict['expirationDate'] = str(exp_date)
+            else:
+                offre_dict['expirationDate'] = ''
+
+            if offre_dict.get('start_bidding_date'):
+                start_date = offre_dict['start_bidding_date']
+                if hasattr(start_date, 'strftime'):
+                    offre_dict['startBiddingDate'] = start_date.strftime('%d/%m/%Y %H:%M')
+                else:
+                    offre_dict['startBiddingDate'] = str(start_date)
+            else:
+                offre_dict['startBiddingDate'] = ''
+
+            # Ajouter extractionDate si manquant
+            if offre_dict.get('created_at') and not offre_dict.get('extractionDate'):
+                created = offre_dict['created_at']
+                if hasattr(created, 'isoformat'):
+                    offre_dict['extractionDate'] = created.isoformat()
+                else:
+                    offre_dict['extractionDate'] = str(created)
+
+            # Ajouter les champs manquants pour compatibilité frontend
+            offre_dict.setdefault('ouverture_offres', '')
+            offre_dict.setdefault('offer_validity_duration', '')
+            offre_dict.setdefault('cautionnement_provisoire', '0')
+            offre_dict.setdefault('lots', [])
+            offre_dict.setdefault('cahier_charge_pdf', '')
+            offre_dict.setdefault('cahier_charge_pdf_filename', '')
+            offre_dict.setdefault('cahier_charge_url', '')
+            offre_dict.setdefault('image_filename', '')
+            offre_dict.setdefault('s3_image_url', '')
+            offre_dict.setdefault('mots_cles_detectes', [])
+            offre_dict.setdefault('url_source', '')
+            offre_dict.setdefault('type_marche', 'Public')
+            offre_dict.setdefault('procedure', 'N/A')
+
+            offres.append(offre_dict)
+
+        # ✅ Appliquer le filtrage par date si demandé
+        if date_filter or start_date_param or end_date_param:
+            from datetime import datetime
+            filtered_offres = []
+
+            for offre in offres:
+                pub_date_str = offre.get('publication_date') or offre.get('publicationDate')
+                if not pub_date_str:
+                    continue
+
+                try:
+                    # Parser la date de publication
+                    if hasattr(pub_date_str, 'date'):  # datetime object
+                        pub_date = pub_date_str
+                    elif isinstance(pub_date_str, str):
+                        if 'T' in pub_date_str:  # Format ISO
+                            pub_date = datetime.fromisoformat(pub_date_str.replace('Z', '+00:00'))
+                        else:
+                            for date_format in ['%Y-%m-%d', '%d/%m/%Y %H:%M', '%d/%m/%Y', '%d-%m-%Y']:
+                                try:
+                                    pub_date = datetime.strptime(pub_date_str, date_format)
+                                    break
+                                except:
+                                    continue
+                    else:
+                        continue
+
+                    # Filtrer par date exacte
+                    if date_filter:
+                        for date_format in ['%Y-%m-%d', '%d/%m/%Y', '%d-%m-%Y']:
+                            try:
+                                filter_date = datetime.strptime(date_filter, date_format)
+                                if pub_date.date() == filter_date.date():
+                                    filtered_offres.append(offre)
+                                break
+                            except:
+                                continue
+
+                    # Filtrer par plage de dates
+                    elif start_date_param and end_date_param:
+                        start = datetime.strptime(start_date_param, '%Y-%m-%d')
+                        end = datetime.strptime(end_date_param, '%Y-%m-%d')
+                        if start.date() <= pub_date.date() <= end.date():
+                            filtered_offres.append(offre)
+
+                    # Filtrer par date de début
+                    elif start_date_param:
+                        start = datetime.strptime(start_date_param, '%Y-%m-%d')
+                        if pub_date.date() >= start.date():
+                            filtered_offres.append(offre)
+
+                    # Filtrer par date de fin
+                    elif end_date_param:
+                        end = datetime.strptime(end_date_param, '%Y-%m-%d')
+                        if pub_date.date() <= end.date():
+                            filtered_offres.append(offre)
+
+                except Exception as e:
+                    logger.warning(f"⚠️ Erreur parsing date {pub_date_str}: {e}")
+                    continue
+
+            offres = filtered_offres
+
+        # Pagination
+        total = len(offres)
+        start = (page - 1) * limit
+        end = start + limit
+        paginated_offres = offres[start:end]
+        total_pages = (total + limit - 1) // limit if limit > 0 else 1
+
+        paginated = {
+            "offres": paginated_offres,
+            "total": total,
+            "page": page,
+            "limit": limit,
+            "totalPages": total_pages
+        }
+
         return jsonify({"success": True, "pending": paginated})
     except Exception as e:
         logger.error(f"Erreur /api/pending: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/api/validated', methods=['GET'])
+def get_validated():
+    """Récupère les offres validées (status='active') depuis PostgreSQL"""
+    try:
+        page = int(request.args.get('page', 1))
+        limit = int(request.args.get('limit', 100))
+
+        # Lire toutes les offres validées depuis PostgreSQL
+        all_tenders = get_all_tenders(status='active')
+
+        # Convertir les timestamps PostgreSQL en chaînes de caractères
+        offres = []
+        for tender in all_tenders:
+            offre_dict = dict(tender)
+
+            # Convertir les dates timestamp en chaînes DD/MM/YYYY HH:MM
+            if offre_dict.get('publication_date'):
+                pub_date = offre_dict['publication_date']
+                if hasattr(pub_date, 'strftime'):
+                    offre_dict['publicationDate'] = pub_date.strftime('%d/%m/%Y %H:%M')
+                else:
+                    offre_dict['publicationDate'] = str(pub_date)
+            else:
+                offre_dict['publicationDate'] = ''
+
+            if offre_dict.get('expiration_date'):
+                exp_date = offre_dict['expiration_date']
+                if hasattr(exp_date, 'strftime'):
+                    offre_dict['expirationDate'] = exp_date.strftime('%d/%m/%Y %H:%M')
+                else:
+                    offre_dict['expirationDate'] = str(exp_date)
+            else:
+                offre_dict['expirationDate'] = ''
+
+            if offre_dict.get('opening_date'):
+                opening_date = offre_dict['opening_date']
+                if hasattr(opening_date, 'strftime'):
+                    offre_dict['openingDate'] = opening_date.strftime('%d/%m/%Y %H:%M')
+                else:
+                    offre_dict['openingDate'] = str(opening_date)
+            else:
+                offre_dict['openingDate'] = ''
+
+            if offre_dict.get('created_at'):
+                created = offre_dict['created_at']
+                if hasattr(created, 'strftime'):
+                    offre_dict['created_at'] = created.strftime('%Y-%m-%d %H:%M:%S')
+
+            if offre_dict.get('updated_at'):
+                updated = offre_dict['updated_at']
+                if hasattr(updated, 'strftime'):
+                    offre_dict['updated_at'] = updated.strftime('%Y-%m-%d %H:%M:%S')
+
+            offres.append(offre_dict)
+
+        # Pagination
+        total = len(offres)
+        start = (page - 1) * limit
+        end = start + limit
+        paginated_offres = offres[start:end]
+        total_pages = (total + limit - 1) // limit if limit > 0 else 1
+
+        paginated = {
+            "offres": paginated_offres,
+            "total": total,
+            "page": page,
+            "limit": limit,
+            "totalPages": total_pages
+        }
+
+        return jsonify({"success": True, "validated": paginated})
+    except Exception as e:
+        logger.error(f"Erreur /api/validated: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"success": False, "error": str(e)}), 500
+
 @app.route('/api/download_pdf/<filename>')
 def download_pdf(filename):
     pdf_path = os.path.join(PDF_DIR, filename)
@@ -1740,4 +2150,28 @@ if __name__ == "__main__":
     print(" - Traitement parallèle (5 threads)")
     print(" - Mode rapide par défaut (extraction_complete=False)")
     print("="*80)
+
+    # ❌ SCRAPING AUTOMATIQUE DÉSACTIVÉ - L'utilisateur ne veut pas de scraping auto
+    # print("🚀 Lancement du scraping automatique au démarrage...")
+    # import threading
+    # def initial_scrape():
+    #     import time
+    #     from datetime import datetime, timedelta
+    #     time.sleep(5)  # Attendre que Flask démarre complètement
+    #     try:
+    #         # ✅ Limiter le scraping automatique aux 7 derniers jours pour éviter de scraper toutes les pages
+    #         end_date = datetime.now().strftime('%Y-%m-%d')
+    #         start_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+    #         logger.info(f"🤖 Scraping initial automatique (mode rapide) - {start_date} à {end_date}")
+    #         scraper.scraper_offres_tuneps(start_date=start_date, end_date=end_date, extraction_complete=False)
+    #         logger.info("✅ Scraping initial terminé")
+    #     except Exception as e:
+    #         logger.error(f"❌ Erreur scraping initial: {e}")
+
+    # scrape_thread = threading.Thread(target=initial_scrape, daemon=True)
+    # scrape_thread.start()
+    # print("✅ Thread de scraping automatique lancé")
+    print("⚠️ Scraping automatique TUNEPS AO désactivé - Utiliser l'API pour lancer manuellement")
+    print("="*80)
+
     app.run(debug=False, port=5005, host='0.0.0.0')
