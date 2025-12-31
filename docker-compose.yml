@@ -46,6 +46,7 @@ services:
       - "5015:5015"  # RELIEF scraper
       - "5016:5016"  # MEDIACONGO scraper
       - "5017:5017"  # PPDA scraper
+      - "5018:5018"  # NIGER scraper
     environment:
       - NODE_ENV=production
       - PORT=5000

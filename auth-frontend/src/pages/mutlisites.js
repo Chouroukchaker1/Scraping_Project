@@ -127,10 +127,19 @@ function MultiSitesPage() {
       color: "#8B5CF6",
       gradient: "linear-gradient(135deg, #8B5CF6 0%, #7C3AED 100%)",
       path: "/ppda"
+    },
+    {
+      id: 14,
+      name: "Niger Emploi",
+      description: "Offres d'emploi Niger",
+      icon: Briefcase,
+      color: "#F59E0B",
+      gradient: "linear-gradient(135deg, #F59E0B 0%, #D97706 100%)",
+      path: "/niger"
     }
   ];
 
-  // Force rebuild detection - Build timestamp: 2025-12-31 PPDA Integration
+  // Force rebuild detection - Build timestamp: 2025-12-31 Niger Integration
 
   return (
     <div className="min-h-screen" style={{ background: "linear-gradient(to bottom, #F8FAFC 0%, #F1F5F9 100%)" }}>

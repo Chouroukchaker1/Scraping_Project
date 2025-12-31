@@ -605,6 +605,21 @@ app.use('/api/ppda', createProxyMiddleware({
   }
 }));
 
+// NIGER: Proxy pour tous les endpoints
+app.use('/api/niger', createProxyMiddleware({
+  target: 'http://localhost:5018',
+  changeOrigin: true,
+  pathRewrite: { '^/api/niger': '' },
+  onError: (err, req, res) => {
+    console.error('❌ Proxy NIGER error:', err.message);
+    res.status(502).json({
+      success: false,
+      message: 'Scraper Niger non disponible',
+      error: err.message
+    });
+  }
+}));
+
 // ==================== SCRAPERS PYTHON ====================
 let pythonProcess = null;
 let pnudPythonProcess = null;
@@ -619,6 +634,7 @@ let tunepsPythonProcess = null;
 let reliefPythonProcess = null;
 let mediacongoPythonProcess = null;
 let ppdaPythonProcess = null;
+let nigerPythonProcess = null;
 
 function startBoampPythonScraper() {
   if (pythonProcess && !pythonProcess.killed) {
@@ -1122,6 +1138,44 @@ function startPpdaPythonScraper() {
   console.log(`✅ Scraper PPDA lancé (PID: ${ppdaPythonProcess.pid})`);
 }
 
+function startNigerPythonScraper() {
+  if (nigerPythonProcess && !nigerPythonProcess.killed) {
+    console.log(`✅ Scraper NIGER déjà en cours (PID: ${nigerPythonProcess.pid})`);
+    return;
+  }
+
+  const scriptPath = path.join(__dirname, 'scripts', 'niger_api.py');
+  if (!fs.existsSync(scriptPath)) {
+    console.error('❌ niger_api.py non trouvé !');
+    return;
+  }
+
+  console.log('🚀 Démarrage du scraper Niger Emploi...');
+  const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+
+  nigerPythonProcess = spawn(pythonCmd, [scriptPath], {
+    cwd: path.join(__dirname, 'scripts'),
+    stdio: ['pipe', 'pipe', 'pipe'],
+    env: { ...process.env, PORT: '5018' }
+  });
+
+  nigerPythonProcess.stdout.on('data', (data) => {
+    console.log(`[NIGER STDOUT] ${data.toString().trim()}`);
+  });
+
+  nigerPythonProcess.stderr.on('data', (data) => {
+    console.error(`[NIGER STDERR] ${data.toString().trim()}`);
+  });
+
+  nigerPythonProcess.on('close', (code) => {
+    console.log(`❌ Scraper NIGER terminé avec code ${code}`);
+    nigerPythonProcess = null;
+    if (code !== 0) setTimeout(startNigerPythonScraper, 5000);
+  });
+
+  console.log(`✅ Scraper NIGER lancé (PID: ${nigerPythonProcess.pid})`);
+}
+
 // ==================== HEALTH & INFO ====================
 app.get('/health', async (req, res) => {
   const health = {
@@ -1253,6 +1307,7 @@ app.listen(PORT, '0.0.0.0', async () => {
   startReliefPythonScraper();
   startMediaCongoPythonScraper();
   startPpdaPythonScraper();
+  startNigerPythonScraper();
 
   console.log(`
 API AUTHENTIFICATION PRÊTE !
@@ -1277,6 +1332,7 @@ Ports actifs:
 • RELIEF: 5015
 • MEDIACONGO: 5016
 • PPDA: 5017
+• NIGER: 5018
   `);
 });
 
@@ -1287,7 +1343,7 @@ process.on('SIGINT', () => {
     pythonProcess, pnudPythonProcess, haicopPythonProcess, banquePythonProcess,
     tunepsAoPythonProcess, armpPythonProcess, beninPythonProcess,
     expertisePythonProcess, gizPythonProcess, tunepsPythonProcess, reliefPythonProcess,
-    mediacongoPythonProcess, ppdaPythonProcess
+    mediacongoPythonProcess, ppdaPythonProcess, nigerPythonProcess
   ].forEach(proc => {
     if (proc && !proc.killed) {
       console.log(`Arrêt PID: ${proc.pid}...`);

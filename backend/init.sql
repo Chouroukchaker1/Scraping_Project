@@ -342,6 +342,33 @@ CREATE INDEX IF NOT EXISTS idx_ppda_status ON tenders_ppda(status);
 CREATE INDEX IF NOT EXISTS idx_ppda_publication ON tenders_ppda(publication_date);
 
 -- ============================================================================
+-- TABLE NIGER EMPLOI (Job Offers Niger)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS jobs_niger (
+    id SERIAL PRIMARY KEY,
+    reference VARCHAR(255) UNIQUE NOT NULL,
+    title TEXT,
+    description TEXT,
+    promoter TEXT,
+    publication_date DATE,
+    expiration_date DATE,
+    location VARCHAR(255),
+    url TEXT,
+    country VARCHAR(100) DEFAULT 'Niger',
+    category VARCHAR(100),
+    contract_type VARCHAR(100),
+    status VARCHAR(50) DEFAULT 'pending',
+    validation_date TIMESTAMP,
+    api_id INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_niger_reference ON jobs_niger(reference);
+CREATE INDEX IF NOT EXISTS idx_niger_status ON jobs_niger(status);
+CREATE INDEX IF NOT EXISTS idx_niger_publication ON jobs_niger(publication_date);
+
+-- ============================================================================
 -- VUE GLOBALE - Toutes les offres en attente
 -- ============================================================================
 CREATE OR REPLACE VIEW pending_tenders_all AS
@@ -430,6 +457,7 @@ BEGIN
     RAISE NOTICE '  - tenders_haicop';
     RAISE NOTICE '  - tenders_expertise';
     RAISE NOTICE '  - tenders_ppda';
+    RAISE NOTICE '  - jobs_niger';
     RAISE NOTICE '========================================';
     RAISE NOTICE 'View created: pending_tenders_all';
     RAISE NOTICE '========================================';
