@@ -547,6 +547,64 @@ app.use('/api/mediacongo', createProxyMiddleware({
   }
 }));
 
+// PPDA: Custom endpoints
+app.post('/api/ppda/scrape', async (req, res) => {
+  try {
+    const axios = require('axios');
+    console.log('📤 Forwarding PPDA scrape request:', req.body);
+
+    const response = await axios.post('http://localhost:5017/scrape', req.body, {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 120000
+    });
+
+    console.log('✅ PPDA scrape response:', response.data);
+    res.json(response.data);
+  } catch (error) {
+    console.error('❌ PPDA scrape error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.post('/api/ppda/validate', async (req, res) => {
+  try {
+    const axios = require('axios');
+    console.log('📤 Forwarding PPDA validate request');
+
+    const response = await axios.post('http://localhost:5017/validate', req.body, {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 30000
+    });
+
+    console.log('✅ PPDA validate response:', response.data);
+    res.json(response.data);
+  } catch (error) {
+    console.error('❌ PPDA validate error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: error.response?.data?.message || error.message
+    });
+  }
+});
+
+// PPDA: Proxy pour les autres endpoints
+app.use('/api/ppda', createProxyMiddleware({
+  target: 'http://localhost:5017',
+  changeOrigin: true,
+  pathRewrite: { '^/api/ppda': '' },
+  onError: (err, req, res) => {
+    console.error('❌ Proxy PPDA error:', err.message);
+    res.status(502).json({
+      success: false,
+      message: 'Scraper PPDA non disponible',
+      error: err.message
+    });
+  }
+}));
+
 // ==================== SCRAPERS PYTHON ====================
 let pythonProcess = null;
 let pnudPythonProcess = null;
@@ -560,6 +618,7 @@ let gizPythonProcess = null;
 let tunepsPythonProcess = null;
 let reliefPythonProcess = null;
 let mediacongoPythonProcess = null;
+let ppdaPythonProcess = null;
 
 function startBoampPythonScraper() {
   if (pythonProcess && !pythonProcess.killed) {
@@ -1025,6 +1084,44 @@ function startMediaCongoPythonScraper() {
   console.log(`✅ Scraper MEDIACONGO lancé (PID: ${mediacongoPythonProcess.pid})`);
 }
 
+function startPpdaPythonScraper() {
+  if (ppdaPythonProcess && !ppdaPythonProcess.killed) {
+    console.log(`✅ Scraper PPDA déjà en cours (PID: ${ppdaPythonProcess.pid})`);
+    return;
+  }
+
+  const scriptPath = path.join(__dirname, 'scripts', 'PPDA.py');
+  if (!fs.existsSync(scriptPath)) {
+    console.error('❌ PPDA.py non trouvé !');
+    return;
+  }
+
+  console.log('🚀 Démarrage du scraper PPDA...');
+  const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+
+  ppdaPythonProcess = spawn(pythonCmd, [scriptPath], {
+    cwd: path.join(__dirname, 'scripts'),
+    stdio: ['pipe', 'pipe', 'pipe'],
+    env: { ...process.env, PORT: '5017' }
+  });
+
+  ppdaPythonProcess.stdout.on('data', (data) => {
+    console.log(`[PPDA STDOUT] ${data.toString().trim()}`);
+  });
+
+  ppdaPythonProcess.stderr.on('data', (data) => {
+    console.error(`[PPDA STDERR] ${data.toString().trim()}`);
+  });
+
+  ppdaPythonProcess.on('close', (code) => {
+    console.log(`❌ Scraper PPDA terminé avec code ${code}`);
+    ppdaPythonProcess = null;
+    if (code !== 0) setTimeout(startPpdaPythonScraper, 5000);
+  });
+
+  console.log(`✅ Scraper PPDA lancé (PID: ${ppdaPythonProcess.pid})`);
+}
+
 // ==================== HEALTH & INFO ====================
 app.get('/health', async (req, res) => {
   const health = {
@@ -1155,6 +1252,7 @@ app.listen(PORT, '0.0.0.0', async () => {
   startGizPythonScraper();
   startReliefPythonScraper();
   startMediaCongoPythonScraper();
+  startPpdaPythonScraper();
 
   console.log(`
 API AUTHENTIFICATION PRÊTE !
@@ -1178,6 +1276,7 @@ Ports actifs:
 • GIZ: 5014
 • RELIEF: 5015
 • MEDIACONGO: 5016
+• PPDA: 5017
   `);
 });
 
@@ -1187,7 +1286,8 @@ process.on('SIGINT', () => {
   [
     pythonProcess, pnudPythonProcess, haicopPythonProcess, banquePythonProcess,
     tunepsAoPythonProcess, armpPythonProcess, beninPythonProcess,
-    expertisePythonProcess, gizPythonProcess, tunepsPythonProcess, reliefPythonProcess
+    expertisePythonProcess, gizPythonProcess, tunepsPythonProcess, reliefPythonProcess,
+    mediacongoPythonProcess, ppdaPythonProcess
   ].forEach(proc => {
     if (proc && !proc.killed) {
       console.log(`Arrêt PID: ${proc.pid}...`);

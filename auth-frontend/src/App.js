@@ -17,6 +17,7 @@ import Expertise from "./pages/expertise";
 import Giz from "./pages/giz";
 import Relief from "./pages/relief";
 import MediaCongo from "./pages/mediacongo";
+import PPDA from "./pages/ppda";
 
 import PrivateRoute from "./components/PrivateRoute";
 import Navbar from "./components/Navbar";
@@ -65,6 +66,7 @@ function App() {
         <Route path="/giz" element={<PrivateRoute><ProtectedPage><Giz /></ProtectedPage></PrivateRoute>} />
         <Route path="/relief" element={<PrivateRoute><ProtectedPage><Relief /></ProtectedPage></PrivateRoute>} />
         <Route path="/mediacongo" element={<PrivateRoute><ProtectedPage><MediaCongo /></ProtectedPage></PrivateRoute>} />
+        <Route path="/ppda" element={<PrivateRoute><ProtectedPage><PPDA /></ProtectedPage></PrivateRoute>} />
         <Route path="/multi-sites" element={<PrivateRoute><ProtectedPage><MultiSites /></ProtectedPage></PrivateRoute>} />
 
 

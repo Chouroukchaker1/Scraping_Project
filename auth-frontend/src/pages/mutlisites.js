@@ -118,8 +118,19 @@ function MultiSitesPage() {
       color: "#10B981",
       gradient: "linear-gradient(135deg, #10B981 0%, #059669 100%)",
       path: "/mediacongo"
+    },
+    {
+      id: 13,
+      name: "PPDA Malawi",
+      description: "Public Procurement Malawi",
+      icon: Briefcase,
+      color: "#8B5CF6",
+      gradient: "linear-gradient(135deg, #8B5CF6 0%, #7C3AED 100%)",
+      path: "/ppda"
     }
   ];
+
+  // Force rebuild detection - Build timestamp: 2025-12-31 PPDA Integration
 
   return (
     <div className="min-h-screen" style={{ background: "linear-gradient(to bottom, #F8FAFC 0%, #F1F5F9 100%)" }}>

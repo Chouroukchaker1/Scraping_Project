@@ -41,7 +41,7 @@ RUN mkdir -p output excelpnud screenshots pdf_tuneps_extraction images logs
 EXPOSE 5000
 
 # Exposer les ports des scrapers Python
-EXPOSE 5003 5005 5006 5007 5010 5011
+EXPOSE 5003 5005 5006 5007 5010 5011 5012 5013 5014 5015 5016 5017
 
 # Variables d'environnement par défaut
 ENV NODE_ENV=production

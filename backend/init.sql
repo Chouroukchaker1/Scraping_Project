@@ -314,6 +314,34 @@ CREATE INDEX IF NOT EXISTS idx_expertise_reference ON tenders_expertise(referenc
 CREATE INDEX IF NOT EXISTS idx_expertise_status ON tenders_expertise(status);
 
 -- ============================================================================
+-- TABLE PPDA (Public Procurement Malawi)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS tenders_ppda (
+    id SERIAL PRIMARY KEY,
+    reference VARCHAR(255) UNIQUE NOT NULL,
+    title TEXT,
+    description TEXT,
+    promoter TEXT,
+    publication_date DATE,
+    expiration_date DATE,
+    document_url TEXT,
+    country VARCHAR(100) DEFAULT 'Malawi',
+    nature VARCHAR(100) DEFAULT 'public',
+    type VARCHAR(100) DEFAULT 'national',
+    funding_source_type VARCHAR(100) DEFAULT 'national',
+    caution VARCHAR(255) DEFAULT '0',
+    status VARCHAR(50) DEFAULT 'pending',
+    validation_date TIMESTAMP,
+    api_id INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_ppda_reference ON tenders_ppda(reference);
+CREATE INDEX IF NOT EXISTS idx_ppda_status ON tenders_ppda(status);
+CREATE INDEX IF NOT EXISTS idx_ppda_publication ON tenders_ppda(publication_date);
+
+-- ============================================================================
 -- VUE GLOBALE - Toutes les offres en attente
 -- ============================================================================
 CREATE OR REPLACE VIEW pending_tenders_all AS
@@ -348,7 +376,10 @@ SELECT 'HAICOP' as source, reference, description, publication_date::text, creat
 FROM tenders_haicop WHERE status = 'pending'
 UNION ALL
 SELECT 'EXPERTISE' as source, reference, description, publication_date::text, created_at
-FROM tenders_expertise WHERE status = 'pending';
+FROM tenders_expertise WHERE status = 'pending'
+UNION ALL
+SELECT 'PPDA' as source, reference, description, publication_date::text, created_at
+FROM tenders_ppda WHERE status = 'pending';
 
 -- ============================================================================
 -- FONCTION TRIGGER pour mise à jour automatique du timestamp
@@ -398,6 +429,7 @@ BEGIN
     RAISE NOTICE '  - tenders_boamp';
     RAISE NOTICE '  - tenders_haicop';
     RAISE NOTICE '  - tenders_expertise';
+    RAISE NOTICE '  - tenders_ppda';
     RAISE NOTICE '========================================';
     RAISE NOTICE 'View created: pending_tenders_all';
     RAISE NOTICE '========================================';
