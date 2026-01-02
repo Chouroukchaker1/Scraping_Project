@@ -282,18 +282,63 @@ const StatsSection = ({ stats }) => {
 };
 
 // ===== TABLEAU DES OFFRES EN ATTENTE =====
-const PendingOffersTable = ({ offers, onValidate, onDelete }) => {
+const PendingOffersTable = ({ offers, onValidate, onDelete, onDeleteAll }) => {
   const [searchTerm, setSearchTerm] = useState('');
+  const [dateFilter, setDateFilter] = useState({ start: '', end: '' });
   const [filteredOffers, setFilteredOffers] = useState(offers);
 
   useEffect(() => {
-    const filtered = offers.filter(offer =>
-      offer.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      offer.promoter?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      offer.reference?.toLowerCase().includes(searchTerm.toLowerCase())
-    );
+    console.log('🔄 useEffect déclenché - Total offers:', offers.length);
+    console.log('📋 Premier offer:', offers[0]);
+
+    let filtered = offers;
+
+    // Filtre par recherche textuelle
+    if (searchTerm) {
+      filtered = filtered.filter(offer =>
+        offer.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        offer.promoter?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        offer.reference?.toLowerCase().includes(searchTerm.toLowerCase())
+      );
+    }
+
+    // Filtre par date - comparer uniquement YYYY-MM-DD
+    if (dateFilter.start || dateFilter.end) {
+      console.log('🔍 Filtrage par date activé:', dateFilter);
+      console.log('🔍 Exemple de publicationDate du 1er offer:', offers[0]?.publicationDate);
+
+      filtered = filtered.filter(offer => {
+        if (!offer.publicationDate) {
+          console.log(`⚠️ ${offer.reference}: PAS DE publicationDate`);
+          return false;
+        }
+
+        // Convertir la date de publication en format YYYY-MM-DD (sans conversion de fuseau horaire)
+        const pubDate = new Date(offer.publicationDate);
+        const year = pubDate.getFullYear();
+        const month = String(pubDate.getMonth() + 1).padStart(2, '0');
+        const day = String(pubDate.getDate()).padStart(2, '0');
+        const pubDateStr = `${year}-${month}-${day}`; // Format: "2025-12-26"
+
+        let result = true;
+        if (dateFilter.start && dateFilter.end) {
+          // Vérifier si la date est dans la période [start, end]
+          result = pubDateStr >= dateFilter.start && pubDateStr <= dateFilter.end;
+          console.log(`${result ? '✅' : '❌'} ${offer.reference}: ${pubDateStr} ${result ? 'DANS' : 'HORS'} période [${dateFilter.start}, ${dateFilter.end}]`);
+        } else if (dateFilter.start) {
+          // Vérifier si la date est >= start
+          result = pubDateStr >= dateFilter.start;
+        } else if (dateFilter.end) {
+          // Vérifier si la date est <= end
+          result = pubDateStr <= dateFilter.end;
+        }
+        return result;
+      });
+      console.log(`📊 Après filtrage date: ${filtered.length} offres sur ${offers.length} total`);
+    }
+
     setFilteredOffers(filtered);
-  }, [searchTerm, offers]);
+  }, [searchTerm, dateFilter, offers]);
 
   const formatDate = (dateStr) => {
     if (!dateStr) return 'N/A';
@@ -331,27 +376,91 @@ const PendingOffersTable = ({ offers, onValidate, onDelete }) => {
           Offres en attente ({filteredOffers.length})
         </h3>
 
-        <div style={{ position: 'relative', flex: '1 1 300px', maxWidth: '400px' }}>
-          <Search size={20} style={{
-            position: 'absolute',
-            left: '1rem',
-            top: '50%',
-            transform: 'translateY(-50%)',
-            color: '#94A3B8'
-          }} />
-          <input
-            type="text"
-            placeholder="Rechercher par référence, description, promoteur..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
+        <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
+          <button
+            onClick={onDeleteAll}
+            disabled={!offers.length}
             style={{
-              width: '100%',
-              padding: '0.75rem 1rem 0.75rem 3rem',
-              border: '2px solid #E2E8F0',
+              padding: '0.75rem 1.5rem',
+              background: !offers.length ? '#94A3B8' : 'linear-gradient(135deg, #EF4444 0%, #DC2626 100%)',
+              color: 'white',
+              border: 'none',
               borderRadius: '10px',
-              fontSize: '0.9rem'
+              fontSize: '0.95rem',
+              fontWeight: '600',
+              cursor: !offers.length ? 'not-allowed' : 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              transition: 'all 0.2s'
             }}
-          />
+          >
+            <Trash2 size={16} />
+            Supprimer tous
+          </button>
+
+          <div style={{ position: 'relative', flex: '1 1 300px', maxWidth: '400px' }}>
+            <Search size={20} style={{
+              position: 'absolute',
+              left: '1rem',
+              top: '50%',
+              transform: 'translateY(-50%)',
+              color: '#94A3B8'
+            }} />
+            <input
+              type="text"
+              placeholder="Rechercher par référence, description, promoteur..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              style={{
+                width: '100%',
+                padding: '0.75rem 1rem 0.75rem 3rem',
+                border: '2px solid #E2E8F0',
+                borderRadius: '10px',
+                fontSize: '0.9rem'
+              }}
+            />
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+            <label style={{ fontSize: '0.75rem', fontWeight: '600', color: '#64748B' }}>Date début</label>
+            <input
+              type="date"
+              value={dateFilter.start}
+              onChange={(e) => {
+                console.log('📅 Date début changée:', e.target.value);
+                setDateFilter({ ...dateFilter, start: e.target.value });
+              }}
+              placeholder="Date début"
+              style={{
+                padding: '0.75rem',
+                border: '2px solid #E2E8F0',
+                borderRadius: '10px',
+                fontSize: '0.9rem',
+                minWidth: '150px'
+              }}
+            />
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+            <label style={{ fontSize: '0.75rem', fontWeight: '600', color: '#64748B' }}>Date fin</label>
+            <input
+              type="date"
+              value={dateFilter.end}
+              onChange={(e) => {
+                console.log('📅 Date fin changée:', e.target.value);
+                setDateFilter({ ...dateFilter, end: e.target.value });
+              }}
+              placeholder="Date fin"
+              style={{
+                padding: '0.75rem',
+                border: '2px solid #E2E8F0',
+                borderRadius: '10px',
+                fontSize: '0.9rem',
+                minWidth: '150px'
+              }}
+            />
+          </div>
         </div>
       </div>
 
@@ -806,6 +915,25 @@ function MediaCongoPage() {
     }
   };
 
+  const handleDeleteAll = async () => {
+    if (!window.confirm('⚠️ Êtes-vous sûr de vouloir supprimer toutes les offres en attente ?')) {
+      return;
+    }
+
+    try {
+      const response = await axios.delete(`${API_BASE}/delete_all`);
+      if (response.data.success) {
+        setSuccess(`✅ ${response.data.message}`);
+        fetchPending();
+        fetchValidated();
+      } else {
+        setError(`❌ ${response.data.message}`);
+      }
+    } catch (err) {
+      setError(`❌ Erreur: ${err.response?.data?.message || err.message}`);
+    }
+  };
+
   return (
     <div style={{
       minHeight: '100vh',
@@ -964,6 +1092,7 @@ function MediaCongoPage() {
             offers={pendingOffers}
             onValidate={handleValidate}
             onDelete={handleDelete}
+            onDeleteAll={handleDeleteAll}
           />
         )}
 

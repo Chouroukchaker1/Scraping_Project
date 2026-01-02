@@ -136,6 +136,15 @@ function MultiSitesPage() {
       color: "#F59E0B",
       gradient: "linear-gradient(135deg, #F59E0B 0%, #D97706 100%)",
       path: "/niger"
+    },
+    {
+      id: 15,
+      name: "Somalia Jobs",
+      description: "Offres d'emploi Somalie",
+      icon: Briefcase,
+      color: "#3B82F6",
+      gradient: "linear-gradient(135deg, #3B82F6 0%, #2563EB 100%)",
+      path: "/somalia"
     }
   ];
 

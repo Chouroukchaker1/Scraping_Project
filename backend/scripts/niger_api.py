@@ -90,7 +90,7 @@ class NigerEmploiScraper:
 
             # Promoteur/Recruteur
             promoteur = "Non spécifié"
-            promoteur_tag = annonce_div.find('a', class_='ss_miz_f')
+            promoteur_tag = annonce_div.find('a', class_='ss_miz_f', href=re.compile(r'recherche_offre-structure-'))
             if promoteur_tag:
                 promoteur = promoteur_tag.get('title', '').replace('Recruteur: ', '')
                 if not promoteur or promoteur == 'Recruteur: ':
@@ -109,6 +109,17 @@ class NigerEmploiScraper:
             if len(dates) >= 2:
                 date_expiration = dates[1]
 
+            # Recherche avec icônes pour dates plus précises
+            date_tags = annonce_div.find_all('i', class_=re.compile(r'fa-calendar'))
+            for date_tag in date_tags:
+                parent_text = date_tag.parent.get_text()
+                date_match = re.search(date_pattern, parent_text)
+                if date_match:
+                    if 'calendar-times-o' in date_tag.get('class', []):
+                        date_expiration = date_match.group(1)
+                    else:
+                        date_publication = date_match.group(1)
+
             # Localisation
             lieu = "Niger"
             lieu_tag = annonce_div.find('i', class_='fa-map-marker')
@@ -116,6 +127,26 @@ class NigerEmploiScraper:
                 lieu_text = lieu_tag.parent.get_text(strip=True)
                 if lieu_text:
                     lieu = lieu_text
+
+            # Type d'annonce/catégorie
+            category = "Emploi"
+            type_tag = annonce_div.find('a', class_='ss_miz_f', href=re.compile(r'recherche_offre-categorie-'))
+            if type_tag:
+                category = type_tag.get_text(strip=True)
+
+            # Type de contrat
+            contract_type = "Non spécifié"
+            contract_tag = annonce_div.find('a', href=re.compile(r'recherche_offre-categorie-'))
+            if contract_tag:
+                contract_text = contract_tag.get_text(strip=True).lower()
+                if 'cdi' in contract_text:
+                    contract_type = "CDI"
+                elif 'cdd' in contract_text:
+                    contract_type = "CDD"
+                elif 'stage' in contract_text:
+                    contract_type = "Stage"
+                elif 'consultant' in contract_text or 'freelance' in contract_text:
+                    contract_type = "Consultant"
 
             job = {
                 "reference": reference,
@@ -127,8 +158,8 @@ class NigerEmploiScraper:
                 "location": lieu,
                 "url": lien,
                 "country": "Niger",
-                "category": "Emploi",
-                "contract_type": "Non spécifié"
+                "category": category,
+                "contract_type": contract_type
             }
 
             return job
@@ -152,16 +183,22 @@ class NigerEmploiScraper:
 
             soup = BeautifulSoup(response.content, 'html.parser')
 
-            # Trouver les annonces
-            annonces_divs = soup.find_all('div', class_='annonces_structure')
-            if not annonces_divs:
-                annonces_divs = soup.find_all('div', class_=re.compile(r'annonce'))
+            # Trouver les annonces avec la bonne classe
+            annonces_divs = soup.find_all('div', class_='div_rz_ance_gnral')
+
+            logger.info(f"Nombre de divs trouvés: {len(annonces_divs)}")
 
             jobs = []
-            for annonce_div in annonces_divs:
+            for idx, annonce_div in enumerate(annonces_divs):
                 job = self.extract_annonce_data(annonce_div)
                 if job:
-                    jobs.append(job)
+                    logger.debug(f"Job extrait #{idx+1}: ref={job.get('reference')}, titre={job.get('title', '')[:50]}")
+                    if job['reference'] != "NE-N/A":
+                        jobs.append(job)
+                    else:
+                        logger.warning(f"Job #{idx+1} ignoré: référence=NE-N/A")
+                else:
+                    logger.warning(f"Job #{idx+1}: extraction a retourné None")
 
             logger.info(f"Page {page_num}: {len(jobs)} emplois extraits")
             return jobs
@@ -170,21 +207,128 @@ class NigerEmploiScraper:
             logger.error(f"Erreur scraping page {page_num}: {e}")
             return []
 
-    def scrape_all_pages(self, max_pages=5):
-        """Scraper toutes les pages"""
-        all_jobs = []
+    def scrape_all_pages(self, max_pages=5, start_date=None, end_date=None):
+        """Scraper toutes les pages avec filtrage par date"""
+        logger.info(f"=== DEBUT scrape_all_pages, max_pages={max_pages} ===")
 
+        # Convertir les dates en objets date
+        start_date_obj = None
+        end_date_obj = None
+        if start_date:
+            try:
+                start_date_obj = datetime.strptime(start_date, '%Y-%m-%d').date()
+                logger.info(f"Filtre date début: {start_date_obj}")
+            except:
+                logger.warning(f"Date de début invalide: {start_date}")
+
+        if end_date:
+            try:
+                end_date_obj = datetime.strptime(end_date, '%Y-%m-%d').date()
+                logger.info(f"Filtre date fin: {end_date_obj}")
+            except:
+                logger.warning(f"Date de fin invalide: {end_date}")
+
+        all_jobs = []
+        seen_references = set()
+        consecutive_out_of_range = 0
+
+        # Scraper la page principale
+        logger.info("📄 Scraping page principale...")
+        try:
+            response = self.session.get(self.base_url, timeout=30)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.content, 'html.parser')
+            annonces_divs = soup.find_all('div', class_='div_rz_ance_gnral')
+
+            for idx, annonce_div in enumerate(annonces_divs, 1):
+                job = self.extract_annonce_data(annonce_div)
+                if job and job['reference'] != "NE-N/A" and job['reference'] not in seen_references:
+                    # Vérifier si la date est dans la plage
+                    date_in_range = True
+                    if job.get('publication_date') and (start_date_obj or end_date_obj):
+                        try:
+                            # Convertir la date string en objet date pour comparaison
+                            pub_date = datetime.strptime(job['publication_date'], '%Y-%m-%d').date()
+                            if start_date_obj and pub_date < start_date_obj:
+                                date_in_range = False
+                            if end_date_obj and pub_date > end_date_obj:
+                                date_in_range = False
+                        except:
+                            logger.warning(f"Date invalide pour job {job['reference']}: {job.get('publication_date')}")
+                            date_in_range = True  # Inclure les jobs avec dates invalides
+
+                    if date_in_range:
+                        all_jobs.append(job)
+                        seen_references.add(job['reference'])
+                        consecutive_out_of_range = 0
+                        logger.info(f"   ✅ Job #{idx}: {job['reference']} - {job['title'][:50]} (Date: {job.get('publication_date')})")
+                    else:
+                        consecutive_out_of_range += 1
+                        logger.info(f"   ⏭️ Job #{idx}: {job['reference']} hors plage de dates (Date: {job.get('publication_date')})")
+
+                        # Arrêt après 10 jobs consécutifs hors plage
+                        if consecutive_out_of_range >= 10:
+                            logger.info(f"   🛑 ARRÊT: 10 offres consécutives hors de la plage de dates")
+                            logger.info(f"Scraping terminé: {len(all_jobs)} emplois extraits dans la plage de dates")
+                            return all_jobs
+
+            logger.info(f"📊 Page principale: {len(all_jobs)} emplois dans la plage de dates")
+        except Exception as e:
+            logger.error(f"Erreur scraping page principale: {e}")
+
+        # Scraper les pages d'annonces
         for page in range(1, max_pages + 1):
+            logger.info(f"📄 Scraping page {page}...")
             jobs = self.scrape_page(page)
 
             if not jobs:
                 logger.info("Page vide, arrêt du scraping")
                 break
 
-            all_jobs.extend(jobs)
+            page_jobs_in_range = 0
+            # Vérifier les doublons et filtrer par date
+            for idx, job in enumerate(jobs, 1):
+                if job['reference'] not in seen_references:
+                    # Vérifier si la date est dans la plage
+                    date_in_range = True
+                    if job.get('publication_date') and (start_date_obj or end_date_obj):
+                        try:
+                            # Convertir la date string en objet date pour comparaison
+                            pub_date = datetime.strptime(job['publication_date'], '%Y-%m-%d').date()
+                            if start_date_obj and pub_date < start_date_obj:
+                                date_in_range = False
+                            if end_date_obj and pub_date > end_date_obj:
+                                date_in_range = False
+                        except:
+                            logger.warning(f"Date invalide pour job {job['reference']}: {job.get('publication_date')}")
+                            date_in_range = True  # Inclure les jobs avec dates invalides
+
+                    if date_in_range:
+                        all_jobs.append(job)
+                        seen_references.add(job['reference'])
+                        page_jobs_in_range += 1
+                        consecutive_out_of_range = 0
+                        logger.info(f"   ✅ Job #{idx}: {job['reference']} - {job['title'][:50]} (Date: {job.get('publication_date')})")
+                    else:
+                        consecutive_out_of_range += 1
+                        logger.info(f"   ⏭️ Job #{idx}: {job['reference']} hors plage de dates (Date: {job.get('publication_date')})")
+
+                        # Arrêt après 10 jobs consécutifs hors plage
+                        if consecutive_out_of_range >= 10:
+                            logger.info(f"   🛑 ARRÊT: 10 offres consécutives hors de la plage de dates")
+                            logger.info(f"Scraping terminé: {len(all_jobs)} emplois extraits dans la plage de dates")
+                            return all_jobs
+
+            logger.info(f"📊 Page {page}: {page_jobs_in_range} emplois dans la plage de dates")
+
+            # Si aucun emploi dans la plage sur toute la page, on arrête
+            if page_jobs_in_range == 0 and (start_date_obj or end_date_obj):
+                logger.info(f"🛑 ARRÊT: Page complète sans emplois dans la plage de dates")
+                break
+
             time.sleep(1)  # Pause entre les pages
 
-        logger.info(f"Total: {len(all_jobs)} emplois extraits")
+        logger.info(f"Scraping terminé: {len(all_jobs)} emplois extraits")
         return all_jobs
 
 def get_db_connection():
@@ -267,11 +411,17 @@ def scrape():
     try:
         data = request.get_json() or {}
         max_pages = data.get('max_pages', 5)
+        start_date = data.get('start_date')
+        end_date = data.get('end_date')
 
         logger.info(f"Démarrage scraping Niger - max_pages: {max_pages}")
+        if start_date:
+            logger.info(f"Paramètre start_date: {start_date}")
+        if end_date:
+            logger.info(f"Paramètre end_date: {end_date}")
 
         scraper = NigerEmploiScraper()
-        jobs = scraper.scrape_all_pages(max_pages=max_pages)
+        jobs = scraper.scrape_all_pages(max_pages=max_pages, start_date=start_date, end_date=end_date)
 
         if not jobs:
             return jsonify({
@@ -359,6 +509,36 @@ def stats():
 
     except Exception as e:
         logger.error(f"Erreur stats: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/delete_all', methods=['POST'])
+def delete_all():
+    """Supprimer tous les emplois en attente"""
+    try:
+        conn = get_db_connection()
+        if not conn:
+            return jsonify({'success': False, 'message': 'Erreur DB'}), 500
+
+        cur = conn.cursor()
+
+        # Supprimer tous les jobs avec status = 'pending'
+        cur.execute("DELETE FROM jobs_niger WHERE status = 'pending'")
+        deleted_count = cur.rowcount
+
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        logger.info(f"✅ {deleted_count} emplois supprimés")
+
+        return jsonify({
+            'success': True,
+            'message': f'{deleted_count} emplois supprimés',
+            'count': deleted_count
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Erreur suppression: {e}")
         return jsonify({'success': False, 'message': str(e)}), 500
 
 if __name__ == '__main__':

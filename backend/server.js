@@ -6,6 +6,7 @@ const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
 const { createProxyMiddleware } = require('http-proxy-middleware');
+const axios = require('axios');
 
 require('dotenv').config();
 
@@ -590,6 +591,26 @@ app.post('/api/ppda/validate', async (req, res) => {
   }
 });
 
+app.post('/api/ppda/delete_all', async (req, res) => {
+  try {
+    console.log('📤 Forwarding PPDA delete_all request');
+
+    const response = await axios.post('http://localhost:5017/delete_all', req.body, {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 30000
+    });
+
+    console.log('✅ PPDA delete_all response:', response.data);
+    res.json(response.data);
+  } catch (error) {
+    console.error('❌ PPDA delete_all error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 // PPDA: Proxy pour les autres endpoints
 app.use('/api/ppda', createProxyMiddleware({
   target: 'http://localhost:5017',
@@ -605,7 +626,69 @@ app.use('/api/ppda', createProxyMiddleware({
   }
 }));
 
-// NIGER: Proxy pour tous les endpoints
+// NIGER: Routes POST explicites avec timeout étendu
+app.post('/api/niger/scrape', async (req, res) => {
+  console.log('🔔 ROUTE /api/niger/scrape APPELÉE!'); // DEBUG
+  try {
+    console.log('📤 Forwarding NIGER scrape request:', req.body);
+
+    const response = await axios.post('http://localhost:5018/scrape', req.body, {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 1800000  // 30 minutes pour Selenium
+    });
+
+    console.log('✅ NIGER scrape response:', response.data);
+    res.json(response.data);
+  } catch (error) {
+    console.error('❌ NIGER scrape error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.post('/api/niger/validate', async (req, res) => {
+  try {
+    console.log('📤 Forwarding NIGER validate request');
+
+    const response = await axios.post('http://localhost:5018/validate', req.body, {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 30000
+    });
+
+    console.log('✅ NIGER validate response:', response.data);
+    res.json(response.data);
+  } catch (error) {
+    console.error('❌ NIGER validate error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.post('/api/niger/delete_all', async (req, res) => {
+  try {
+    console.log('📤 Forwarding NIGER delete_all request');
+
+    const response = await axios.post('http://localhost:5018/delete_all', req.body, {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 30000
+    });
+
+    console.log('✅ NIGER delete_all response:', response.data);
+    res.json(response.data);
+  } catch (error) {
+    console.error('❌ NIGER delete_all error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// NIGER: Proxy pour les autres endpoints (GET)
 app.use('/api/niger', createProxyMiddleware({
   target: 'http://localhost:5018',
   changeOrigin: true,
@@ -615,6 +698,108 @@ app.use('/api/niger', createProxyMiddleware({
     res.status(502).json({
       success: false,
       message: 'Scraper Niger non disponible',
+      error: err.message
+    });
+  }
+}));
+
+// Somalia Jobs: Routes POST explicites
+app.post('/api/somalia/scrape', async (req, res) => {
+  try {
+    const axios = require('axios');
+    console.log('📤 Forwarding SOMALIA scrape request:', req.body);
+
+    const response = await axios.post('http://localhost:5019/scrape', req.body, {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 300000  // 5 minutes pour Selenium
+    });
+
+    console.log('✅ SOMALIA scrape response:', response.data);
+    res.json(response.data);
+  } catch (error) {
+    console.error('❌ SOMALIA scrape error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.post('/api/somalia/validate/:reference', async (req, res) => {
+  try {
+    const axios = require('axios');
+    const reference = req.params.reference;
+    console.log(`📤 Forwarding SOMALIA validate request for ${reference}`);
+
+    const response = await axios.post(`http://localhost:5019/validate/${reference}`, req.body, {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 30000
+    });
+
+    console.log('✅ SOMALIA validate response:', response.data);
+    res.json(response.data);
+  } catch (error) {
+    console.error('❌ SOMALIA validate error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: error.response?.data?.message || error.message
+    });
+  }
+});
+
+app.delete('/api/somalia/delete/:reference', async (req, res) => {
+  try {
+    const axios = require('axios');
+    const reference = req.params.reference;
+    console.log(`📤 Forwarding SOMALIA delete request for ${reference}`);
+
+    const response = await axios.delete(`http://localhost:5019/delete/${reference}`, {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 30000
+    });
+
+    console.log('✅ SOMALIA delete response:', response.data);
+    res.json(response.data);
+  } catch (error) {
+    console.error('❌ SOMALIA delete error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: error.response?.data?.message || error.message
+    });
+  }
+});
+
+app.post('/api/somalia/delete_all', async (req, res) => {
+  try {
+    const axios = require('axios');
+    console.log('📤 Forwarding SOMALIA delete_all request');
+
+    const response = await axios.post('http://localhost:5019/delete_all', req.body, {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 30000
+    });
+
+    console.log('✅ SOMALIA delete_all response:', response.data);
+    res.json(response.data);
+  } catch (error) {
+    console.error('❌ SOMALIA delete_all error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: error.response?.data?.message || error.message
+    });
+  }
+});
+
+// Somalia Jobs: Proxy pour les autres endpoints (GET)
+app.use('/api/somalia', createProxyMiddleware({
+  target: 'http://localhost:5019',
+  changeOrigin: true,
+  pathRewrite: { '^/api/somalia': '' },
+  onError: (err, req, res) => {
+    console.error('❌ Proxy SOMALIA error:', err.message);
+    res.status(502).json({
+      success: false,
+      message: 'Scraper Somalia non disponible',
       error: err.message
     });
   }
@@ -635,6 +820,7 @@ let reliefPythonProcess = null;
 let mediacongoPythonProcess = null;
 let ppdaPythonProcess = null;
 let nigerPythonProcess = null;
+let somaliaPythonProcess = null;
 
 function startBoampPythonScraper() {
   if (pythonProcess && !pythonProcess.killed) {
@@ -1176,6 +1362,44 @@ function startNigerPythonScraper() {
   console.log(`✅ Scraper NIGER lancé (PID: ${nigerPythonProcess.pid})`);
 }
 
+function startSomaliaPythonScraper() {
+  if (somaliaPythonProcess && !somaliaPythonProcess.killed) {
+    console.log(`✅ Scraper SOMALIA déjà en cours (PID: ${somaliaPythonProcess.pid})`);
+    return;
+  }
+
+  const scriptPath = path.join(__dirname, 'scripts', 'somalijobs_api.py');
+  if (!fs.existsSync(scriptPath)) {
+    console.error('❌ somalijobs_api.py non trouvé !');
+    return;
+  }
+
+  console.log('🚀 Démarrage du scraper Somalia Jobs...');
+  const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+
+  somaliaPythonProcess = spawn(pythonCmd, [scriptPath], {
+    cwd: path.join(__dirname, 'scripts'),
+    stdio: ['pipe', 'pipe', 'pipe'],
+    env: { ...process.env, PORT: '5019' }
+  });
+
+  somaliaPythonProcess.stdout.on('data', (data) => {
+    console.log(`[SOMALIA STDOUT] ${data.toString().trim()}`);
+  });
+
+  somaliaPythonProcess.stderr.on('data', (data) => {
+    console.error(`[SOMALIA STDERR] ${data.toString().trim()}`);
+  });
+
+  somaliaPythonProcess.on('close', (code) => {
+    console.log(`❌ Scraper SOMALIA terminé avec code ${code}`);
+    somaliaPythonProcess = null;
+    if (code !== 0) setTimeout(startSomaliaPythonScraper, 5000);
+  });
+
+  console.log(`✅ Scraper SOMALIA lancé (PID: ${somaliaPythonProcess.pid})`);
+}
+
 // ==================== HEALTH & INFO ====================
 app.get('/health', async (req, res) => {
   const health = {
@@ -1308,6 +1532,7 @@ app.listen(PORT, '0.0.0.0', async () => {
   startMediaCongoPythonScraper();
   startPpdaPythonScraper();
   startNigerPythonScraper();
+  startSomaliaPythonScraper();
 
   console.log(`
 API AUTHENTIFICATION PRÊTE !

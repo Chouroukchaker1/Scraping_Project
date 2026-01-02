@@ -1,10 +1,10 @@
-// src/pages/niger.js - Page pour Niger Emploi
+// src/pages/somalia.js - Page pour Somalia Jobs
 import React, { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
 import { Search, Calendar, CheckCircle, Edit2, Trash2, RefreshCw, Play, AlertCircle, Briefcase, Send, FileText, ExternalLink } from 'lucide-react';
 import './MediaCongo.css';
 
-const API_BASE = '/api/niger';
+const API_BASE = '/api/somalia';
 
 // ===== FORMULAIRE DE SCRAPING =====
 const ScrapeForm = ({ onScrape, loading, error }) => {
@@ -40,7 +40,7 @@ const ScrapeForm = ({ onScrape, loading, error }) => {
           gap: '0.75rem'
         }}>
           <Briefcase size={24} color="#10B981" />
-          Rechercher des Offres d'Emploi - Niger
+          Rechercher des Offres d'Emploi - Somalia
         </h2>
 
         {error && (
@@ -62,37 +62,10 @@ const ScrapeForm = ({ onScrape, loading, error }) => {
 
         <div style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))',
           gap: '1.5rem',
           marginBottom: '1.5rem'
         }}>
-          <div>
-            <label style={{
-              display: 'block',
-              fontSize: '0.9rem',
-              fontWeight: '600',
-              color: '#475569',
-              marginBottom: '0.5rem'
-            }}>
-              <FileText size={16} style={{ display: 'inline', marginRight: '0.5rem', verticalAlign: 'middle' }} />
-              Pages Max
-            </label>
-            <input
-              type="number"
-              value={dates.max_pages}
-              onChange={(e) => setDates({ ...dates, max_pages: parseInt(e.target.value) })}
-              min="1"
-              max="50"
-              style={{
-                width: '100%',
-                padding: '0.75rem',
-                border: '2px solid #E2E8F0',
-                borderRadius: '10px',
-                fontSize: '0.95rem',
-                transition: 'all 0.2s'
-              }}
-            />
-          </div>
           <div>
             <label style={{
               display: 'block',
@@ -118,6 +91,7 @@ const ScrapeForm = ({ onScrape, loading, error }) => {
               }}
             />
           </div>
+
           <div>
             <label style={{
               display: 'block',
@@ -133,6 +107,34 @@ const ScrapeForm = ({ onScrape, loading, error }) => {
               type="date"
               value={dates.end_date}
               onChange={(e) => setDates({ ...dates, end_date: e.target.value })}
+              style={{
+                width: '100%',
+                padding: '0.75rem',
+                border: '2px solid #E2E8F0',
+                borderRadius: '10px',
+                fontSize: '0.95rem',
+                transition: 'all 0.2s'
+              }}
+            />
+          </div>
+
+          <div>
+            <label style={{
+              display: 'block',
+              fontSize: '0.9rem',
+              fontWeight: '600',
+              color: '#475569',
+              marginBottom: '0.5rem'
+            }}>
+              <FileText size={16} style={{ display: 'inline', marginRight: '0.5rem', verticalAlign: 'middle' }} />
+              Pages Max
+            </label>
+            <input
+              type="number"
+              value={dates.max_pages}
+              onChange={(e) => setDates({ ...dates, max_pages: parseInt(e.target.value) })}
+              min="1"
+              max="50"
               style={{
                 width: '100%',
                 padding: '0.75rem',
@@ -264,7 +266,7 @@ const TendersTable = ({ tenders, onRefresh, loading, stats, onValidate, onValida
           gap: '0.75rem'
         }}>
           <Briefcase size={24} color="#10B981" />
-          Offres d'Emploi Niger ({filteredTenders.length})
+          Offres d'Emploi Somalia ({filteredTenders.length})
         </h2>
 
         <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
@@ -358,118 +360,72 @@ const TendersTable = ({ tenders, onRefresh, loading, stats, onValidate, onValida
         </div>
       </div>
 
-      {/* Barre de recherche et filtres par date */}
-      <div style={{ marginBottom: '1.5rem', display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
-        <div style={{ position: 'relative', flex: '1 1 300px' }}>
-          <Search
-            size={20}
-            style={{
-              position: 'absolute',
-              left: '1rem',
-              top: '50%',
-              transform: 'translateY(-50%)',
-              color: '#94A3B8'
-            }}
-          />
-          <input
-            type="text"
-            placeholder="Rechercher par référence, titre, promoteur..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            style={{
-              width: '100%',
-              padding: '0.75rem 1rem 0.75rem 3rem',
-              border: '2px solid #E2E8F0',
-              borderRadius: '10px',
-              fontSize: '0.95rem',
-              transition: 'all 0.2s'
-            }}
-          />
-        </div>
+      <div style={{ marginBottom: '1.5rem' }}>
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: '1fr auto auto',
+          gap: '1rem',
+          alignItems: 'center'
+        }}>
+          <div style={{ position: 'relative' }}>
+            <Search
+              size={20}
+              style={{
+                position: 'absolute',
+                left: '1rem',
+                top: '50%',
+                transform: 'translateY(-50%)',
+                color: '#94A3B8'
+              }}
+            />
+            <input
+              type="text"
+              placeholder="Rechercher par référence, titre, promoteur..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              style={{
+                width: '100%',
+                padding: '0.75rem 1rem 0.75rem 3rem',
+                border: '2px solid #E2E8F0',
+                borderRadius: '10px',
+                fontSize: '0.95rem',
+                transition: 'all 0.2s'
+              }}
+            />
+          </div>
 
-        {/* Filtre par date de début */}
-        <div style={{ position: 'relative', flex: '0 1 200px' }}>
-          <Calendar
-            size={18}
-            style={{
-              position: 'absolute',
-              left: '0.75rem',
-              top: '50%',
-              transform: 'translateY(-50%)',
-              color: '#94A3B8',
-              pointerEvents: 'none'
-            }}
-          />
-          <input
-            type="date"
-            placeholder="Date début"
-            value={dateFilter.start}
-            onChange={(e) => setDateFilter(prev => ({ ...prev, start: e.target.value }))}
-            style={{
-              width: '100%',
-              padding: '0.75rem 1rem 0.75rem 2.5rem',
-              border: '2px solid #E2E8F0',
-              borderRadius: '10px',
-              fontSize: '0.9rem',
-              transition: 'all 0.2s',
-              cursor: 'pointer'
-            }}
-          />
-        </div>
+          <div>
+            <input
+              type="date"
+              value={dateFilter.start}
+              onChange={(e) => setDateFilter({ ...dateFilter, start: e.target.value })}
+              placeholder="Date début"
+              style={{
+                padding: '0.75rem',
+                border: '2px solid #E2E8F0',
+                borderRadius: '10px',
+                fontSize: '0.9rem',
+                minWidth: '150px'
+              }}
+            />
+          </div>
 
-        {/* Filtre par date de fin */}
-        <div style={{ position: 'relative', flex: '0 1 200px' }}>
-          <Calendar
-            size={18}
-            style={{
-              position: 'absolute',
-              left: '0.75rem',
-              top: '50%',
-              transform: 'translateY(-50%)',
-              color: '#94A3B8',
-              pointerEvents: 'none'
-            }}
-          />
-          <input
-            type="date"
-            placeholder="Date fin"
-            value={dateFilter.end}
-            onChange={(e) => setDateFilter(prev => ({ ...prev, end: e.target.value }))}
-            style={{
-              width: '100%',
-              padding: '0.75rem 1rem 0.75rem 2.5rem',
-              border: '2px solid #E2E8F0',
-              borderRadius: '10px',
-              fontSize: '0.9rem',
-              transition: 'all 0.2s',
-              cursor: 'pointer'
-            }}
-          />
+          <div>
+            <input
+              type="date"
+              value={dateFilter.end}
+              onChange={(e) => setDateFilter({ ...dateFilter, end: e.target.value })}
+              placeholder="Date fin"
+              style={{
+                padding: '0.75rem',
+                border: '2px solid #E2E8F0',
+                borderRadius: '10px',
+                fontSize: '0.9rem',
+                minWidth: '150px'
+              }}
+            />
+          </div>
         </div>
-
-        {/* Bouton pour réinitialiser les filtres */}
-        {(dateFilter.start || dateFilter.end) && (
-          <button
-            onClick={() => setDateFilter({ start: '', end: '' })}
-            style={{
-              padding: '0.75rem 1rem',
-              background: '#F1F5F9',
-              color: '#475569',
-              border: 'none',
-              borderRadius: '10px',
-              fontSize: '0.9rem',
-              fontWeight: '600',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem',
-              transition: 'all 0.2s'
-            }}
-          >
-            <Trash2 size={14} />
-            Réinitialiser dates
-          </button>
-        )}
       </div>
 
       {filteredTenders.length === 0 ? (
@@ -627,12 +583,11 @@ const TendersTable = ({ tenders, onRefresh, loading, stats, onValidate, onValida
 };
 
 // ===== COMPOSANT PRINCIPAL =====
-const Niger = () => {
+const Somalia = () => {
   const [tenders, setTenders] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [stats, setStats] = useState(null);
-  const [scrapingMessage, setScrapingMessage] = useState('');
 
   const fetchTenders = async () => {
     try {
@@ -678,44 +633,22 @@ const Niger = () => {
 
       console.log('📤 Sending to API:', payload);
 
-      // Message de début
-      let startMessage = '🚀 Lancement du scraping Niger Emploi - ';
-      startMessage += `${payload.max_pages} page(s)`;
-      if (payload.start_date || payload.end_date) {
-        startMessage += ' avec filtrage par date';
-        if (payload.start_date) startMessage += ` du ${payload.start_date}`;
-        if (payload.end_date) startMessage += ` au ${payload.end_date}`;
-      }
-      startMessage += '...';
-
-      setScrapingMessage(startMessage);
-
       const response = await axios.post(`${API_BASE}/scrape`, payload, {
-        timeout: 1800000  // 30 minutes
+        timeout: 300000  // 5 minutes pour le scraping Selenium
       });
 
       console.log('📥 API Response:', response.data);
 
       if (response.data.success) {
-        // Message de fin avec détails
-        const endMessage = `✅ ${response.data.message} - Total: ${response.data.stats.total}, Nouveaux: ${response.data.stats.saved}, Doublons: ${response.data.stats.duplicates}`;
-        setScrapingMessage(endMessage);
-
+        alert(`✅ ${response.data.message}\n\nStats:\n- Total: ${response.data.stats.total}\n- Nouveaux: ${response.data.stats.saved}\n- Doublons: ${response.data.stats.duplicates}`);
         await fetchTenders();
         await fetchStats();
-
-        // Effacer le message après 10 secondes
-        setTimeout(() => setScrapingMessage(''), 10000);
       } else {
         setError(response.data.message || 'Erreur lors du scraping');
-        setScrapingMessage('');
       }
     } catch (err) {
       console.error('❌ Erreur scraping:', err);
-      const errorMsg = err.response?.data?.message || err.message || 'Erreur lors du scraping';
-      setError(errorMsg);
-      setScrapingMessage('❌ ' + errorMsg);
-      setTimeout(() => setScrapingMessage(''), 10000);
+      setError(err.response?.data?.message || err.message || 'Erreur lors du scraping');
     } finally {
       setLoading(false);
     }
@@ -748,7 +681,7 @@ const Niger = () => {
   };
 
   const handleDeleteAll = async () => {
-    if (!window.confirm('⚠️ Êtes-vous sûr de vouloir supprimer tous les emplois en attente ?')) {
+    if (!window.confirm('⚠️ Êtes-vous sûr de vouloir supprimer TOUS les emplois en attente ?')) {
       return;
     }
 
@@ -758,8 +691,6 @@ const Niger = () => {
         alert(`✅ ${response.data.message}`);
         await fetchTenders();
         await fetchStats();
-      } else {
-        alert(`❌ ${response.data.message}`);
       }
     } catch (err) {
       alert(`❌ Erreur: ${err.response?.data?.message || err.message}`);
@@ -793,38 +724,17 @@ const Niger = () => {
             gap: '1rem'
           }}>
             <Briefcase size={32} color="#10B981" />
-            Niger - NigerEmploi.com
+            Somalia - SomaliaJobs.com
           </h1>
           <p style={{
             color: '#64748B',
             fontSize: '1rem'
           }}>
-            Extraction automatique des offres d'emploi depuis NigerEmploi.com
+            Extraction automatique des offres d'emploi depuis SomaliaJobs.com
           </p>
         </div>
 
         <ScrapeForm onScrape={handleScrape} loading={loading} error={error} />
-
-        {/* Message de scraping en cours */}
-        {scrapingMessage && (
-          <div style={{
-            background: scrapingMessage.startsWith('✅') ? '#D1FAE5' : scrapingMessage.startsWith('❌') ? '#FEE2E2' : '#DBEAFE',
-            border: `2px solid ${scrapingMessage.startsWith('✅') ? '#10B981' : scrapingMessage.startsWith('❌') ? '#EF4444' : '#3B82F6'}`,
-            borderRadius: '12px',
-            padding: '1rem 1.5rem',
-            marginBottom: '2rem',
-            fontSize: '1rem',
-            fontWeight: '600',
-            color: scrapingMessage.startsWith('✅') ? '#065F46' : scrapingMessage.startsWith('❌') ? '#991B1B' : '#1E40AF',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '0.75rem',
-            animation: 'fadeIn 0.3s ease-in'
-          }}>
-            {scrapingMessage}
-          </div>
-        )}
-
         <TendersTable
           tenders={tenders}
           onRefresh={fetchTenders}
@@ -839,4 +749,4 @@ const Niger = () => {
   );
 };
 
-export default Niger;
+export default Somalia;

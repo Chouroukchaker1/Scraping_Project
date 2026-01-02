@@ -369,6 +369,32 @@ CREATE INDEX IF NOT EXISTS idx_niger_status ON jobs_niger(status);
 CREATE INDEX IF NOT EXISTS idx_niger_publication ON jobs_niger(publication_date);
 
 -- ============================================================================
+-- TABLE SOMALIA JOBS
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS jobs_somalia (
+    id SERIAL PRIMARY KEY,
+    reference VARCHAR(255) UNIQUE NOT NULL,
+    title TEXT,
+    description TEXT,
+    promoter TEXT,
+    publication_date DATE,
+    location VARCHAR(255),
+    url TEXT,
+    country VARCHAR(100) DEFAULT 'Somalia',
+    category VARCHAR(100),
+    contract_type VARCHAR(100),
+    status VARCHAR(50) DEFAULT 'pending',
+    validation_date TIMESTAMP,
+    api_id INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_somalia_reference ON jobs_somalia(reference);
+CREATE INDEX IF NOT EXISTS idx_somalia_status ON jobs_somalia(status);
+CREATE INDEX IF NOT EXISTS idx_somalia_publication ON jobs_somalia(publication_date);
+
+-- ============================================================================
 -- VUE GLOBALE - Toutes les offres en attente
 -- ============================================================================
 CREATE OR REPLACE VIEW pending_tenders_all AS

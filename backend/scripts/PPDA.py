@@ -607,6 +607,32 @@ def stats():
         logger.error(f"Erreur stats: {e}")
         return jsonify({'success': False, 'message': str(e)}), 500
 
+@app.route('/delete_all', methods=['POST'])
+def delete_all():
+    """Supprimer tous les appels d'offres en attente"""
+    try:
+        conn = get_db_connection()
+        if not conn:
+            return jsonify({'success': False, 'message': 'Erreur DB'}), 500
+
+        cur = conn.cursor()
+        cur.execute("DELETE FROM tenders_ppda WHERE status = 'pending'")
+        deleted_count = cur.rowcount
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        logger.info(f"✅ {deleted_count} appels d'offres supprimés")
+
+        return jsonify({
+            'success': True,
+            'message': f'{deleted_count} appels d\'offres supprimés',
+            'count': deleted_count
+        }), 200
+    except Exception as e:
+        logger.error(f"Erreur suppression: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5017))
     logger.info(f"Démarrage serveur PPDA sur le port {port}")

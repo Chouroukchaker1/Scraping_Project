@@ -159,7 +159,7 @@ const ScrapeForm = ({ onScrape, loading, error }) => {
 };
 
 // ===== TABLEAU DES RÉSULTATS =====
-const TendersTable = ({ tenders, onRefresh, loading, stats, onValidate, onValidateAll }) => {
+const TendersTable = ({ tenders, onRefresh, loading, stats, onValidate, onValidateAll, onDeleteAll }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [validatingRef, setValidatingRef] = useState(null);
   const [validatingAll, setValidatingAll] = useState(false);
@@ -259,6 +259,27 @@ const TendersTable = ({ tenders, onRefresh, loading, stats, onValidate, onValida
                 Valider tout
               </>
             )}
+          </button>
+          <button
+            onClick={onDeleteAll}
+            disabled={!tenders.length}
+            style={{
+              padding: '0.75rem 1.5rem',
+              background: !tenders.length ? '#94A3B8' : 'linear-gradient(135deg, #EF4444 0%, #DC2626 100%)',
+              color: 'white',
+              border: 'none',
+              borderRadius: '10px',
+              fontSize: '0.95rem',
+              fontWeight: '600',
+              cursor: !tenders.length ? 'not-allowed' : 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              transition: 'all 0.2s'
+            }}
+          >
+            <AlertCircle size={16} />
+            Supprimer tous
           </button>
           <button
             onClick={onRefresh}
@@ -564,6 +585,25 @@ const PPDA = () => {
     }
   };
 
+  const handleDeleteAll = async () => {
+    if (!window.confirm('⚠️ Êtes-vous sûr de vouloir supprimer tous les appels d\'offres en attente ?')) {
+      return;
+    }
+
+    try {
+      const response = await axios.post(`${API_BASE}/delete_all`);
+      if (response.data.success) {
+        alert(`✅ ${response.data.message}`);
+        await fetchTenders();
+        await fetchStats();
+      } else {
+        alert(`❌ ${response.data.message}`);
+      }
+    } catch (err) {
+      alert(`❌ Erreur: ${err.response?.data?.message || err.message}`);
+    }
+  };
+
   return (
     <div style={{
       minHeight: '100vh',
@@ -609,6 +649,7 @@ const PPDA = () => {
           stats={stats}
           onValidate={handleValidate}
           onValidateAll={handleValidateAll}
+          onDeleteAll={handleDeleteAll}
         />
       </div>
     </div>

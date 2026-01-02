@@ -19,6 +19,7 @@ import Relief from "./pages/relief";
 import MediaCongo from "./pages/mediacongo";
 import PPDA from "./pages/ppda";
 import Niger from "./pages/niger";
+import Somalia from "./pages/somalia";
 
 import PrivateRoute from "./components/PrivateRoute";
 import Navbar from "./components/Navbar";
@@ -69,6 +70,7 @@ function App() {
         <Route path="/mediacongo" element={<PrivateRoute><ProtectedPage><MediaCongo /></ProtectedPage></PrivateRoute>} />
         <Route path="/ppda" element={<PrivateRoute><ProtectedPage><PPDA /></ProtectedPage></PrivateRoute>} />
         <Route path="/niger" element={<PrivateRoute><ProtectedPage><Niger /></ProtectedPage></PrivateRoute>} />
+        <Route path="/somalia" element={<PrivateRoute><ProtectedPage><Somalia /></ProtectedPage></PrivateRoute>} />
         <Route path="/multi-sites" element={<PrivateRoute><ProtectedPage><MultiSites /></ProtectedPage></PrivateRoute>} />
 
 
