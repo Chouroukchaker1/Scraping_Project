@@ -93,14 +93,28 @@ const PendingList = ({ offres, onValidate, onUpdate, onDelete }) => {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const [perPage, setPerPage] = useState(50);
+  const [dateFilter, setDateFilter] = useState({ start: '', end: '' });
 
   const filtered = useMemo(() => {
-    return offres.filter(o =>
-      o.reference?.toLowerCase().includes(search.toLowerCase()) ||
-      o.description?.toLowerCase().includes(search.toLowerCase()) ||
-      o.promoter?.toLowerCase().includes(search.toLowerCase())
-    );
-  }, [offres, search]);
+    return offres.filter(o => {
+      // Filtre par texte
+      const matchText = o.reference?.toLowerCase().includes(search.toLowerCase()) ||
+        o.description?.toLowerCase().includes(search.toLowerCase()) ||
+        o.promoter?.toLowerCase().includes(search.toLowerCase());
+
+      // Filtre par date
+      let matchDate = true;
+      if (dateFilter.start || dateFilter.end) {
+        const pubDate = o.publicationDate ? new Date(o.publicationDate) : null;
+        if (pubDate) {
+          if (dateFilter.start && pubDate < new Date(dateFilter.start)) matchDate = false;
+          if (dateFilter.end && pubDate > new Date(dateFilter.end + 'T23:59:59')) matchDate = false;
+        }
+      }
+
+      return matchText && matchDate;
+    });
+  }, [offres, search, dateFilter]);
 
   const totalPages = Math.ceil(filtered.length / perPage);
   const paginated = useMemo(() => {
@@ -145,6 +159,18 @@ const PendingList = ({ offres, onValidate, onUpdate, onDelete }) => {
     }
   };
 
+  const handleDeleteAll = async () => {
+    if (!window.confirm(`⚠️ ATTENTION: Supprimer TOUTES les ${offres.length} offres en attente ?\n\nCette action est irréversible!`)) return;
+    try {
+      await axios.delete(`${API_BASE}/delete-all`);
+      alert(`✅ ${offres.length} offres supprimées avec succès`);
+      onDelete(null); // Trigger parent refresh
+      window.location.reload();
+    } catch (err) {
+      alert("❌ Erreur suppression : " + (err.response?.data?.message || err.message));
+    }
+  };
+
   return (
     <div className="card">
       <h2 className="title">
@@ -164,6 +190,37 @@ const PendingList = ({ offres, onValidate, onUpdate, onDelete }) => {
         <select value={perPage} onChange={e => { setPerPage(+e.target.value); setPage(1); }}>
           {[10, 25, 50, 100, 200].map(n => <option key={n} value={n}>{n} / page</option>)}
         </select>
+      </div>
+
+      <div className="toolbar" style={{ marginTop: '1rem', gap: '1rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <Calendar size={16} />
+          <label style={{ fontSize: '0.9rem', fontWeight: '600' }}>Date de publication:</label>
+          <input
+            type="date"
+            value={dateFilter.start}
+            onChange={e => { setDateFilter({ ...dateFilter, start: e.target.value }); setPage(1); }}
+            placeholder="Du"
+            style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid #E2E8F0' }}
+          />
+          <span>→</span>
+          <input
+            type="date"
+            value={dateFilter.end}
+            onChange={e => { setDateFilter({ ...dateFilter, end: e.target.value }); setPage(1); }}
+            placeholder="Au"
+            style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid #E2E8F0' }}
+          />
+          {(dateFilter.start || dateFilter.end) && (
+            <button
+              onClick={() => { setDateFilter({ start: '', end: '' }); setPage(1); }}
+              className="btn"
+              style={{ padding: '0.5rem 1rem', fontSize: '0.85rem' }}
+            >
+              Réinitialiser
+            </button>
+          )}
+        </div>
       </div>
 
       {filtered.length === 0 ? (
@@ -235,11 +292,25 @@ const ValidatedList = ({ tenders, onRefresh }) => {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const [perPage] = useState(50);
+  const [dateFilter, setDateFilter] = useState({ start: '', end: '' });
 
-  const filtered = useMemo(() => tenders.filter(t =>
-    t.reference?.toLowerCase().includes(search.toLowerCase()) ||
-    t.description?.toLowerCase().includes(search.toLowerCase())
-  ), [tenders, search]);
+  const filtered = useMemo(() => tenders.filter(t => {
+    // Filtre par texte
+    const matchText = t.reference?.toLowerCase().includes(search.toLowerCase()) ||
+      t.description?.toLowerCase().includes(search.toLowerCase());
+
+    // Filtre par date
+    let matchDate = true;
+    if (dateFilter.start || dateFilter.end) {
+      const pubDate = t.publicationDate ? new Date(t.publicationDate) : null;
+      if (pubDate) {
+        if (dateFilter.start && pubDate < new Date(dateFilter.start)) matchDate = false;
+        if (dateFilter.end && pubDate > new Date(dateFilter.end + 'T23:59:59')) matchDate = false;
+      }
+    }
+
+    return matchText && matchDate;
+  }), [tenders, search, dateFilter]);
 
   const totalPages = Math.ceil(filtered.length / perPage);
   const paginated = useMemo(() => {
@@ -254,6 +325,18 @@ const ValidatedList = ({ tenders, onRefresh }) => {
       onRefresh();
     } catch (err) {
       alert("❌ Erreur suppression");
+    }
+  };
+
+  const handleDeleteAll = async () => {
+    if (!window.confirm(`⚠️ ATTENTION: Supprimer TOUTES les ${tenders.length} offres validées ?\n\nCette action est irréversible!`)) return;
+    try {
+      await axios.delete(`${API_BASE}/tenders/delete-all`);
+      alert(`✅ ${tenders.length} offres validées supprimées avec succès`);
+      onRefresh();
+      window.location.reload();
+    } catch (err) {
+      alert("❌ Erreur suppression : " + (err.response?.data?.message || err.message));
     }
   };
 
@@ -274,6 +357,37 @@ const ValidatedList = ({ tenders, onRefresh }) => {
             value={search}
             onChange={e => { setSearch(e.target.value); setPage(1); }}
           />
+        </div>
+      </div>
+
+      <div className="toolbar" style={{ marginTop: '1rem', gap: '1rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <Calendar size={16} />
+          <label style={{ fontSize: '0.9rem', fontWeight: '600' }}>Date de publication:</label>
+          <input
+            type="date"
+            value={dateFilter.start}
+            onChange={e => { setDateFilter({ ...dateFilter, start: e.target.value }); setPage(1); }}
+            placeholder="Du"
+            style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid #E2E8F0' }}
+          />
+          <span>→</span>
+          <input
+            type="date"
+            value={dateFilter.end}
+            onChange={e => { setDateFilter({ ...dateFilter, end: e.target.value }); setPage(1); }}
+            placeholder="Au"
+            style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid #E2E8F0' }}
+          />
+          {(dateFilter.start || dateFilter.end) && (
+            <button
+              onClick={() => { setDateFilter({ start: '', end: '' }); setPage(1); }}
+              className="btn"
+              style={{ padding: '0.5rem 1rem', fontSize: '0.85rem' }}
+            >
+              Réinitialiser
+            </button>
+          )}
         </div>
       </div>
 

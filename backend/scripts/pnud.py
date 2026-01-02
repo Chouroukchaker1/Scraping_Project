@@ -1472,11 +1472,10 @@ class PNUDScraper:
             
             if response.status_code in [200, 201]:
                 logger.info(f"✅ Offre {offre.reference} postée avec succès")
-                if True:
-                    insert_tender({**asdict(offre), "status": "active"})
-                    delete_tender(offre.reference)
-                    self.existing_offres_set.add(offre.reference)
-                    logger.info(f"💾 {offre.reference} sauvegardé dans MongoDB")
+                # Mettre à jour le statut de l'offre de "pending" à "active"
+                update_tender(offre.reference, {"status": "active"})
+                self.existing_offres_set.add(offre.reference)
+                logger.info(f"💾 {offre.reference} marqué comme 'active' dans PostgreSQL")
                 return True
             else:
                 logger.error(f"❌ Échec post {offre.reference}: {response.status_code}")
@@ -1622,12 +1621,12 @@ def validate_tender(reference):
         return jsonify({"success": False, "message": str(e)}), 500
 
 @app.route('/api/update/<reference>', methods=['POST'])
-def update_tender(reference):
+def update_tender_endpoint(reference):
     """Met à jour une offre en attente"""
     try:
         data = request.json or {}
         country_id = data.get('country_id')
-        
+
         if country_id is None:
             return jsonify({"success": False, "message": "country_id requis"}), 400
 

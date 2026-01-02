@@ -515,6 +515,9 @@ def find_closest_activity(business_sector):
         'événementiel': 463, 'evenementiel': 463,
         'nettoyage': 463, 'entretien': 463, 'curage': 463,
         'services': 463, 'prestations': 463, 'prestation': 463,
+        'dératisation': 463, 'deratisation': 463, 'désinsectisation': 463, 'desinsectisation': 463,
+        'assurance': 463, 'gaz': 462, 'électricité': 462, 'electricite': 462,
+        'aire': 461, 'accueil': 461,
 
         # Informatique (464)
         'informatique': 464, 'logiciel': 464, 'numérique': 464, 'numerique': 464,
@@ -551,7 +554,7 @@ def find_closest_activity(business_sector):
     logger.info(f"🎯 Secteur BOAMP: '{business_sector}' → activitiesIds: {result}")
     return result
 
-def download_boamp_pdf(reference):
+def download_boamp_pdf(reference, publication_date=None):
     """Télécharge le PDF depuis BOAMP et retourne le chemin local"""
     try:
         # Format référence: 25-142632 où 25 = année 2025
@@ -569,9 +572,13 @@ def download_boamp_pdf(reference):
         year_prefix = ref_parts[0][:2]  # "25"
         year = f"20{year_prefix}"  # "2025"
 
-        # Le mois n'est pas dans la référence, utiliser le mois actuel
-        # (Les PDFs BOAMP sont organisés par mois de publication)
-        month = datetime.now().strftime("%m")  # "12" pour décembre
+        # Utiliser la date de publication si fournie, sinon le mois actuel
+        if publication_date and isinstance(publication_date, datetime):
+            month = publication_date.strftime("%m")
+            logger.info(f"📅 Utilisation date publication: {publication_date.strftime('%Y-%m')}")
+        else:
+            month = datetime.now().strftime("%m")
+            logger.info(f"📅 Utilisation date actuelle pour le mois")
 
         pdf_url = f"{BOAMP_PDF_BASE_URL}/{year}/{month}/{reference}.pdf"
         logger.info(f"📥 Téléchargement PDF: {pdf_url}")
@@ -819,7 +826,8 @@ def send_tender_to_api(tender_data):
         if reference:
             try:
                 logger.info(f"📄 Téléchargement du PDF BOAMP pour {reference}...")
-                pdf_path = download_boamp_pdf(reference)
+                # Passer la date de publication pour trouver le bon mois
+                pdf_path = download_boamp_pdf(reference, publication_date_obj)
 
                 if pdf_path:
                     logger.info(f"📤 Upload du PDF vers S3...")

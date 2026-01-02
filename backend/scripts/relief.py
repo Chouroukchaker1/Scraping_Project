@@ -901,6 +901,34 @@ def get_validated():
         logger.error(f"❌ Erreur validated: {e}")
         return jsonify({"success": False, "message": str(e)}), 500
 
+@app.route('/api/validated/delete-all', methods=['POST'])
+def delete_all_validated():
+    """Delete all validated offers"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(f"DELETE FROM {TABLE_NAME} WHERE status = 'validated'")
+        deleted_count = cursor.rowcount
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        # Refresh existing offers cache
+        scraper.existing_offres_set.clear()
+        scraper._load_existing_offres()
+
+        logger.info(f"🗑️ {deleted_count} offres validées supprimées")
+        return jsonify({
+            "success": True,
+            "message": f"{deleted_count} offres validées supprimées",
+            "deleted": deleted_count
+        })
+    except Exception as e:
+        logger.error(f"❌ Erreur delete_all_validated: {e}")
+        return jsonify({"success": False, "message": str(e)}), 500
+
 if __name__ == '__main__':
     print("=" * 80)
     print("SCRAPER RELIEFWEB - VERSION API FLASK")

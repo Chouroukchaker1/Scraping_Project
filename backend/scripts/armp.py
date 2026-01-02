@@ -1221,6 +1221,99 @@ def validate_tender(reference):
             'error': str(e)
         }), 500
 
+@app.route('/api/delete/<reference>', methods=['DELETE'])
+def delete_tender(reference):
+    """Delete a single pending tender"""
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({'error': 'Database connection failed'}), 500
+
+    try:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM tenders_armp WHERE reference = %s AND status = 'pending'", (reference,))
+        deleted_count = cursor.rowcount
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        if deleted_count > 0:
+            return jsonify({'success': True, 'message': f'Tender {reference} deleted'}), 200
+        else:
+            return jsonify({'error': 'Tender not found or already validated'}), 404
+
+    except Exception as e:
+        logger.error(f"Error deleting tender: {e}")
+        if conn:
+            conn.rollback()
+            conn.close()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/delete-all', methods=['DELETE'])
+def delete_all_tenders():
+    """Delete all pending tenders"""
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({'error': 'Database connection failed'}), 500
+
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM tenders_armp WHERE status = 'pending'")
+        count = cursor.fetchone()[0]
+
+        cursor.execute("DELETE FROM tenders_armp WHERE status = 'pending'")
+        deleted_count = cursor.rowcount
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        logger.info(f"🗑️ {deleted_count} pending tenders deleted")
+        return jsonify({
+            'success': True,
+            'message': f'{deleted_count} offres supprimées',
+            'deleted': deleted_count
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error deleting all tenders: {e}")
+        if conn:
+            conn.rollback()
+            conn.close()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/tenders/delete-all', methods=['DELETE'])
+def delete_all_validated_tenders():
+    """Delete all validated tenders"""
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({'error': 'Database connection failed'}), 500
+
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM tenders_armp WHERE status = 'active'")
+        count = cursor.fetchone()[0]
+
+        cursor.execute("DELETE FROM tenders_armp WHERE status = 'active'")
+        deleted_count = cursor.rowcount
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        logger.info(f"🗑️ {deleted_count} validated tenders deleted")
+        return jsonify({
+            'success': True,
+            'message': f'{deleted_count} offres validées supprimées',
+            'deleted': deleted_count
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error deleting all validated tenders: {e}")
+        if conn:
+            conn.rollback()
+            conn.close()
+        return jsonify({'error': str(e)}), 500
+
 if __name__ == "__main__":
     logger.info("Starting ARMP Flask API on port 5007...")
     app.run(host='0.0.0.0', port=5007, debug=True)
