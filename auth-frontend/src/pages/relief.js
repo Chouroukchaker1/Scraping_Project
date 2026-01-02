@@ -249,7 +249,7 @@ const StatsSection = ({ stats }) => {
 };
 
 // ===== TABLEAU DES OFFRES EN ATTENTE =====
-const PendingOffersTable = ({ offers, onValidate, onDelete }) => {
+const PendingOffersTable = ({ offers, onValidate, onDelete, onDeleteAll }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filteredOffers, setFilteredOffers] = useState(offers);
 
@@ -298,27 +298,55 @@ const PendingOffersTable = ({ offers, onValidate, onDelete }) => {
           Offres en attente ({filteredOffers.length})
         </h3>
 
-        <div style={{ position: 'relative', flex: '1 1 300px', maxWidth: '400px' }}>
-          <Search size={20} style={{
-            position: 'absolute',
-            left: '1rem',
-            top: '50%',
-            transform: 'translateY(-50%)',
-            color: '#94A3B8'
-          }} />
-          <input
-            type="text"
-            placeholder="Rechercher par référence, description, promoteur..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            style={{
-              width: '100%',
-              padding: '0.75rem 1rem 0.75rem 3rem',
-              border: '2px solid #E2E8F0',
-              borderRadius: '10px',
-              fontSize: '0.9rem'
-            }}
-          />
+        <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', flex: '1 1 auto', justifyContent: 'flex-end' }}>
+          <div style={{ position: 'relative', flex: '1 1 300px', maxWidth: '400px' }}>
+            <Search size={20} style={{
+              position: 'absolute',
+              left: '1rem',
+              top: '50%',
+              transform: 'translateY(-50%)',
+              color: '#94A3B8'
+            }} />
+            <input
+              type="text"
+              placeholder="Rechercher par référence, description, promoteur..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              style={{
+                width: '100%',
+                padding: '0.75rem 1rem 0.75rem 3rem',
+                border: '2px solid #E2E8F0',
+                borderRadius: '10px',
+                fontSize: '0.9rem'
+              }}
+            />
+          </div>
+
+          {offers.length > 0 && (
+            <button
+              onClick={onDeleteAll}
+              style={{
+                padding: '0.75rem 1.5rem',
+                background: '#DC2626',
+                color: 'white',
+                border: 'none',
+                borderRadius: '10px',
+                fontSize: '0.9rem',
+                fontWeight: '600',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                transition: 'all 0.2s',
+                whiteSpace: 'nowrap'
+              }}
+              onMouseOver={(e) => e.target.style.background = '#B91C1C'}
+              onMouseOut={(e) => e.target.style.background = '#DC2626'}
+            >
+              <Trash2 size={18} />
+              Supprimer Tout
+            </button>
+          )}
         </div>
       </div>
 
@@ -771,6 +799,24 @@ function ReliefPage() {
     }
   };
 
+  const handleDeleteAll = async () => {
+    if (!window.confirm(`⚠️ Voulez-vous vraiment supprimer TOUTES les offres en attente (${pendingOffers.length} offres) ?\n\nCette action est irréversible !`)) return;
+
+    try {
+      const response = await axios.delete(`${API_BASE}/delete-all`);
+
+      if (response.data.success) {
+        setSuccess(`🗑️ ${response.data.deleted || pendingOffers.length} offres supprimées avec succès`);
+        fetchPending();
+        fetchValidated();
+      } else {
+        setError('Échec de la suppression');
+      }
+    } catch (err) {
+      setError(err.response?.data?.message || 'Erreur de suppression');
+    }
+  };
+
   return (
     <div style={{
       minHeight: '100vh',
@@ -929,6 +975,7 @@ function ReliefPage() {
             offers={pendingOffers}
             onValidate={handleValidate}
             onDelete={handleDelete}
+            onDeleteAll={handleDeleteAll}
           />
         )}
 

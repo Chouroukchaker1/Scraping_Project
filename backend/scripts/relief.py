@@ -836,6 +836,7 @@ def delete_offre(reference):
         return jsonify({"success": False, "message": str(e)}), 500
 
 @app.route('/api/delete_all', methods=['POST'])
+@app.route('/api/delete-all', methods=['DELETE'])
 def delete_all():
     """Delete all pending offers"""
     try:
@@ -855,7 +856,7 @@ def delete_all():
         return jsonify({
             "success": True,
             "message": f"{deleted_count} offres supprimées",
-            "count": deleted_count
+            "deleted": deleted_count
         })
     except Exception as e:
         logger.error(f"❌ Erreur delete_all: {e}")
