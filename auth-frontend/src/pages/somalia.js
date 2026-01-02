@@ -656,7 +656,7 @@ const Somalia = () => {
 
   const handleValidate = async (tender) => {
     try {
-      const response = await axios.post(`${API_BASE}/validate`);
+      const response = await axios.post(`${API_BASE}/validate/${tender.reference}`);
       if (response.data.success) {
         alert(`✅ ${response.data.message}`);
         await fetchTenders();

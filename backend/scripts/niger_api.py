@@ -511,6 +511,81 @@ def stats():
         logger.error(f"Erreur stats: {e}")
         return jsonify({'success': False, 'message': str(e)}), 500
 
+@app.route('/validate/<reference>', methods=['POST'])
+def validate_job(reference):
+    """Valider un emploi et marquer comme validé"""
+    try:
+        conn = get_db_connection()
+        if not conn:
+            return jsonify({'success': False, 'message': 'Erreur DB'}), 500
+
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Récupérer l'emploi
+        cur.execute("SELECT * FROM jobs_niger WHERE reference = %s", (reference,))
+        job = cur.fetchone()
+
+        if not job:
+            cur.close()
+            conn.close()
+            return jsonify({'success': False, 'message': 'Emploi non trouvé'}), 404
+
+        # Marquer comme validé dans la DB
+        cur.execute("""
+            UPDATE jobs_niger
+            SET status = 'validated', updated_at = CURRENT_TIMESTAMP
+            WHERE reference = %s
+        """, (reference,))
+
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        logger.info(f"✅ Emploi {reference} validé")
+
+        return jsonify({
+            'success': True,
+            'message': f'Emploi {reference} validé avec succès'
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Erreur validation {reference}: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/delete/<reference>', methods=['DELETE'])
+def delete_job(reference):
+    """Supprimer un emploi spécifique"""
+    try:
+        conn = get_db_connection()
+        if not conn:
+            return jsonify({'success': False, 'message': 'Erreur DB'}), 500
+
+        cur = conn.cursor()
+
+        # Supprimer l'emploi
+        cur.execute("DELETE FROM jobs_niger WHERE reference = %s", (reference,))
+        deleted = cur.rowcount > 0
+
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        if deleted:
+            logger.info(f"✅ Emploi {reference} supprimé")
+            return jsonify({
+                'success': True,
+                'message': f'Emploi {reference} supprimé'
+            }), 200
+        else:
+            return jsonify({
+                'success': False,
+                'message': 'Emploi non trouvé'
+            }), 404
+
+    except Exception as e:
+        logger.error(f"Erreur suppression {reference}: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
 @app.route('/delete_all', methods=['POST'])
 def delete_all():
     """Supprimer tous les emplois en attente"""
