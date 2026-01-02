@@ -328,9 +328,41 @@ class ReliefWebScraper:
                             country_elem = job.find('p', class_=re.compile(r'.*country.*'))
                             country = country_elem.get_text(strip=True) if country_elem else ""
 
-                            # Dates
-                            pub_date = datetime.now(timezone.utc).isoformat()
-                            exp_date = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
+                            # Extraire les dates réelles
+                            pub_date = None
+                            exp_date = None
+
+                            # Chercher la date de publication (Posted date)
+                            date_posted_elem = job.find('time', class_=re.compile(r'.*date.*posted.*'))
+                            if not date_posted_elem:
+                                date_posted_elem = job.find('time')
+                            if not date_posted_elem:
+                                # Chercher dans dd/dt pour "Posted"
+                                posted_dt = job.find('dt', string=re.compile(r'Posted', re.I))
+                                if posted_dt:
+                                    date_posted_elem = posted_dt.find_next_sibling('dd')
+
+                            if date_posted_elem:
+                                date_str = date_posted_elem.get('datetime') or date_posted_elem.get_text(strip=True)
+                                pub_date = self._parse_date(date_str)
+
+                            # Chercher la date d'expiration (Closing date)
+                            date_closing_elem = job.find('time', class_=re.compile(r'.*closing.*'))
+                            if not date_closing_elem:
+                                # Chercher dans dd/dt pour "Closing"
+                                closing_dt = job.find('dt', string=re.compile(r'Closing|Deadline', re.I))
+                                if closing_dt:
+                                    date_closing_elem = closing_dt.find_next_sibling('dd')
+
+                            if date_closing_elem:
+                                date_str = date_closing_elem.get('datetime') or date_closing_elem.get_text(strip=True)
+                                exp_date = self._parse_date(date_str)
+
+                            # Fallback si dates non trouvées
+                            if not pub_date:
+                                pub_date = datetime.now(timezone.utc).isoformat()
+                            if not exp_date:
+                                exp_date = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
 
                             offre = OffreRelief(
                                 reference=job_id,
@@ -632,26 +664,65 @@ def scrape():
     """Launch scraping"""
     try:
         data = request.json or {}
-        start_date = data.get('start_date')
-        end_date = data.get('end_date')
-        limit = int(data.get('limit', 100))
+        date_filter_input = data.get('date_filter', '').strip()
+        max_pages = int(data.get('max_pages', 10))
 
-        logger.info(f"🚀 Lancement scraping: {start_date} → {end_date}")
+        logger.info(f"🚀 Lancement scraping ReliefWeb: date_filter={date_filter_input}, max_pages={max_pages}")
 
-        offres = scraper.scrape_relief_jobs(start_date, end_date, limit)
+        # Parser la date de filtre
+        date_filter = None
+        if date_filter_input:
+            try:
+                date_filter = datetime.strptime(date_filter_input, '%Y-%m-%d')
+                logger.info(f"Filtre activé: {date_filter.strftime('%Y-%m-%d')}")
+            except:
+                logger.warning("Format de date invalide, extraction sans filtre")
+        else:
+            logger.info("Extraction sans filtre de date")
 
-        saved = 0
+        # Scraper toutes les offres
+        offres = scraper.scrape_relief_jobs(limit=max_pages * 20)
+
+        # Appliquer le filtre de date si nécessaire
+        filtered_offres = []
+        filtered_count = 0
+
         for offre in offres:
+            if date_filter:
+                # Parser la date de publication de l'offre
+                try:
+                    pub_date_str = offre.publicationDate
+                    if pub_date_str:
+                        # Supporte ISO format
+                        pub_date = datetime.fromisoformat(pub_date_str.replace('Z', '+00:00'))
+                        if pub_date.date() == date_filter.date():
+                            filtered_offres.append(offre)
+                            logger.info(f"Date correspondante: {offre.reference} - {offre.description[:50]}...")
+                        else:
+                            filtered_count += 1
+                            logger.info(f"Date différente ({pub_date.date()} != {date_filter.date()}), ignoré")
+                    else:
+                        filtered_count += 1
+                except Exception as e:
+                    logger.debug(f"Erreur parsing date pour {offre.reference}: {e}")
+                    filtered_count += 1
+            else:
+                filtered_offres.append(offre)
+
+        # Sauvegarder les offres filtrées
+        saved = 0
+        for offre in filtered_offres:
             if scraper.save_to_pending(offre):
                 saved += 1
 
-        logger.info(f"✅ {saved}/{len(offres)} offres sauvegardées")
+        logger.info(f"✅ {saved}/{len(filtered_offres)} offres sauvegardées ({filtered_count} filtrées)")
 
         return jsonify({
             "success": True,
-            "message": f"Scraping terminé: {saved} offres ajoutées",
-            "total": len(offres),
-            "saved": saved
+            "message": f"Scraping terminé: {saved} nouvelles offres sur {len(filtered_offres)} extraites",
+            "total": len(filtered_offres),
+            "saved": saved,
+            "filtered": filtered_count
         })
 
     except Exception as e:

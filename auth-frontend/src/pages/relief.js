@@ -9,17 +9,12 @@ const API_BASE = '/api/relief/api';
 // ===== FORMULAIRE DE SCRAPING =====
 const ScrapeForm = ({ onScrape, loading, error }) => {
   const [dates, setDates] = useState({
-    start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-    end: new Date().toISOString().split('T')[0],
-    limit: 100
+    date_filter: new Date().toISOString().split('T')[0],  // Date du jour par défaut
+    max_pages: 10
   });
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (dates.start && dates.end && new Date(dates.start) > new Date(dates.end)) {
-      alert("La date de début ne peut pas être postérieure à la date de fin.");
-      return;
-    }
     onScrape(dates);
   };
 
@@ -96,38 +91,12 @@ const ScrapeForm = ({ onScrape, loading, error }) => {
               marginBottom: '0.5rem'
             }}>
               <Calendar size={16} style={{ display: 'inline', marginRight: '0.5rem', verticalAlign: 'middle' }} />
-              Date Début
+              Date de Publication (optionnelle)
             </label>
             <input
               type="date"
-              value={dates.start}
-              onChange={(e) => setDates({ ...dates, start: e.target.value })}
-              style={{
-                width: '100%',
-                padding: '0.75rem',
-                border: '2px solid #E2E8F0',
-                borderRadius: '10px',
-                fontSize: '0.95rem',
-                transition: 'all 0.2s'
-              }}
-            />
-          </div>
-
-          <div>
-            <label style={{
-              display: 'block',
-              fontSize: '0.9rem',
-              fontWeight: '600',
-              color: '#475569',
-              marginBottom: '0.5rem'
-            }}>
-              <Calendar size={16} style={{ display: 'inline', marginRight: '0.5rem', verticalAlign: 'middle' }} />
-              Date Fin
-            </label>
-            <input
-              type="date"
-              value={dates.end}
-              onChange={(e) => setDates({ ...dates, end: e.target.value })}
+              value={dates.date_filter}
+              onChange={(e) => setDates({ ...dates, date_filter: e.target.value })}
               style={{
                 width: '100%',
                 padding: '0.75rem',
@@ -148,14 +117,14 @@ const ScrapeForm = ({ onScrape, loading, error }) => {
               marginBottom: '0.5rem'
             }}>
               <FileText size={16} style={{ display: 'inline', marginRight: '0.5rem', verticalAlign: 'middle' }} />
-              Limite
+              Pages Maximum
             </label>
             <input
               type="number"
-              value={dates.limit}
-              onChange={(e) => setDates({ ...dates, limit: parseInt(e.target.value) })}
+              value={dates.max_pages}
+              onChange={(e) => setDates({ ...dates, max_pages: parseInt(e.target.value) })}
               min="1"
-              max="500"
+              max="50"
               style={{
                 width: '100%',
                 padding: '0.75rem',
@@ -737,9 +706,8 @@ function ReliefPage() {
 
     try {
       const payload = {
-        start_date: dates.start,
-        end_date: dates.end,
-        limit: dates.limit
+        date_filter: dates.date_filter || null,
+        max_pages: dates.max_pages || 10
       };
 
       console.log('📤 Envoi requête POST à:', `${API_BASE}/scrape`);
