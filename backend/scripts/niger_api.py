@@ -11,7 +11,7 @@ import os
 import logging
 import time
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
 # Configuration du logging
@@ -36,11 +36,24 @@ DB_CONFIG = {
     'port': os.getenv('DB_PORT', '5432')
 }
 
-# Configuration AppelOffres API
-APPELOFFRES_API = {
-    'base_url': os.getenv('APPELOFFRES_API_URL', 'https://tunisie.appeloffres.tn/api'),
-    'token': os.getenv('APPELOFFRES_API_TOKEN', '')
-}
+# Configuration API Appeloffres.net
+API_BASE_URL = os.getenv("API_BASE_URL", "https://be-stg.appeloffres.net/api")  # Utiliser staging
+TENDER_ENDPOINT = f"{API_BASE_URL}/tender"
+FILES_ENDPOINT = f"{API_BASE_URL}/files/tender"
+LOGIN_ENDPOINT = f"{API_BASE_URL}/auth/login"
+PROMOTER_ENDPOINT = f"{API_BASE_URL}/promoter"
+API_EMAIL = os.getenv("API_EMAIL", "oumayma.dahmani@tunipages.tn")
+API_PASSWORD = os.getenv("API_PASSWORD", "Ah0F553KKu0A")
+USER_AGENT = "NigerEmploiScraper/1.0"
+
+# IDs pour Niger
+DEFAULT_SOURCE_ID = 1702  # Source ID pour Niger Emploi
+DEFAULT_AVIS_ID = 11  # Avis standard
+DEFAULT_COUNTRY_ID = 157  # Niger country ID
+
+# Token API global
+api_token = None
+promoters_cache = {}
 
 class NigerEmploiScraper:
     def __init__(self):
@@ -511,9 +524,238 @@ def stats():
         logger.error(f"Erreur stats: {e}")
         return jsonify({'success': False, 'message': str(e)}), 500
 
+def login_to_api():
+    """Se connecte à l'API appeloffres.net et récupère le token"""
+    global api_token
+    try:
+        payload = {'email': API_EMAIL, 'password': API_PASSWORD}
+        headers = {'Content-Type': 'application/json', 'User-Agent': USER_AGENT}
+
+        response = requests.post(LOGIN_ENDPOINT, json=payload, headers=headers)
+        if response.status_code == 200:
+            data = response.json()
+            api_token = (
+                data.get('accessToken') or
+                data.get('access_token') or
+                data.get('token') or
+                data.get('data', {}).get('accessToken') or
+                data.get('data', {}).get('access_token') or
+                data.get('data', {}).get('token')
+            )
+
+            if isinstance(api_token, str) and api_token.startswith('Bearer '):
+                api_token = api_token.split(' ')[1]
+
+            logger.info(f"✅ Connexion API réussie. Token length: {len(api_token) if api_token else 0}")
+            return bool(api_token)
+        else:
+            logger.error(f"❌ Erreur connexion API: {response.status_code} - {response.text}")
+            return False
+    except Exception as e:
+        logger.error(f"❌ Exception lors de la connexion API: {e}")
+        return False
+
+def find_or_create_promoter(promoter_name):
+    """Trouve ou crée un promoteur dans l'API appeloffres.net"""
+    global api_token, promoters_cache
+
+    if not api_token:
+        login_to_api()
+
+    if not api_token:
+        logger.error("❌ Impossible de créer promoteur sans token")
+        return None
+
+    # Normaliser le nom
+    normalized_name = promoter_name.strip().lower()
+
+    # Vérifier le cache
+    if normalized_name in promoters_cache:
+        return promoters_cache[normalized_name]
+
+    try:
+        headers = {
+            'Authorization': f'Bearer {api_token}',
+            'Content-Type': 'application/json',
+            'User-Agent': USER_AGENT
+        }
+
+        # Rechercher d'abord
+        search_response = requests.get(
+            f"{PROMOTER_ENDPOINT}/search",
+            params={'name': promoter_name},
+            headers=headers,
+            timeout=10
+        )
+
+        if search_response.status_code == 200:
+            promoters = search_response.json()
+            if promoters and len(promoters) > 0:
+                promoter_id = promoters[0].get('id')
+                promoters_cache[normalized_name] = promoter_id
+                logger.info(f"✅ Promoteur trouvé: {promoter_name} (ID: {promoter_id})")
+                return promoter_id
+
+        # Créer s'il n'existe pas
+        create_payload = {
+            'name': promoter_name,
+            'companyName': promoter_name,
+            'countryId': DEFAULT_COUNTRY_ID,
+            'address': {
+                'streetAddress': 'Niamey',
+                'city': 'Niamey',
+                'countryId': DEFAULT_COUNTRY_ID
+            },
+            'phoneNumber': '+227-20-000000',
+            'email': f"{promoter_name.replace(' ', '_').lower()}@niger.com",
+            'type': 'public'
+        }
+
+        create_response = requests.post(
+            PROMOTER_ENDPOINT,
+            json=create_payload,
+            headers=headers,
+            timeout=10
+        )
+
+        if create_response.status_code in [200, 201]:
+            promoter_data = create_response.json()
+            promoter_id = promoter_data.get('id') or promoter_data.get('data', {}).get('id')
+            if promoter_id:
+                promoters_cache[normalized_name] = promoter_id
+                logger.info(f"✅ Promoteur créé: {promoter_name} (ID: {promoter_id})")
+                return promoter_id
+        else:
+            logger.error(f"❌ Erreur création promoteur: {create_response.status_code} - {create_response.text}")
+
+        # Si échec, créer un promoteur générique "Niger Employer"
+        generic_name = "Niger Employer"
+        if generic_name.lower() in promoters_cache:
+            return promoters_cache[generic_name.lower()]
+
+        generic_payload = {
+            'name': generic_name,
+            'companyName': generic_name,
+            'countryId': DEFAULT_COUNTRY_ID,
+            'address': {
+                'streetAddress': 'Niamey',
+                'city': 'Niamey',
+                'countryId': DEFAULT_COUNTRY_ID
+            },
+            'phoneNumber': '+227-20-000000',
+            'email': 'info@nigeremployer.com',
+            'type': 'public'
+        }
+
+        generic_response = requests.post(
+            PROMOTER_ENDPOINT,
+            json=generic_payload,
+            headers=headers,
+            timeout=10
+        )
+
+        if generic_response.status_code in [200, 201]:
+            generic_data = generic_response.json()
+            generic_id = generic_data.get('id') or generic_data.get('data', {}).get('id')
+            if generic_id:
+                promoters_cache[generic_name.lower()] = generic_id
+                logger.info(f"✅ Promoteur générique créé: ID {generic_id}")
+                return generic_id
+
+        logger.error("❌ Échec création de tous les promoteurs")
+        return None
+
+    except Exception as e:
+        logger.error(f"❌ Erreur find_or_create_promoter: {e}")
+        return None
+
+def send_job_to_api(job_data):
+    """Envoie un emploi Niger à l'API appeloffres.net"""
+    global api_token
+    max_retries = 3
+
+    for attempt in range(max_retries):
+        if not api_token:
+            if not login_to_api():
+                return False
+
+        headers = {
+            'Authorization': f'Bearer {api_token}',
+            'Content-Type': 'application/json',
+            'User-Agent': USER_AGENT
+        }
+
+        # Préparer les dates
+        pub_date = job_data.get('publication_date')
+        if isinstance(pub_date, str):
+            pub_date_obj = datetime.fromisoformat(pub_date.replace('Z', ''))
+            publication_date = pub_date_obj.isoformat()
+        else:
+            pub_date_obj = pub_date if pub_date else datetime.now()
+            publication_date = pub_date_obj.isoformat()
+
+        # Ajouter 30 jours pour expiration
+        exp_date_obj = pub_date_obj + timedelta(days=30)
+        expiration_date = exp_date_obj.isoformat()
+
+        # Trouver ou créer le promoteur
+        promoter_name = job_data.get('promoter', 'Niger Company')
+        promoter_id = find_or_create_promoter(promoter_name)
+
+        if not promoter_id:
+            logger.error("❌ Impossible de créer/trouver le promoteur")
+            return False
+
+        # Préparer le payload
+        api_payload = {
+            'title': job_data.get('title', '')[:255],
+            'reference': job_data.get('reference', ''),
+            'description': job_data.get('description', ''),
+            'publicationDate': publication_date,
+            'startBiddingDate': publication_date,
+            'expirationDate': expiration_date,
+            'openingBidsDate': expiration_date,
+            'avisId': DEFAULT_AVIS_ID,
+            'sourceId': DEFAULT_SOURCE_ID,
+            'promoterId': promoter_id,
+            'type': 'international',
+            'nature': 'public',
+            'isEnabled': True,
+            'images': [],
+            'addresses': [],
+            'batches': [],
+            'specificationsReceivingAddress': job_data.get('url', ''),
+            'fundingSourceType': 'international',
+            'fundingSource': promoter_name,
+            'isMultiCurrency': False,
+            'activitiesIds': [463],  # Services par défaut
+            'countriesIds': [DEFAULT_COUNTRY_ID]
+        }
+
+        try:
+            logger.info(f"📤 Envoi emploi {job_data.get('reference')} à l'API...")
+            response = requests.post(TENDER_ENDPOINT, json=api_payload, headers=headers, timeout=30)
+
+            if response.status_code in [200, 201]:
+                logger.info(f"✅ Emploi {job_data.get('reference')} envoyé avec succès")
+                return True
+            elif response.status_code == 401:
+                logger.warning("⚠️ Token expiré, reconnexion...")
+                api_token = None
+                continue
+            else:
+                logger.error(f"❌ Erreur API: {response.status_code} - {response.text}")
+                return False
+
+        except Exception as e:
+            logger.error(f"❌ Exception envoi API: {e}")
+            return False
+
+    return False
+
 @app.route('/validate/<reference>', methods=['POST'])
 def validate_job(reference):
-    """Valider un emploi et marquer comme validé"""
+    """Valider un emploi et l'envoyer à l'API appeloffres.net"""
     try:
         conn = get_db_connection()
         if not conn:
@@ -530,6 +772,19 @@ def validate_job(reference):
             conn.close()
             return jsonify({'success': False, 'message': 'Emploi non trouvé'}), 404
 
+        # Envoyer à l'API appeloffres.net
+        logger.info(f"📤 Envoi de l'emploi {reference} vers l'API appeloffres.net...")
+        api_success = send_job_to_api(dict(job))
+
+        if not api_success:
+            logger.error(f"❌ Échec de l'envoi API pour {reference}")
+            cur.close()
+            conn.close()
+            return jsonify({
+                'success': False,
+                'message': "Échec de l'envoi vers l'API appeloffres.net"
+            }), 500
+
         # Marquer comme validé dans la DB
         cur.execute("""
             UPDATE jobs_niger
@@ -541,11 +796,11 @@ def validate_job(reference):
         cur.close()
         conn.close()
 
-        logger.info(f"✅ Emploi {reference} validé")
+        logger.info(f"✅ Emploi {reference} validé ET envoyé à l'API")
 
         return jsonify({
             'success': True,
-            'message': f'Emploi {reference} validé avec succès'
+            'message': f'Emploi {reference} validé et envoyé à l\'API avec succès'
         }), 200
 
     except Exception as e:
