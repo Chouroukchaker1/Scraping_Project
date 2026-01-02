@@ -38,11 +38,24 @@ DB_CONFIG = {
     'port': os.getenv('DB_PORT', '5432')
 }
 
-# Configuration AppelOffres API
-APPELOFFRES_API = {
-    'base_url': os.getenv('APPELOFFRES_API_URL', 'https://tunisie.appeloffres.tn/api'),
-    'token': os.getenv('APPELOFFRES_API_TOKEN', '')
-}
+# Configuration API Appeloffres.net
+API_BASE_URL = os.getenv("API_BASE_URL", "https://be-stg.appeloffres.net/api")  # Utiliser staging
+TENDER_ENDPOINT = f"{API_BASE_URL}/tender"
+FILES_ENDPOINT = f"{API_BASE_URL}/files/tender"
+LOGIN_ENDPOINT = f"{API_BASE_URL}/auth/login"
+PROMOTER_ENDPOINT = f"{API_BASE_URL}/promoter"
+API_EMAIL = os.getenv("API_EMAIL", "oumayma.dahmani@tunipages.tn")
+API_PASSWORD = os.getenv("API_PASSWORD", "Ah0F553KKu0A")
+USER_AGENT = "PPDAMalawiScraper/1.0"
+
+# IDs pour Malawi
+DEFAULT_SOURCE_ID = 1703  # Source ID pour PPDA Malawi
+DEFAULT_AVIS_ID = 11  # Avis standard
+DEFAULT_COUNTRY_ID = 129  # Malawi country ID
+
+# Token API global
+api_token = None
+promoters_cache = {}
 
 class PPDA_Scraper:
     def __init__(self):
@@ -382,59 +395,241 @@ def get_pending_tenders():
         logger.error(f"Erreur récupération tenders: {e}")
         return []
 
-def send_to_api(tender):
-    """Envoyer un appel d'offres à l'API AppelOffres"""
+def login_to_api():
+    """Se connecte à l'API appeloffres.net et récupère le token"""
+    global api_token
     try:
-        # Convertir les dates en strings si nécessaire
-        pub_date = tender['publication_date']
-        if isinstance(pub_date, datetime):
-            pub_date = pub_date.strftime('%Y-%m-%d')
-        elif hasattr(pub_date, 'isoformat'):
-            pub_date = pub_date.isoformat()
+        payload = {'email': API_EMAIL, 'password': API_PASSWORD}
+        headers = {'Content-Type': 'application/json', 'User-Agent': USER_AGENT}
 
-        exp_date = tender['expiration_date']
-        if isinstance(exp_date, datetime):
-            exp_date = exp_date.strftime('%Y-%m-%d')
-        elif hasattr(exp_date, 'isoformat'):
-            exp_date = exp_date.isoformat()
+        response = requests.post(LOGIN_ENDPOINT, json=payload, headers=headers)
+        if response.status_code == 200:
+            data = response.json()
+            api_token = (
+                data.get('accessToken') or
+                data.get('access_token') or
+                data.get('token') or
+                data.get('data', {}).get('accessToken') or
+                data.get('data', {}).get('access_token') or
+                data.get('data', {}).get('token')
+            )
 
-        api_data = {
-            'numero_reference': tender['reference'],
-            'titre': tender['title'],
-            'description': tender['description'],
-            'promoteur': tender['promoter'],
-            'date_publication': pub_date,
-            'date_expiration': exp_date,
-            'photo': tender['document_url'],
-            'pays': tender['country'],
-            'nature': tender['nature'],
-            'type': tender['type'],
-            'type_financement': tender['funding_source_type'],
-            'caution': tender['caution']
-        }
+            if isinstance(api_token, str) and api_token.startswith('Bearer '):
+                api_token = api_token.split(' ')[1]
 
+            logger.info(f"✅ Connexion API réussie. Token length: {len(api_token) if api_token else 0}")
+            return bool(api_token)
+        else:
+            logger.error(f"❌ Erreur connexion API: {response.status_code} - {response.text}")
+            return False
+    except Exception as e:
+        logger.error(f"❌ Exception lors de la connexion API: {e}")
+        return False
+
+def find_or_create_promoter(promoter_name):
+    """Trouve ou crée un promoteur dans l'API appeloffres.net"""
+    global api_token, promoters_cache
+
+    if not api_token:
+        login_to_api()
+
+    if not api_token:
+        logger.error("❌ Impossible de créer promoteur sans token")
+        return None
+
+    # Normaliser le nom
+    normalized_name = promoter_name.strip().lower()
+
+    # Vérifier le cache
+    if normalized_name in promoters_cache:
+        return promoters_cache[normalized_name]
+
+    try:
         headers = {
-            'Authorization': f"Bearer {APPELOFFRES_API['token']}",
-            'Content-Type': 'application/json'
+            'Authorization': f'Bearer {api_token}',
+            'Content-Type': 'application/json',
+            'User-Agent': USER_AGENT
         }
 
-        response = requests.post(
-            f"{APPELOFFRES_API['base_url']}/appels-offres",
-            json=api_data,
+        # Rechercher d'abord
+        search_response = requests.get(
+            f"{PROMOTER_ENDPOINT}/search",
+            params={'name': promoter_name},
             headers=headers,
-            timeout=30
+            timeout=10
         )
 
-        if response.status_code in [200, 201]:
-            logger.info(f"✅ API success: {tender['reference']}")
-            return {'success': True, 'data': response.json()}
+        if search_response.status_code == 200:
+            promoters = search_response.json()
+            if promoters and len(promoters) > 0:
+                promoter_id = promoters[0].get('id')
+                promoters_cache[normalized_name] = promoter_id
+                logger.info(f"✅ Promoteur trouvé: {promoter_name} (ID: {promoter_id})")
+                return promoter_id
+
+        # Créer s'il n'existe pas
+        create_payload = {
+            'name': promoter_name,
+            'companyName': promoter_name,
+            'countryId': DEFAULT_COUNTRY_ID,
+            'address': {
+                'streetAddress': 'Lilongwe',
+                'city': 'Lilongwe',
+                'countryId': DEFAULT_COUNTRY_ID
+            },
+            'phoneNumber': '+265-1-000000',
+            'email': f"{promoter_name.replace(' ', '_').lower()}@malawi.mw",
+            'type': 'public'
+        }
+
+        create_response = requests.post(
+            PROMOTER_ENDPOINT,
+            json=create_payload,
+            headers=headers,
+            timeout=10
+        )
+
+        if create_response.status_code in [200, 201]:
+            promoter_data = create_response.json()
+            promoter_id = promoter_data.get('id') or promoter_data.get('data', {}).get('id')
+            if promoter_id:
+                promoters_cache[normalized_name] = promoter_id
+                logger.info(f"✅ Promoteur créé: {promoter_name} (ID: {promoter_id})")
+                return promoter_id
         else:
-            logger.error(f"❌ API error {response.status_code}: {tender['reference']}")
-            return {'success': False, 'error': response.text}
+            logger.error(f"❌ Erreur création promoteur: {create_response.status_code} - {create_response.text}")
+
+        # Si échec, créer un promoteur générique "Malawi Government"
+        generic_name = "Malawi Government"
+        if generic_name.lower() in promoters_cache:
+            return promoters_cache[generic_name.lower()]
+
+        generic_payload = {
+            'name': generic_name,
+            'companyName': generic_name,
+            'countryId': DEFAULT_COUNTRY_ID,
+            'address': {
+                'streetAddress': 'Lilongwe',
+                'city': 'Lilongwe',
+                'countryId': DEFAULT_COUNTRY_ID
+            },
+            'phoneNumber': '+265-1-000000',
+            'email': 'info@malawi.gov.mw',
+            'type': 'public'
+        }
+
+        generic_response = requests.post(
+            PROMOTER_ENDPOINT,
+            json=generic_payload,
+            headers=headers,
+            timeout=10
+        )
+
+        if generic_response.status_code in [200, 201]:
+            generic_data = generic_response.json()
+            generic_id = generic_data.get('id') or generic_data.get('data', {}).get('id')
+            if generic_id:
+                promoters_cache[generic_name.lower()] = generic_id
+                logger.info(f"✅ Promoteur générique créé: ID {generic_id}")
+                return generic_id
+
+        logger.error("❌ Échec création de tous les promoteurs")
+        return None
 
     except Exception as e:
-        logger.error(f"Erreur envoi API: {e}")
-        return {'success': False, 'error': str(e)}
+        logger.error(f"❌ Erreur find_or_create_promoter: {e}")
+        return None
+
+def send_to_api(tender):
+    """Envoyer un appel d'offres à l'API appeloffres.net"""
+    global api_token
+    max_retries = 3
+
+    for attempt in range(max_retries):
+        if not api_token:
+            if not login_to_api():
+                return {'success': False, 'error': 'Échec de connexion API'}
+
+        headers = {
+            'Authorization': f'Bearer {api_token}',
+            'Content-Type': 'application/json',
+            'User-Agent': USER_AGENT
+        }
+
+        # Préparer les dates
+        pub_date = tender['publication_date']
+        if isinstance(pub_date, str):
+            pub_date_obj = datetime.fromisoformat(pub_date.replace('Z', ''))
+            publication_date = pub_date_obj.isoformat()
+        elif isinstance(pub_date, datetime):
+            publication_date = pub_date.isoformat()
+        else:
+            publication_date = datetime.now().isoformat()
+
+        exp_date = tender['expiration_date']
+        if isinstance(exp_date, str):
+            exp_date_obj = datetime.fromisoformat(exp_date.replace('Z', ''))
+            expiration_date = exp_date_obj.isoformat()
+        elif isinstance(exp_date, datetime):
+            expiration_date = exp_date.isoformat()
+        else:
+            from datetime import timedelta
+            expiration_date = (datetime.now() + timedelta(days=30)).isoformat()
+
+        # Trouver ou créer le promoteur
+        promoter_name = tender.get('promoter', 'Malawi Government')
+        promoter_id = find_or_create_promoter(promoter_name)
+
+        if not promoter_id:
+            logger.error("❌ Impossible de créer/trouver le promoteur")
+            return {'success': False, 'error': 'Promoter creation failed'}
+
+        # Préparer le payload
+        api_payload = {
+            'title': tender.get('title', '')[:255],
+            'reference': tender.get('reference', ''),
+            'description': tender.get('description', ''),
+            'publicationDate': publication_date,
+            'startBiddingDate': publication_date,
+            'expirationDate': expiration_date,
+            'openingBidsDate': expiration_date,
+            'avisId': DEFAULT_AVIS_ID,
+            'sourceId': DEFAULT_SOURCE_ID,
+            'promoterId': promoter_id,
+            'type': 'national',
+            'nature': 'public',
+            'isEnabled': True,
+            'images': [],
+            'addresses': [],
+            'batches': [],
+            'specificationsReceivingAddress': tender.get('document_url', ''),
+            'fundingSourceType': 'national',
+            'fundingSource': promoter_name,
+            'isMultiCurrency': False,
+            'activitiesIds': [463],  # Services par défaut
+            'countriesIds': [DEFAULT_COUNTRY_ID]
+        }
+
+        try:
+            logger.info(f"📤 Envoi appel d'offres {tender.get('reference')} à l'API...")
+            response = requests.post(TENDER_ENDPOINT, json=api_payload, headers=headers, timeout=30)
+
+            if response.status_code in [200, 201]:
+                logger.info(f"✅ Appel d'offres {tender.get('reference')} envoyé avec succès")
+                return {'success': True, 'data': response.json()}
+            elif response.status_code == 401:
+                logger.warning("⚠️ Token expiré, reconnexion...")
+                api_token = None
+                continue
+            else:
+                logger.error(f"❌ Erreur API: {response.status_code} - {response.text}")
+                return {'success': False, 'error': response.text}
+
+        except Exception as e:
+            logger.error(f"❌ Exception envoi API: {e}")
+            return {'success': False, 'error': str(e)}
+
+    return {'success': False, 'error': 'Max retries exceeded'}
 
 def update_tender_status(tender_id, status, api_id=None):
     """Mettre à jour le status d'un tender"""
