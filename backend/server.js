@@ -570,10 +570,32 @@ app.post('/api/ppda/scrape', async (req, res) => {
   }
 });
 
+app.post('/api/ppda/validate/:reference(*)', async (req, res) => {
+  try {
+    const axios = require('axios');
+    const reference = req.params.reference;
+    console.log(`📤 Forwarding PPDA validate request for ${reference}`);
+
+    const response = await axios.post(`http://localhost:5017/validate/${encodeURIComponent(reference)}`, req.body, {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 30000
+    });
+
+    console.log('✅ PPDA validate response:', response.data);
+    res.json(response.data);
+  } catch (error) {
+    console.error('❌ PPDA validate error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: error.response?.data?.message || error.message
+    });
+  }
+});
+
 app.post('/api/ppda/validate', async (req, res) => {
   try {
     const axios = require('axios');
-    console.log('📤 Forwarding PPDA validate request');
+    console.log('📤 Forwarding PPDA validate all request');
 
     const response = await axios.post('http://localhost:5017/validate', req.body, {
       headers: { 'Content-Type': 'application/json' },

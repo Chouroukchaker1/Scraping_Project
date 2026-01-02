@@ -385,13 +385,26 @@ def get_pending_tenders():
 def send_to_api(tender):
     """Envoyer un appel d'offres à l'API AppelOffres"""
     try:
+        # Convertir les dates en strings si nécessaire
+        pub_date = tender['publication_date']
+        if isinstance(pub_date, datetime):
+            pub_date = pub_date.strftime('%Y-%m-%d')
+        elif hasattr(pub_date, 'isoformat'):
+            pub_date = pub_date.isoformat()
+
+        exp_date = tender['expiration_date']
+        if isinstance(exp_date, datetime):
+            exp_date = exp_date.strftime('%Y-%m-%d')
+        elif hasattr(exp_date, 'isoformat'):
+            exp_date = exp_date.isoformat()
+
         api_data = {
             'numero_reference': tender['reference'],
             'titre': tender['title'],
             'description': tender['description'],
             'promoteur': tender['promoter'],
-            'date_publication': tender['publication_date'],
-            'date_expiration': tender['expiration_date'],
+            'date_publication': pub_date,
+            'date_expiration': exp_date,
             'photo': tender['document_url'],
             'pays': tender['country'],
             'nature': tender['nature'],
@@ -530,6 +543,53 @@ def get_tenders():
 
     except Exception as e:
         logger.error(f"Erreur récupération tenders: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/validate/<path:reference>', methods=['POST'])
+def validate_single(reference):
+    """Valider et envoyer un seul appel d'offres à l'API"""
+    try:
+        conn = get_db_connection()
+        if not conn:
+            return jsonify({'success': False, 'message': 'Erreur DB'}), 500
+
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Récupérer le tender par référence
+        cur.execute("SELECT * FROM tenders_ppda WHERE reference = %s", (reference,))
+        tender = cur.fetchone()
+
+        cur.close()
+        conn.close()
+
+        if not tender:
+            return jsonify({
+                'success': False,
+                'message': f'Appel d\'offres {reference} non trouvé'
+            }), 404
+
+        # Envoyer à l'API
+        logger.info(f"📤 Envoi de l'appel d'offres {reference} vers l'API...")
+        result = send_to_api(dict(tender))
+
+        if result['success']:
+            api_id = result['data'].get('id') if 'data' in result else None
+            update_tender_status(tender['id'], 'validated', api_id)
+            logger.info(f"✅ Appel d'offres {reference} validé et envoyé à l'API")
+            return jsonify({
+                'success': True,
+                'message': f'Appel d\'offres {reference} validé et envoyé à l\'API avec succès'
+            }), 200
+        else:
+            update_tender_status(tender['id'], 'failed')
+            logger.error(f"❌ Échec de l'envoi API pour {reference}")
+            return jsonify({
+                'success': False,
+                'message': f'Échec de l\'envoi vers l\'API: {result.get("error", "Unknown error")}'
+            }), 500
+
+    except Exception as e:
+        logger.error(f"Erreur validation {reference}: {e}", exc_info=True)
         return jsonify({'success': False, 'message': str(e)}), 500
 
 @app.route('/validate', methods=['POST'])
