@@ -9,7 +9,7 @@ const API_BASE = '/api/mediacongo/api';
 // ===== FORMULAIRE DE SCRAPING =====
 const ScrapeForm = ({ onScrape, loading, error }) => {
   const [dates, setDates] = useState({
-    date_filter: '',  // Date de publication exacte (optionnelle)
+    date_filter: new Date().toISOString().split('T')[0],  // Date du jour par défaut
     max_pages: 20
   });
 
