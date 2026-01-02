@@ -342,6 +342,36 @@ CREATE INDEX IF NOT EXISTS idx_ppda_status ON tenders_ppda(status);
 CREATE INDEX IF NOT EXISTS idx_ppda_publication ON tenders_ppda(publication_date);
 
 -- ============================================================================
+-- TABLE GIZ (Deutsche Gesellschaft für Internationale Zusammenarbeit)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS tenders_giz (
+    id SERIAL PRIMARY KEY,
+    reference VARCHAR(255) UNIQUE NOT NULL,
+    description TEXT,
+    date_publication TIMESTAMP,
+    date_limite TIMESTAMP,
+    promoter TEXT DEFAULT 'GIZ',
+    type VARCHAR(255),
+    pays VARCHAR(255),
+    source_id INTEGER DEFAULT 1760,
+    avis_id INTEGER DEFAULT 1,
+    project_id VARCHAR(255),
+    lien_details TEXT,
+    pdf_links JSONB,
+    lots JSONB,
+    secteur_activite VARCHAR(255),
+    status VARCHAR(50) DEFAULT 'pending',
+    validation_date TIMESTAMP,
+    api_id INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_giz_reference ON tenders_giz(reference);
+CREATE INDEX IF NOT EXISTS idx_giz_status ON tenders_giz(status);
+CREATE INDEX IF NOT EXISTS idx_giz_publication ON tenders_giz(date_publication);
+
+-- ============================================================================
 -- TABLE NIGER EMPLOI (Job Offers Niger)
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS jobs_niger (
@@ -432,7 +462,10 @@ SELECT 'EXPERTISE' as source, reference, description, publication_date::text, cr
 FROM tenders_expertise WHERE status = 'pending'
 UNION ALL
 SELECT 'PPDA' as source, reference, description, publication_date::text, created_at
-FROM tenders_ppda WHERE status = 'pending';
+FROM tenders_ppda WHERE status = 'pending'
+UNION ALL
+SELECT 'GIZ' as source, reference, description, date_publication::text, created_at
+FROM tenders_giz WHERE status = 'pending';
 
 -- ============================================================================
 -- FONCTION TRIGGER pour mise à jour automatique du timestamp
@@ -483,7 +516,9 @@ BEGIN
     RAISE NOTICE '  - tenders_haicop';
     RAISE NOTICE '  - tenders_expertise';
     RAISE NOTICE '  - tenders_ppda';
+    RAISE NOTICE '  - tenders_giz';
     RAISE NOTICE '  - jobs_niger';
+    RAISE NOTICE '  - jobs_somalia';
     RAISE NOTICE '========================================';
     RAISE NOTICE 'View created: pending_tenders_all';
     RAISE NOTICE '========================================';

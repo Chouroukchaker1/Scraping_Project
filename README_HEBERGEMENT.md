@@ -50,7 +50,7 @@ chmod +x verify_deployment.sh
 
 Le fichier `backend/init.sql` crée automatiquement:
 
-✅ **14 Tables PostgreSQL**:
+✅ **15 Tables PostgreSQL**:
 - tenders_benin
 - tenders_mediacongo
 - tenders_relief
@@ -63,6 +63,7 @@ Le fichier `backend/init.sql` crée automatiquement:
 - tenders_haicop
 - tenders_expertise
 - tenders_ppda
+- tenders_giz
 - jobs_niger
 - jobs_somalia
 

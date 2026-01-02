@@ -146,6 +146,14 @@ SELECT
     COUNT(*) FILTER (WHERE status = 'validated')
 FROM tenders_ppda
 UNION ALL
+-- GIZ
+SELECT
+    'tenders_giz',
+    COUNT(*),
+    COUNT(*) FILTER (WHERE status = 'pending'),
+    COUNT(*) FILTER (WHERE status = 'validated')
+FROM tenders_giz
+UNION ALL
 -- Niger
 SELECT
     'jobs_niger',
@@ -244,16 +252,16 @@ BEGIN
     RAISE NOTICE '========================================';
     RAISE NOTICE 'RÉSUMÉ DE LA BASE DE DONNÉES';
     RAISE NOTICE '========================================';
-    RAISE NOTICE 'Tables créées: % (attendu: 14)', table_count;
+    RAISE NOTICE 'Tables créées: % (attendu: 15)', table_count;
     RAISE NOTICE 'Index créés: %', index_count;
     RAISE NOTICE 'Triggers actifs: %', trigger_count;
     RAISE NOTICE 'Total lignes insérées: %', COALESCE(total_rows, 0);
     RAISE NOTICE '========================================';
 
-    IF table_count = 14 THEN
+    IF table_count = 15 THEN
         RAISE NOTICE '✅ Base de données correctement configurée!';
     ELSE
-        RAISE WARNING '⚠️ Nombre de tables incorrect (attendu: 14, trouvé: %)', table_count;
+        RAISE WARNING '⚠️ Nombre de tables incorrect (attendu: 15, trouvé: %)', table_count;
     END IF;
     RAISE NOTICE '========================================';
     RAISE NOTICE '';

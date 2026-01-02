@@ -34,7 +34,7 @@ docker-compose up -d
 **C'EST TOUT!** 🎉
 
 Le fichier `backend/init.sql` va automatiquement:
-- ✅ Créer toutes les 14 tables PostgreSQL
+- ✅ Créer toutes les 15 tables PostgreSQL
 - ✅ Créer tous les index pour la performance
 - ✅ Créer les triggers pour updated_at automatique
 - ✅ Créer une vue globale `pending_tenders_all`
@@ -63,7 +63,7 @@ User: tender_user
 Password: tender_password_2024
 ```
 
-### Tables Créées Automatiquement (14 tables)
+### Tables Créées Automatiquement (15 tables)
 
 #### 1. **tenders_benin** - Appels d'offres Bénin
 ```sql
@@ -205,7 +205,26 @@ Colonnes principales:
 - status (VARCHAR)
 ```
 
-#### 13. **jobs_niger** - Emplois Niger
+#### 13. **tenders_giz** - GIZ (Coopération Allemande)
+```sql
+Colonnes principales:
+- reference (VARCHAR)
+- description (TEXT)
+- date_publication (TIMESTAMP)
+- date_limite (TIMESTAMP)
+- promoter (TEXT) - 'GIZ'
+- type (VARCHAR)
+- pays (VARCHAR)
+- source_id (INTEGER) - 1760
+- project_id (VARCHAR)
+- lien_details (TEXT)
+- pdf_links (JSONB) - URLs des PDFs
+- lots (JSONB) - Lots en JSON
+- secteur_activite (VARCHAR)
+- status (VARCHAR)
+```
+
+#### 14. **jobs_niger** - Emplois Niger
 ```sql
 Colonnes principales:
 - reference (VARCHAR)
@@ -220,7 +239,7 @@ Colonnes principales:
 - status (VARCHAR)
 ```
 
-#### 14. **jobs_somalia** - Emplois Somalie
+#### 15. **jobs_somalia** - Emplois Somalie
 ```sql
 Colonnes principales:
 - reference (VARCHAR)
