@@ -995,8 +995,8 @@ def insert_tender(tender_data):
             conn.close()
         return False
 
-def get_all_tenders(status=None):
-    """Get all tenders from database, optionally filtered by status"""
+def get_all_tenders(status=None, date_start=None, date_end=None):
+    """Get all tenders from database, optionally filtered by status and publication date"""
     conn = get_db_connection()
     if not conn:
         return []
@@ -1004,17 +1004,24 @@ def get_all_tenders(status=None):
     try:
         cursor = conn.cursor(cursor_factory=RealDictCursor)
 
+        query = "SELECT * FROM tenders_armp WHERE 1=1"
+        params = []
+
         if status:
-            cursor.execute("""
-                SELECT * FROM tenders_armp
-                WHERE status = %s
-                ORDER BY created_at DESC
-            """, (status,))
-        else:
-            cursor.execute("""
-                SELECT * FROM tenders_armp
-                ORDER BY created_at DESC
-            """)
+            query += " AND status = %s"
+            params.append(status)
+
+        if date_start:
+            query += " AND publication_date >= %s"
+            params.append(date_start)
+
+        if date_end:
+            query += " AND publication_date <= %s"
+            params.append(date_end)
+
+        query += " ORDER BY created_at DESC"
+
+        cursor.execute(query, tuple(params))
 
         tenders = cursor.fetchall()
         cursor.close()
@@ -1082,10 +1089,13 @@ def status():
 
 @app.route('/api/pending', methods=['GET'])
 def get_pending():
-    """Get all pending tenders"""
+    """Get all pending tenders, optionally filtered by publication date"""
     try:
         limit = request.args.get('limit', type=int, default=10)
-        tenders = get_all_tenders('pending')
+        date_start = request.args.get('date_start')
+        date_end = request.args.get('date_end')
+
+        tenders = get_all_tenders('pending', date_start=date_start, date_end=date_end)
 
         # Return structured format matching other scrapers (TUNEPS AO, etc.)
         return jsonify({
@@ -1109,10 +1119,13 @@ def get_pending_all():
 
 @app.route('/api/tenders', methods=['GET'])
 def get_tenders():
-    """Get all validated (active) tenders"""
+    """Get all validated (active) tenders, optionally filtered by publication date"""
     try:
         limit = request.args.get('limit', type=int, default=10)
-        tenders = get_all_tenders('active')
+        date_start = request.args.get('date_start')
+        date_end = request.args.get('date_end')
+
+        tenders = get_all_tenders('active', date_start=date_start, date_end=date_end)
 
         # Return structured format matching other scrapers
         return jsonify({

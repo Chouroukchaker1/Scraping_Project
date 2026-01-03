@@ -376,6 +376,7 @@ class TUNEPSScraper:
         self.use_selenium = use_selenium
         self.driver = None
         self.access_token = None
+        self.token_expiration = None  # Timestamp d'expiration du token (24h)
         self.session_appeloffres = requests.Session()
         self.promoter_cache = {}
         self.offres_cache = []
@@ -663,29 +664,56 @@ class TUNEPSScraper:
         return ""
     
     @tenacity.retry(stop=tenacity.stop_after_attempt(3), wait=tenacity.wait_exponential(multiplier=1, min=4, max=10))
+    def is_token_valid(self) -> bool:
+        """Vérifie si le token est valide (existe et n'a pas expiré)"""
+        if not self.access_token:
+            return False
+
+        if not self.token_expiration:
+            return False
+
+        # Vérifier si le token n'a pas expiré (24h)
+        if datetime.now() >= self.token_expiration:
+            self.logger.info("⚠️ Token expiré (24h dépassées), reconnexion nécessaire")
+            self.access_token = None
+            self.token_expiration = None
+            return False
+
+        return True
+
     def login_appeloffres(self) -> bool:
-        if self.access_token:
+        """Se connecte à l'API appeloffres.net avec expiration 24h"""
+        # Vérifier si le token est déjà valide
+        if self.is_token_valid():
+            self.logger.info("✅ Token déjà valide, pas de reconnexion nécessaire")
             return True
-        
+
         try:
-            self.logger.info(f"Tentative de connexion a l'API: {LOGIN_ENDPOINT}")
+            self.logger.info(f"🔐 Connexion à l'API: {LOGIN_ENDPOINT}")
             response = self.session_appeloffres.post(
                 LOGIN_ENDPOINT,
                 json={"email": EMAIL, "password": API_PASSWORD},
                 headers=self.appeloffres_headers,
                 timeout=30
             )
-            
+
             if response.status_code in [200, 201]:
                 data = response.json()
                 self.access_token = data.get("accessToken")
-                self.appeloffres_headers["Authorization"] = f"Bearer {self.access_token}"
-                self.logger.info("Connexion API reussie")
-                return True
-            
+
+                if self.access_token:
+                    # Définir l'expiration à 24h à partir de maintenant
+                    self.token_expiration = datetime.now() + timedelta(hours=24)
+                    self.appeloffres_headers["Authorization"] = f"Bearer {self.access_token}"
+                    self.logger.info(f"✅ Connexion API réussie. Token valide jusqu'à {self.token_expiration.strftime('%Y-%m-%d %H:%M:%S')}")
+                    return True
+                else:
+                    self.logger.error("⚠️ Token vide dans la réponse API")
+                    return False
+
             self.logger.error(f"ERREUR CONNEXION: Status {response.status_code} - {response.text}")
             return False
-            
+
         except Exception as e:
             self.logger.error(f"ERREUR CONNEXION: {e}")
             return False

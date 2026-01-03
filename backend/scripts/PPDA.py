@@ -53,8 +53,9 @@ DEFAULT_SOURCE_ID = 1703  # Source ID pour PPDA Malawi
 DEFAULT_AVIS_ID = 11  # Avis standard
 DEFAULT_COUNTRY_ID = 129  # Malawi country ID
 
-# Token API global
+# Token API global avec expiration
 api_token = None
+token_expiration = None  # Timestamp d'expiration du token (24h)
 promoters_cache = {}
 
 class PPDA_Scraper:
@@ -395,13 +396,39 @@ def get_pending_tenders():
         logger.error(f"Erreur récupération tenders: {e}")
         return []
 
+def is_token_valid():
+    """Vérifie si le token est valide (existe et n'a pas expiré)"""
+    global api_token, token_expiration
+    from datetime import timedelta
+
+    if not api_token:
+        return False
+
+    if not token_expiration:
+        return False
+
+    # Vérifier si le token n'a pas expiré (24h)
+    if datetime.now() >= token_expiration:
+        logger.info("⚠️ Token expiré (24h dépassées), reconnexion nécessaire")
+        return False
+
+    return True
+
 def login_to_api():
-    """Se connecte à l'API appeloffres.net et récupère le token"""
-    global api_token
+    """Se connecte à l'API appeloffres.net et récupère le token avec expiration 24h"""
+    global api_token, token_expiration
+    from datetime import timedelta
+
+    # Vérifier si le token est déjà valide
+    if is_token_valid():
+        logger.info("✅ Token déjà valide, pas de reconnexion nécessaire")
+        return True
+
     try:
         payload = {'email': API_EMAIL, 'password': API_PASSWORD}
         headers = {'Content-Type': 'application/json', 'User-Agent': USER_AGENT}
 
+        logger.info("🔐 Connexion à l'API appeloffres.net...")
         response = requests.post(LOGIN_ENDPOINT, json=payload, headers=headers)
         if response.status_code == 200:
             data = response.json()
@@ -417,8 +444,14 @@ def login_to_api():
             if isinstance(api_token, str) and api_token.startswith('Bearer '):
                 api_token = api_token.split(' ')[1]
 
-            logger.info(f"✅ Connexion API réussie. Token length: {len(api_token) if api_token else 0}")
-            return bool(api_token)
+            if api_token:
+                # Définir l'expiration à 24h à partir de maintenant
+                token_expiration = datetime.now() + timedelta(hours=24)
+                logger.info(f"✅ Connexion API réussie. Token valide jusqu'à {token_expiration.strftime('%Y-%m-%d %H:%M:%S')}")
+                return True
+            else:
+                logger.error("⚠️ Token vide dans la réponse API")
+                return False
         else:
             logger.error(f"❌ Erreur connexion API: {response.status_code} - {response.text}")
             return False
@@ -430,12 +463,11 @@ def find_or_create_promoter(promoter_name):
     """Trouve ou crée un promoteur dans l'API appeloffres.net"""
     global api_token, promoters_cache
 
-    if not api_token:
-        login_to_api()
-
-    if not api_token:
-        logger.error("❌ Impossible de créer promoteur sans token")
-        return None
+    # Vérifier et se connecter seulement si nécessaire
+    if not is_token_valid():
+        if not login_to_api():
+            logger.error("❌ Impossible de créer promoteur sans token")
+            return None
 
     # Normaliser le nom
     normalized_name = promoter_name.strip().lower()
@@ -546,7 +578,8 @@ def send_to_api(tender):
     max_retries = 3
 
     for attempt in range(max_retries):
-        if not api_token:
+        # Vérifier et se connecter seulement si nécessaire
+        if not is_token_valid():
             if not login_to_api():
                 return {'success': False, 'error': 'Échec de connexion API'}
 

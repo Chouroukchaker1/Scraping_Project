@@ -10,7 +10,7 @@ import logging
 import requests
 import psycopg2
 from psycopg2.extras import execute_values, RealDictCursor
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from bs4 import BeautifulSoup
@@ -350,6 +350,7 @@ class PNUDScraper:
         self.base_url = "https://procurement-notices.undp.org"
         self.session = requests.Session()
         self.access_token = None
+        self.token_expiration = None  # Timestamp d'expiration du token (24h)
         self.refresh_token = None
         self.last_login_time = None
         self.session_appeloffres = requests.Session()
@@ -407,30 +408,47 @@ class PNUDScraper:
             logger.error(f"❌ Erreur lors de la sauvegarde de l'offre {offre.reference}: {e}")
 
     @tenacity.retry(stop=tenacity.stop_after_attempt(3), wait=tenacity.wait_fixed(1))
+    def is_token_valid(self) -> bool:
+        """Vérifie si le token est valide (existe et n'a pas expiré)"""
+        if not self.access_token or not self.token_expiration:
+            return False
+        if datetime.now() >= self.token_expiration:
+            logger.info("⚠️ Token expiré (24h dépassées), reconnexion nécessaire")
+            self.access_token = None
+            self.token_expiration = None
+            return False
+        return True
+
     def get_api_token(self):
-        current_time = datetime.now(timezone.utc)
-        if self.access_token and self.last_login_time and (current_time - self.last_login_time).total_seconds() <= 86400:
-            logger.info("🔑 Token réutilisé (moins de 24h depuis dernière connexion)")
+        """Se connecte à l'API appeloffres.net avec expiration 24h"""
+        # Vérifier si le token est déjà valide
+        if self.is_token_valid():
+            logger.info("✅ Token déjà valide, pas de reconnexion nécessaire")
             return True
-        
+
         try:
-            logger.info(f"🔑 Tentative de connexion API avec compte: {EMAIL}")
+            logger.info(f"🔐 Connexion à l'API avec compte: {EMAIL}")
             response = self.session_appeloffres.post(
                 LOGIN_ENDPOINT,
                 json={"email": EMAIL, "password": PASSWORD},
                 headers={"Content-Type": "application/json", "Accept": "application/json"}
             )
-            
+
             if response.status_code == 200:
                 data = response.json()
                 self.access_token = data.get('accessToken')
                 self.refresh_token = data.get('refreshToken')
-                self.last_login_time = current_time
-                
+
                 if self.access_token:
-                    logger.info("🔑 Token d'accès obtenu avec succès (valide 24h)")
+                    # Définir l'expiration à 24h à partir de maintenant
+                    self.token_expiration = datetime.now() + timedelta(hours=24)
+                    self.last_login_time = datetime.now(timezone.utc)
+                    logger.info(f"✅ Connexion API réussie. Token valide jusqu'à {self.token_expiration.strftime('%Y-%m-%d %H:%M:%S')}")
                     return True
-            
+                else:
+                    logger.error("⚠️ Token vide dans la réponse API")
+                    return False
+
             logger.error(f"❌ Échec de l'authentification API: {response.status_code}")
             return False
         except Exception as e:

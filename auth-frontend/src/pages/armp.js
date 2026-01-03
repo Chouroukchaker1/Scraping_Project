@@ -89,32 +89,31 @@ const ScrapeForm = ({ onScrape, loading, status, error }) => {
 };
 
 // ===== LISTE DES OFFRES EN ATTENTE =====
-const PendingList = ({ offres, onValidate, onUpdate, onDelete }) => {
+const PendingList = ({ offres, onValidate, onUpdate, onDelete, onDateFilterChange }) => {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const [perPage, setPerPage] = useState(50);
   const [dateFilter, setDateFilter] = useState({ start: '', end: '' });
 
+  // Déclencher le changement de filtre de date vers le parent
+  const handleDateChange = (newFilter) => {
+    setDateFilter(newFilter);
+    setPage(1);
+    if (onDateFilterChange) {
+      onDateFilterChange(newFilter);
+    }
+  };
+
   const filtered = useMemo(() => {
     return offres.filter(o => {
-      // Filtre par texte
+      // Filtre par texte uniquement (les dates sont filtrées côté backend)
       const matchText = o.reference?.toLowerCase().includes(search.toLowerCase()) ||
         o.description?.toLowerCase().includes(search.toLowerCase()) ||
         o.promoter?.toLowerCase().includes(search.toLowerCase());
 
-      // Filtre par date
-      let matchDate = true;
-      if (dateFilter.start || dateFilter.end) {
-        const pubDate = o.publicationDate ? new Date(o.publicationDate) : null;
-        if (pubDate) {
-          if (dateFilter.start && pubDate < new Date(dateFilter.start)) matchDate = false;
-          if (dateFilter.end && pubDate > new Date(dateFilter.end + 'T23:59:59')) matchDate = false;
-        }
-      }
-
-      return matchText && matchDate;
+      return matchText;
     });
-  }, [offres, search, dateFilter]);
+  }, [offres, search]);
 
   const totalPages = Math.ceil(filtered.length / perPage);
   const paginated = useMemo(() => {
@@ -190,6 +189,11 @@ const PendingList = ({ offres, onValidate, onUpdate, onDelete }) => {
         <select value={perPage} onChange={e => { setPerPage(+e.target.value); setPage(1); }}>
           {[10, 25, 50, 100, 200].map(n => <option key={n} value={n}>{n} / page</option>)}
         </select>
+        {offres.length > 0 && (
+          <button onClick={handleDeleteAll} className="btn danger" style={{ marginLeft: '0.5rem' }}>
+            <Trash2 size={18} /> Supprimer Tout
+          </button>
+        )}
       </div>
 
       <div className="toolbar" style={{ marginTop: '1rem', gap: '1rem' }}>
@@ -199,7 +203,7 @@ const PendingList = ({ offres, onValidate, onUpdate, onDelete }) => {
           <input
             type="date"
             value={dateFilter.start}
-            onChange={e => { setDateFilter({ ...dateFilter, start: e.target.value }); setPage(1); }}
+            onChange={e => handleDateChange({ ...dateFilter, start: e.target.value })}
             placeholder="Du"
             style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid #E2E8F0' }}
           />
@@ -207,13 +211,13 @@ const PendingList = ({ offres, onValidate, onUpdate, onDelete }) => {
           <input
             type="date"
             value={dateFilter.end}
-            onChange={e => { setDateFilter({ ...dateFilter, end: e.target.value }); setPage(1); }}
+            onChange={e => handleDateChange({ ...dateFilter, end: e.target.value })}
             placeholder="Au"
             style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid #E2E8F0' }}
           />
           {(dateFilter.start || dateFilter.end) && (
             <button
-              onClick={() => { setDateFilter({ start: '', end: '' }); setPage(1); }}
+              onClick={() => handleDateChange({ start: '', end: '' })}
               className="btn"
               style={{ padding: '0.5rem 1rem', fontSize: '0.85rem' }}
             >
@@ -288,29 +292,28 @@ const PendingList = ({ offres, onValidate, onUpdate, onDelete }) => {
 };
 
 // ===== LISTE DES OFFRES VALIDÉES =====
-const ValidatedList = ({ tenders, onRefresh }) => {
+const ValidatedList = ({ tenders, onRefresh, onDateFilterChange }) => {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const [perPage] = useState(50);
   const [dateFilter, setDateFilter] = useState({ start: '', end: '' });
 
+  // Déclencher le changement de filtre de date vers le parent
+  const handleDateChange = (newFilter) => {
+    setDateFilter(newFilter);
+    setPage(1);
+    if (onDateFilterChange) {
+      onDateFilterChange(newFilter);
+    }
+  };
+
   const filtered = useMemo(() => tenders.filter(t => {
-    // Filtre par texte
+    // Filtre par texte uniquement (les dates sont filtrées côté backend)
     const matchText = t.reference?.toLowerCase().includes(search.toLowerCase()) ||
       t.description?.toLowerCase().includes(search.toLowerCase());
 
-    // Filtre par date
-    let matchDate = true;
-    if (dateFilter.start || dateFilter.end) {
-      const pubDate = t.publicationDate ? new Date(t.publicationDate) : null;
-      if (pubDate) {
-        if (dateFilter.start && pubDate < new Date(dateFilter.start)) matchDate = false;
-        if (dateFilter.end && pubDate > new Date(dateFilter.end + 'T23:59:59')) matchDate = false;
-      }
-    }
-
-    return matchText && matchDate;
-  }), [tenders, search, dateFilter]);
+    return matchText;
+  }), [tenders, search]);
 
   const totalPages = Math.ceil(filtered.length / perPage);
   const paginated = useMemo(() => {
@@ -358,6 +361,9 @@ const ValidatedList = ({ tenders, onRefresh }) => {
             onChange={e => { setSearch(e.target.value); setPage(1); }}
           />
         </div>
+        <button onClick={handleDeleteAll} className="btn danger" style={{ marginLeft: '0.5rem' }}>
+          <Trash2 size={18} /> Supprimer Tout
+        </button>
       </div>
 
       <div className="toolbar" style={{ marginTop: '1rem', gap: '1rem' }}>
@@ -367,7 +373,7 @@ const ValidatedList = ({ tenders, onRefresh }) => {
           <input
             type="date"
             value={dateFilter.start}
-            onChange={e => { setDateFilter({ ...dateFilter, start: e.target.value }); setPage(1); }}
+            onChange={e => handleDateChange({ ...dateFilter, start: e.target.value })}
             placeholder="Du"
             style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid #E2E8F0' }}
           />
@@ -375,13 +381,13 @@ const ValidatedList = ({ tenders, onRefresh }) => {
           <input
             type="date"
             value={dateFilter.end}
-            onChange={e => { setDateFilter({ ...dateFilter, end: e.target.value }); setPage(1); }}
+            onChange={e => handleDateChange({ ...dateFilter, end: e.target.value })}
             placeholder="Au"
             style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid #E2E8F0' }}
           />
           {(dateFilter.start || dateFilter.end) && (
             <button
-              onClick={() => { setDateFilter({ start: '', end: '' }); setPage(1); }}
+              onClick={() => handleDateChange({ start: '', end: '' })}
               className="btn"
               style={{ padding: '0.5rem 1rem', fontSize: '0.85rem' }}
             >
@@ -448,20 +454,32 @@ const Armp = () => {
   const [status, setStatus] = useState({ processing: false, duration: 0 });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [pendingDateFilter, setPendingDateFilter] = useState({ start: '', end: '' });
+  const [validatedDateFilter, setValidatedDateFilter] = useState({ start: '', end: '' });
 
-  const fetchPending = useCallback(async () => {
+  const fetchPending = useCallback(async (dateFilter) => {
     try {
-      const res = await axios.get(`${API_BASE}/pending?limit=1000`);
+      let url = `${API_BASE}/pending?limit=1000`;
+      if (dateFilter && dateFilter.start) url += `&date_start=${dateFilter.start}`;
+      if (dateFilter && dateFilter.end) url += `&date_end=${dateFilter.end}`;
+
+      const res = await axios.get(url);
       setPending(res.data.offres || []);
     } catch (err) {
       console.error(err);
     }
   }, []);
 
-  const fetchValidated = useCallback(async () => {
+  const fetchValidated = useCallback(async (dateFilter) => {
     try {
-      const res = await axios.get(`${API_BASE}/tenders`);
-      setValidated(res.data.tenders || []);
+      let url = `${API_BASE}/tenders`;
+      const params = [];
+      if (dateFilter && dateFilter.start) params.push(`date_start=${dateFilter.start}`);
+      if (dateFilter && dateFilter.end) params.push(`date_end=${dateFilter.end}`);
+      if (params.length > 0) url += `?${params.join('&')}`;
+
+      const res = await axios.get(url);
+      setValidated(res.data.offres || res.data.tenders || []);
     } catch (err) {
       console.error(err);
     }
@@ -493,20 +511,40 @@ const Armp = () => {
     }
   };
 
-  const refreshAll = () => {
-    fetchPending();
-    fetchValidated();
+  const handlePendingDateFilter = useCallback((dateFilter) => {
+    setPendingDateFilter(dateFilter);
+    fetchPending(dateFilter);
+  }, [fetchPending]);
+
+  const handleValidatedDateFilter = useCallback((dateFilter) => {
+    setValidatedDateFilter(dateFilter);
+    fetchValidated(dateFilter);
+  }, [fetchValidated]);
+
+  const refreshAll = useCallback(() => {
+    // Use a ref or get the latest filter values
+    setPendingDateFilter(prev => {
+      fetchPending(prev);
+      return prev;
+    });
+    setValidatedDateFilter(prev => {
+      fetchValidated(prev);
+      return prev;
+    });
     fetchStatus();
-  };
+  }, [fetchPending, fetchValidated, fetchStatus]);
 
   useEffect(() => {
-    refreshAll();
+    // Initial load only
+    fetchPending({ start: '', end: '' });
+    fetchValidated({ start: '', end: '' });
+    fetchStatus();
+
     const interval = setInterval(() => {
       fetchStatus();
-      if (!status.processing) fetchPending();
     }, 10000);
     return () => clearInterval(interval);
-  }, [fetchPending, fetchStatus, status.processing]);
+  }, [fetchPending, fetchValidated, fetchStatus]);
 
   return (
     <div className="page">
@@ -529,12 +567,17 @@ const Armp = () => {
 
         <PendingList
           offres={pending}
-          onValidate={(ref) => { setPending(p => p.filter(o => o.reference !== ref)); fetchValidated(); }}
+          onValidate={(ref) => { setPending(p => p.filter(o => o.reference !== ref)); fetchValidated(validatedDateFilter); }}
           onUpdate={(ref, data) => setPending(p => p.map(o => o.reference === ref ? { ...o, ...data } : o))}
           onDelete={(ref) => setPending(p => p.filter(o => o.reference !== ref))}
+          onDateFilterChange={handlePendingDateFilter}
         />
 
-        <ValidatedList tenders={validated} onRefresh={fetchValidated} />
+        <ValidatedList
+          tenders={validated}
+          onRefresh={() => fetchValidated(validatedDateFilter)}
+          onDateFilterChange={handleValidatedDateFilter}
+        />
       </div>
     </div>
   );

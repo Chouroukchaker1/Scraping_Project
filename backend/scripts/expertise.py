@@ -59,6 +59,10 @@ logger = logging.getLogger(__name__)
 # User-Agent commun
 USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
 
+# Token API global avec expiration
+api_token = None
+token_expiration = None  # Timestamp d'expiration du token (24h)
+
 # ================================================
 # POSTGRESQL FUNCTIONS
 # ================================================
@@ -198,9 +202,34 @@ def update_tender_status(reference, new_status, api_id=None):
 # API APPELOFFRES FUNCTIONS
 # ================================================
 
+def is_token_valid():
+    """Vérifie si le token est valide (existe et n'a pas expiré)"""
+    global api_token, token_expiration
+
+    if not api_token:
+        return False
+
+    if not token_expiration:
+        return False
+
+    # Vérifier si le token n'a pas expiré (24h)
+    if datetime.now() >= token_expiration:
+        logger.info("⚠️ Token expiré (24h dépassées), reconnexion nécessaire")
+        return False
+
+    return True
+
 def login_to_appeloffres():
-    """Se connecte à l'API AppelOffres et retourne le token"""
+    """Se connecte à l'API AppelOffres et retourne le token avec expiration 24h"""
+    global api_token, token_expiration
+
+    # Vérifier si le token est déjà valide
+    if is_token_valid():
+        logger.info("✅ Token déjà valide, pas de reconnexion nécessaire")
+        return api_token
+
     try:
+        logger.info("🔐 Connexion à l'API AppelOffres...")
         response = requests.post(
             LOGIN_ENDPOINT,
             json={"email": EMAIL, "password": API_PASSWORD},
@@ -208,9 +237,16 @@ def login_to_appeloffres():
         )
         if response.status_code == 200:
             data = response.json()
-            token = data.get('access_token') or data.get('accessToken') or data.get('token')
-            logger.info("✅ Connexion API AppelOffres réussie")
-            return token
+            api_token = data.get('access_token') or data.get('accessToken') or data.get('token')
+
+            if api_token:
+                # Définir l'expiration à 24h à partir de maintenant
+                token_expiration = datetime.now() + timedelta(hours=24)
+                logger.info(f"✅ Connexion API réussie. Token valide jusqu'à {token_expiration.strftime('%Y-%m-%d %H:%M:%S')}")
+                return api_token
+            else:
+                logger.error("⚠️ Token vide dans la réponse API")
+                return None
         else:
             logger.error(f"❌ Échec login API: {response.status_code}")
             return None

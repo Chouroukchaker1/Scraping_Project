@@ -388,6 +388,7 @@ class TunisieScraper:
         self.api_session = requests.Session()
         self.api_session.headers.update(self.headers)
         self.api_token = None
+        self.token_expiration = None  # Timestamp d'expiration du token (24h)
         
         # ✅ NOUVEAU: Setup image fixe
         self.fixed_image_s3_path = self._setup_fixed_image_via_api()
@@ -838,24 +839,42 @@ class TunisieScraper:
             }
         }
     
+    def is_token_valid(self) -> bool:
+        """Vérifie si le token est valide (existe et n'a pas expiré)"""
+        if not self.api_token or not self.token_expiration:
+            return False
+        if datetime.now() >= self.token_expiration:
+            self.logger.info("⚠️ Token expiré (24h dépassées), reconnexion nécessaire")
+            self.api_token = None
+            self.token_expiration = None
+            return False
+        return True
+
     def login_to_api(self):
-        """Login à l'API HAICOP"""
+        """Login à l'API HAICOP avec expiration 24h"""
+        # Vérifier si le token est déjà valide
+        if self.is_token_valid():
+            self.logger.info("✅ Token déjà valide, pas de reconnexion nécessaire")
+            return True
+
         try:
             login_data = {"email": EMAIL, "password": PASSWORD}
-            self.logger.info(f"🔐 Login API HAICOP: {EMAIL[:3]}****")
-            
+            self.logger.info(f"🔐 Connexion API HAICOP: {EMAIL[:3]}****")
+
             response = self.api_session.post(LOGIN_ENDPOINT, json=login_data)
             self.logger.info(f"📡 Réponse login: {response.status_code}")
-            
+
             if response.status_code == 200:
                 data = response.json()
                 self.api_token = data.get('accessToken')
-                
+
                 if self.api_token:
+                    # Définir l'expiration à 24h à partir de maintenant
+                    self.token_expiration = datetime.now() + timedelta(hours=24)
                     self.api_session.headers.update({
                         'Authorization': f'Bearer {self.api_token}'
                     })
-                    self.logger.info("✅ Login API réussi")
+                    self.logger.info(f"✅ Connexion API réussie. Token valide jusqu'à {self.token_expiration.strftime('%Y-%m-%d %H:%M:%S')}")
                     return True
                 else:
                     self.logger.error("❌ Pas de 'accessToken' dans la réponse")
@@ -863,14 +882,14 @@ class TunisieScraper:
             else:
                 self.logger.error(f"❌ Erreur login: {response.status_code}")
                 return False
-                
+
         except Exception as e:
             self.logger.error(f"❌ Erreur login API: {e}")
             return False
-    
+
     def ensure_authenticated(self):
         """Assure l'authentification"""
-        if not self.api_token:
+        if not self.is_token_valid():
             return self.login_to_api()
         return True
     

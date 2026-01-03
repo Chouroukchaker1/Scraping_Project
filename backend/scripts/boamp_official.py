@@ -48,8 +48,9 @@ DEFAULT_PROMOTER_ID = int(os.getenv("DEFAULT_PROMOTER_ID", "223472"))  # Promote
 DEFAULT_AVIS_ID = int(os.getenv("DEFAULT_AVIS_ID", "11"))
 DEFAULT_COUNTRY_ID = 70  # France = 70 (pas 73)
 
-# Token API global
+# Token API global avec expiration
 api_token = None
+token_expiration = None  # Timestamp d'expiration du token (24h)
 promoters_cache = {}  # Cache des promoteurs {nom_normalisé: promoter_id}
 
 # Configuration logging
@@ -442,13 +443,39 @@ class BOAMPScraper:
 # API APPELOFFRES.NET FUNCTIONS
 # ================================================
 
+def is_token_valid():
+    """Vérifie si le token est valide (existe et n'a pas expiré)"""
+    global api_token, token_expiration
+
+    if not api_token:
+        return False
+
+    if not token_expiration:
+        return False
+
+    # Vérifier si le token n'a pas expiré (24h)
+    if datetime.now() >= token_expiration:
+        logger.info("⚠️ Token expiré (24h dépassées), reconnexion nécessaire")
+        api_token = None
+        token_expiration = None
+        return False
+
+    return True
+
 def login_to_api():
-    """Se connecte à l'API appeloffres.net et récupère le token"""
-    global api_token
+    """Se connecte à l'API appeloffres.net et récupère le token avec expiration 24h"""
+    global api_token, token_expiration
+
+    # Vérifier si le token est déjà valide
+    if is_token_valid():
+        logger.info("✅ Token déjà valide, pas de reconnexion nécessaire")
+        return True
+
     try:
         payload = {'email': API_EMAIL, 'password': API_PASSWORD}
         headers = {'Content-Type': 'application/json', 'User-Agent': USER_AGENT}
 
+        logger.info("🔐 Connexion à l'API appeloffres.net...")
         response = requests.post(LOGIN_ENDPOINT, json=payload, headers=headers)
         if response.status_code == 200:
             data = response.json()
@@ -468,12 +495,15 @@ def login_to_api():
             if isinstance(api_token, str) and api_token.startswith('Bearer '):
                 api_token = api_token.split(' ')[1]
 
-            logger.info(f"✅ Connexion API réussie. Token length: {len(api_token) if api_token else 0}")
             if api_token:
-                logger.info(f"🔑 Token trouvé: {api_token[:20]}...")
+                # Définir l'expiration à 24h à partir de maintenant
+                token_expiration = datetime.now() + timedelta(hours=24)
+                logger.info(f"✅ Connexion API réussie. Token valide jusqu'à {token_expiration.strftime('%Y-%m-%d %H:%M:%S')}")
+                logger.info(f"🔑 Token: {api_token[:20]}...")
+                return True
             else:
                 logger.error(f"⚠️ Token vide. Réponse API: {data}")
-            return bool(api_token)
+                return False
         else:
             logger.error(f"❌ Erreur connexion API: {response.status_code} - {response.text}")
             return False
@@ -606,12 +636,12 @@ def upload_file_to_s3(file_path, reference=""):
     """Upload un fichier vers S3 via l'API appeloffres.net"""
     global api_token
 
-    if not api_token:
-        login_to_api()
-
-    if not api_token:
-        logger.error("❌ Impossible d'uploader sans token")
-        return None
+    # Vérifier et se connecter seulement si nécessaire
+    if not is_token_valid():
+        logger.warning("⚠️ Token invalide, tentative de connexion...")
+        if not login_to_api():
+            logger.error("❌❌❌ Impossible d'uploader sans token - LOGIN ÉCHOUÉ")
+            return None
 
     try:
         headers = {
@@ -620,21 +650,33 @@ def upload_file_to_s3(file_path, reference=""):
             # Pas de Content-Type ici, laissé à requests
         }
 
+        # Vérifier que le fichier existe
+        if not os.path.exists(file_path):
+            logger.error(f"❌ Fichier introuvable: {file_path}")
+            return None
+
+        file_size = os.path.getsize(file_path)
+        logger.info(f"📤 Upload vers S3: {os.path.basename(file_path)} ({file_size} bytes)")
+        logger.info(f"   Endpoint: {FILES_ENDPOINT}")
+        logger.info(f"   Token: {api_token[:20]}..." if api_token else "   Token: VIDE")
+
         # Lire le fichier et l'envoyer
         with open(file_path, 'rb') as f:
             files = {'file': (os.path.basename(file_path), f, 'application/pdf')}
             data = {'description': f'PDF BOAMP {reference}'}
 
-            logger.info(f"📤 Upload vers S3: {os.path.basename(file_path)}")
             response = requests.post(FILES_ENDPOINT, headers=headers, files=files, data=data, timeout=60)
 
             if response.status_code in [200, 201]:
                 api_data = response.json()
+                logger.info(f"✅ Réponse API upload: {response.status_code}")
+                logger.info(f"   Data: {api_data}")
+
                 # L'API retourne {url: ...} ou {s3Url: ...}
                 s3_url = api_data.get('url') or api_data.get('s3Url') or api_data.get('data', {}).get('url')
 
                 if s3_url:
-                    logger.info(f"✅ Upload S3 réussi: {s3_url}")
+                    logger.info(f"✅✅✅ Upload S3 réussi: {s3_url}")
 
                     # Extraire le chemin relatif: 25/12/112728-373768.pdf
                     import re
@@ -645,12 +687,17 @@ def upload_file_to_s3(file_path, reference=""):
                         return relative_path
                     else:
                         logger.warning(f"⚠️ Impossible d'extraire le chemin relatif de: {s3_url}")
+                        logger.info(f"   Utilisation de l'URL complète: {s3_url}")
                         return s3_url
                 else:
-                    logger.error(f"⚠️ URL S3 non trouvée dans la réponse: {api_data}")
+                    logger.error(f"❌❌❌ URL S3 non trouvée dans la réponse")
+                    logger.error(f"   Réponse complète: {api_data}")
                     return None
             else:
-                logger.error(f"❌ Erreur upload S3: {response.status_code} - {response.text}")
+                logger.error(f"❌❌❌ ERREUR UPLOAD S3: {response.status_code}")
+                logger.error(f"   Message: {response.text}")
+                logger.error(f"   Endpoint: {FILES_ENDPOINT}")
+                logger.error(f"   Headers: Authorization=Bearer {api_token[:20]}...")
                 return None
     except Exception as e:
         logger.error(f"❌ Exception upload S3: {e}")
@@ -668,7 +715,8 @@ def find_or_create_promoter(promoter_name):
     """Trouve ou crée un promoteur dans l'API appeloffres.net"""
     global api_token, promoters_cache
 
-    if not api_token:
+    # Vérifier et se connecter seulement si nécessaire
+    if not is_token_valid():
         if not login_to_api():
             return None
 
@@ -726,7 +774,8 @@ def send_tender_to_api(tender_data):
     max_retries = 3
 
     for attempt in range(max_retries):
-        if not api_token:
+        # Vérifier et se connecter seulement si nécessaire
+        if not is_token_valid():
             if not login_to_api():
                 return False
 
@@ -826,22 +875,32 @@ def send_tender_to_api(tender_data):
         if reference:
             try:
                 logger.info(f"📄 Téléchargement du PDF BOAMP pour {reference}...")
+                logger.info(f"   Date publication: {publication_date_obj}")
+
                 # Passer la date de publication pour trouver le bon mois
                 pdf_path = download_boamp_pdf(reference, publication_date_obj)
 
                 if pdf_path:
-                    logger.info(f"📤 Upload du PDF vers S3...")
+                    logger.info(f"✅ PDF téléchargé localement: {pdf_path}")
+                    logger.info(f"📤 Upload du PDF vers S3 via {FILES_ENDPOINT}...")
+
                     s3_url = upload_file_to_s3(pdf_path, reference)
 
                     if s3_url:
                         images.append(s3_url)
-                        logger.info(f"✅ PDF uploadé sur S3: {s3_url}")
+                        logger.info(f"✅✅✅ PDF uploadé sur S3 avec succès: {s3_url}")
+                        logger.info(f"   Images à envoyer: {images}")
                     else:
-                        logger.warning(f"⚠️ Échec upload S3 pour {reference}")
+                        logger.error(f"❌❌❌ ÉCHEC UPLOAD S3 pour {reference} - Vérifier token et endpoint")
+                        logger.error(f"   Endpoint S3: {FILES_ENDPOINT}")
+                        logger.error(f"   Token valide: {is_token_valid()}")
                 else:
-                    logger.warning(f"⚠️ PDF non trouvé pour {reference}")
+                    logger.warning(f"⚠️⚠️⚠️ PDF NON TROUVÉ pour {reference}")
+                    logger.warning(f"   URL tentée: voir logs ci-dessus")
             except Exception as e:
-                logger.error(f"❌ Erreur traitement PDF {reference}: {e}")
+                logger.error(f"❌❌❌ ERREUR TRAITEMENT PDF {reference}: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
 
         # Extraire les secteurs d'activité depuis l'API appeloffres.net
         business_sector = tender_data.get('business_sector') or tender_data.get('activity') or ""
