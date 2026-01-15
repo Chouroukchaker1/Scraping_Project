@@ -1198,3 +1198,584 @@ if __name__ == '__main__':
     logger.info("=" * 80)
 
     app.run(host='0.0.0.0', port=5003, debug=False)
+# -*- coding: utf-8 -*-
+"""
+Scraper BOAMP Officiel → MongoDB → API appeloffres.net
+Version tout-en-un (backend Flask + frontend HTML dans une seule string)
+Lancez avec : python app.py
+Interface → http://localhost:5003/
+"""
+
+import os
+import json
+import time
+import logging
+import re
+from datetime import datetime, timedelta
+from flask import Flask, jsonify, request, render_template_string
+from flask_cors import CORS
+from pymongo import MongoClient
+import requests
+from typing import List, Dict, Optional
+
+# Configuration logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# ================================================
+# CONFIGURATION
+# ================================================
+
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
+DB_NAME = "tenders_boamp_db"
+COLLECTION_NAME = "tenders_boamp"
+
+API_BASE_URL = "https://be.appeloffres.net/api"
+LOGIN_ENDPOINT    = f"{API_BASE_URL}/auth/login"
+TENDER_ENDPOINT   = f"{API_BASE_URL}/tender"
+PROMOTER_ENDPOINT = f"{API_BASE_URL}/promoter"
+FILES_ENDPOINT    = f"{API_BASE_URL}/files/tender"
+
+API_EMAIL    = os.getenv("API_EMAIL",    "oumayma.dahmani@tunipages.tn")
+API_PASSWORD = os.getenv("API_PASSWORD", "Ah0F553KKu0A")
+
+BOAMP_API_URL     = "https://www.boamp.fr/api/explore/v2.1/catalog/datasets/boamp/records"
+BOAMP_PDF_BASE    = "https://www.boamp.fr/telechargements/FILES/PDF"
+
+DEFAULT_SOURCE_ID = 1674
+DEFAULT_AVIS_ID   = 11
+DEFAULT_COUNTRY_ID = 70   # France
+
+# Variables globales
+api_token = None
+token_expiration = None
+promoters_cache = {}
+
+# ================================================
+# CONNEXION MONGODB
+# ================================================
+
+mongo_client = MongoClient(MONGO_URI)
+db = mongo_client[DB_NAME]
+collection = db[COLLECTION_NAME]
+
+# ================================================
+# FONCTIONS API appeloffres.net
+# ================================================
+
+def is_token_valid() -> bool:
+    global api_token, token_expiration
+    if not api_token or not token_expiration:
+        return False
+    return datetime.now() < token_expiration
+
+def login_to_api() -> bool:
+    global api_token, token_expiration
+    try:
+        r = requests.post(
+            LOGIN_ENDPOINT,
+            json={"email": API_EMAIL, "password": API_PASSWORD},
+            timeout=12
+        )
+        if r.status_code == 200:
+            data = r.json()
+            token = (
+                data.get("access_token") or
+                data.get("accessToken") or
+                data.get("token") or
+                data.get("data", {}).get("access_token")
+            )
+            if token:
+                api_token = token
+                token_expiration = datetime.now() + timedelta(hours=24)
+                logger.info("Connexion API appeloffres.net réussie")
+                return True
+        logger.error(f"Échec login API : {r.status_code} - {r.text[:200]}")
+        return False
+    except Exception as e:
+        logger.error(f"Erreur login API : {e}")
+        return False
+
+def get_valid_token() -> Optional[str]:
+    if is_token_valid():
+        return api_token
+    if login_to_api():
+        return api_token
+    return None
+
+def find_or_create_promoter(name: str) -> Optional[int]:
+    global promoters_cache
+    if not name:
+        name = "BOAMP France"
+
+    norm = name.strip().upper()
+    if norm in promoters_cache:
+        return promoters_cache[norm]
+
+    token = get_valid_token()
+    if not token:
+        return None
+
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+    # Recherche rapide (simplifiée)
+    try:
+        r = requests.get(f"{PROMOTER_ENDPOINT}?search={name}", headers=headers, timeout=8)
+        if r.status_code == 200:
+            items = r.json().get("data", [])
+            for item in items:
+                if name.lower() in item.get("companyName", "").lower():
+                    promoters_cache[norm] = item["id"]
+                    return item["id"]
+    except:
+        pass
+
+    # Création
+    payload = {
+        "companyName": name.title(),
+        "description": f"Entité publique - {name}",
+        "address": {"country": "France"}
+    }
+    try:
+        r = requests.post(PROMOTER_ENDPOINT, json=payload, headers=headers, timeout=10)
+        if r.status_code in (200, 201):
+            data = r.json()
+            pid = data.get("id")
+            if pid:
+                promoters_cache[norm] = pid
+                logger.info(f"Promoteur créé : {name} → ID {pid}")
+                return pid
+    except Exception as e:
+        logger.error(f"Erreur création promoteur {name} : {e}")
+    return None
+
+def upload_pdf_to_s3(pdf_path: str, ref: str) -> Optional[str]:
+    token = get_valid_token()
+    if not token:
+        return None
+
+    try:
+        headers = {"Authorization": f"Bearer {token}"}
+        with open(pdf_path, "rb") as f:
+            files = {"file": (f"{ref}.pdf", f, "application/pdf")}
+            data = {"description": f"BOAMP {ref}"}
+            r = requests.post(FILES_ENDPOINT, headers=headers, files=files, data=data, timeout=45)
+            if r.status_code in (200, 201):
+                j = r.json()
+                url = j.get("url") or j.get("s3Url") or ""
+                if url:
+                    # On essaie de garder le chemin relatif
+                    m = re.search(r'/tender-s3-prod/(.+)', url)
+                    return m.group(1) if m else url
+        logger.error(f"Échec upload PDF {ref} : {r.status_code} - {r.text[:300]}")
+        return None
+    except Exception as e:
+        logger.error(f"Erreur upload PDF : {e}")
+        return None
+
+# ================================================
+# SCRAPER BOAMP
+# ================================================
+
+class BOAMPScraper:
+    def __init__(self):
+        self.session = requests.Session()
+        self.session.headers["User-Agent"] = "BOAMP-Scraper/2025"
+
+    def download_pdf(self, ref: str, pub_date_str: str = None) -> Optional[str]:
+        try:
+            # Format ref : 25-123456
+            year_prefix = ref.split("-")[0][:2]
+            year = f"20{year_prefix}"
+
+            if pub_date_str:
+                try:
+                    dt = datetime.fromisoformat(pub_date_str.replace("Z", "+00:00"))
+                    month = dt.strftime("%m")
+                except:
+                    month = datetime.now().strftime("%m")
+            else:
+                month = datetime.now().strftime("%m")
+
+            url = f"{BOAMP_PDF_BASE}/{year}/{month}/{ref}.pdf"
+            logger.info(f"Téléchargement PDF : {url}")
+
+            r = self.session.get(url, timeout=30)
+            if r.status_code == 200:
+                temp_dir = "temp_pdfs"
+                os.makedirs(temp_dir, exist_ok=True)
+                path = os.path.join(temp_dir, f"{ref}.pdf")
+                with open(path, "wb") as f:
+                    f.write(r.content)
+                return path
+            logger.warning(f"PDF non trouvé : {url} → {r.status_code}")
+            return None
+        except Exception as e:
+            logger.error(f"Erreur download PDF {ref} : {e}")
+            return None
+
+    def scrape(self, start_date: str = None, end_date: str = None) -> Dict:
+        existing = {doc["reference"] for doc in collection.find({}, {"reference": 1})}
+        new_count = 0
+        offset = 0
+        limit_per_req = 100
+        max_pages = 60
+
+        start_dt = datetime.strptime(start_date, "%Y-%m-%d") if start_date else None
+        end_dt   = datetime.strptime(end_date,   "%Y-%m-%d") if end_date else None
+
+        logger.info(f"Scraping BOAMP {start_date} → {end_date}")
+
+        for page in range(max_pages):
+            params = {
+                "limit": limit_per_req,
+                "offset": offset,
+                "order_by": "dateparution DESC"
+            }
+            try:
+                r = self.session.get(BOAMP_API_URL, params=params, timeout=25)
+                r.raise_for_status()
+                data = r.json()
+                records = data.get("results", [])
+                if not records:
+                    break
+
+                for rec in records:
+                    pub_str = rec.get("dateparution")
+                    if not pub_str:
+                        continue
+
+                    try:
+                        pub_date = datetime.strptime(pub_str, "%Y-%m-%d")
+                        if start_dt and pub_date < start_dt:
+                            logger.info("Date trop ancienne → fin pagination")
+                            return {"success": True, "new": new_count}
+                        if end_dt and pub_date > end_dt:
+                            continue
+                    except:
+                        continue
+
+                    ref = rec.get("idweb") or rec.get("id")
+                    if not ref or ref in existing:
+                        continue
+
+                    # Préparation document
+                    doc = {
+                        "reference": ref,
+                        "objet": rec.get("objet", ""),
+                        "description": rec.get("objet", ""),
+                        "promoter": rec.get("nomacheteur", "BOAMP"),
+                        "publication_date": pub_str,
+                        "expiration_date": rec.get("datelimitereponse"),
+                        "external_url": f"https://www.boamp.fr/avis/detail/{ref}",
+                        "nature": rec.get("nature", ""),
+                        "montant": rec.get("montant", ""),
+                        "secteur": rec.get("descripteur_libelle", ""),
+                        "status": "pending",
+                        "created_at": datetime.utcnow().isoformat(),
+                        "images": []
+                    }
+
+                    # Télécharger PDF et uploader
+                    pdf_path = self.download_pdf(ref, pub_str)
+                    if pdf_path:
+                        s3_path = upload_pdf_to_s3(pdf_path, ref)
+                        if s3_path:
+                            doc["images"] = [s3_path]
+                        try:
+                            os.remove(pdf_path)
+                        except:
+                            pass
+
+                    collection.update_one(
+                        {"reference": ref},
+                        {"$set": doc},
+                        upsert=True
+                    )
+                    new_count += 1
+                    existing.add(ref)
+                    logger.info(f"Nouvelle offre : {ref}")
+
+                offset += limit_per_req
+                time.sleep(0.8)
+
+            except Exception as e:
+                logger.error(f"Erreur page {page+1} : {e}")
+                break
+
+        return {"success": True, "new": new_count}
+
+# ================================================
+# FLASK
+# ================================================
+
+app = Flask(__name__)
+CORS(app)
+
+scraper = BOAMPScraper()
+
+HTML = """
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BOAMP → Appeloffres.net</title>
+  <style>
+    body {font-family: Arial, sans-serif; background:#f5f7fa; margin:0; padding:20px;}
+    .container {max-width:1300px; margin:auto; background:white; padding:20px; border-radius:10px; box-shadow:0 2px 12px rgba(0,0,0,0.1);}
+    h1 {color:#1e40af; text-align:center;}
+    .controls {display:flex; gap:15px; flex-wrap:wrap; margin:20px 0;}
+    button {padding:10px 18px; border:none; border-radius:6px; cursor:pointer; font-weight:bold;}
+    .btn-primary {background:#2563eb; color:white;}
+    .btn-danger  {background:#dc2626; color:white;}
+    .btn-success {background:#16a34a; color:white;}
+    table {width:100%; border-collapse:collapse; margin-top:20px;}
+    th,td {padding:10px; text-align:left; border-bottom:1px solid #e5e7eb;}
+    th {background:#1e40af; color:white;}
+    tr:hover {background:#f1f5f9;}
+    .status {padding:12px; margin:15px 0; border-radius:6px;}
+    .success {background:#ecfdf5; color:#065f46;}
+    .error   {background:#fef2f2; color:#991b1b;}
+  </style>
+</head>
+<body>
+<div class="container">
+  <h1>Scraper BOAMP → appeloffres.net</h1>
+
+  <div class="controls">
+    <label>Début : <input type="date" id="start" value="2025-01-01"></label>
+    <label>Fin :   <input type="date" id="end"   value="2025-12-31"></label>
+    <button class="btn-primary" onclick="launchScrap()">Lancer scraping</button>
+    <button class="btn-success" onclick="refresh()">Rafraîchir</button>
+  </div>
+
+  <div id="status" class="status" style="display:none;"></div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Référence</th>
+        <th>Objet</th>
+        <th>Publication</th>
+        <th>Promoteur</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+</div>
+
+<script>
+async function launchScrap() {
+  const start = document.getElementById("start").value;
+  const end   = document.getElementById("end").value;
+  const st = document.getElementById("status");
+
+  st.style.display = "block";
+  st.className = "status";
+  st.textContent = "Scraping en cours...";
+
+  try {
+    const r = await fetch("/api/scrape", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({start_date: start, end_date: end})
+    });
+    const data = await r.json();
+    if (data.success) {
+      st.className = "status success";
+      st.textContent = `Succès ! ${data.new || 0} nouvelles offres`;
+      refresh();
+    } else {
+      st.className = "status error";
+      st.textContent = data.error || "Erreur inconnue";
+    }
+  } catch(e) {
+    st.className = "status error";
+    st.textContent = "Erreur réseau : " + e;
+  }
+}
+
+async function refresh() {
+  try {
+    const r = await fetch("/api/pending?page=1&limit=30");
+    const data = await r.json();
+    if (!data.success) throw new Error("Erreur serveur");
+
+    const tbody = document.getElementById("tbody");
+    tbody.innerHTML = "";
+
+    data.pending.offres.forEach(item => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${item.reference || "?"}</td>
+        <td>${(item.objet || item.description || "").substring(0,70)}...</td>
+        <td>${item.publication_date || "?"}</td>
+        <td>${item.promoter || "?"}</td>
+        <td>
+          <button class="btn-success" onclick="validate('${item.reference}')">Valider</button>
+          <button class="btn-danger"  onclick="remove('${item.reference}')">Supprimer</button>
+        </td>
+      `;
+      tbody.appendChild(tr);
+    });
+  } catch(e) {
+    alert("Erreur rafraîchissement : " + e);
+  }
+}
+
+async function validate(ref) {
+  if (!confirm(`Valider et envoyer ${ref} ?`)) return;
+  try {
+    const r = await fetch(`/api/validate/${encodeURIComponent(ref)}`, {method:"POST"});
+    const data = await r.json();
+    alert(data.message || (data.success ? "Envoyé !" : "Échec"));
+    if (data.success) refresh();
+  } catch(e) {
+    alert("Erreur : " + e);
+  }
+}
+
+async function remove(ref) {
+  if (!confirm(`Supprimer ${ref} ?`)) return;
+  try {
+    const r = await fetch(`/api/delete/${encodeURIComponent(ref)}`, {method:"DELETE"});
+    const data = await r.json();
+    alert(data.message || (data.success ? "Supprimé" : "Échec"));
+    if (data.success) refresh();
+  } catch(e) {
+    alert("Erreur : " + e);
+  }
+}
+
+window.onload = refresh;
+</script>
+</body>
+</html>
+"""
+
+# ================================================
+# ROUTES
+# ================================================
+
+@app.route("/")
+def home():
+    return HTML
+
+@app.route("/api/scrape", methods=["POST"])
+def api_scrape():
+    data = request.json or {}
+    start = data.get("start_date")
+    end   = data.get("end_date")
+    try:
+        result = scraper.scrape(start, end)
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"Erreur scrape : {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route("/api/pending", methods=["GET"])
+def api_pending():
+    try:
+        page  = int(request.args.get("page", 1))
+        limit = int(request.args.get("limit", 30))
+        skip  = (page - 1) * limit
+
+        docs = list(collection.find({"status": "pending"})
+                    .sort("created_at", -1)
+                    .skip(skip)
+                    .limit(limit))
+
+        for d in docs:
+            d["_id"] = str(d["_id"])
+
+        total = collection.count_documents({"status": "pending"})
+
+        return jsonify({
+            "success": True,
+            "pending": {
+                "offres": docs,
+                "total": total,
+                "page": page,
+                "limit": limit,
+                "totalPages": (total + limit - 1) // limit
+            }
+        })
+    except Exception as e:
+        logger.error(f"Erreur pending : {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route("/api/validate/<reference>", methods=["POST"])
+def api_validate(reference):
+    try:
+        doc = collection.find_one({"reference": reference, "status": "pending"})
+        if not doc:
+            return jsonify({"success": False, "error": "Non trouvé"}), 404
+
+        # Envoi vers API
+        token = get_valid_token()
+        if not token:
+            return jsonify({"success": False, "error": "Authentification impossible"}), 401
+
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+        pub_date = doc.get("publication_date", "")
+        exp_date = doc.get("expiration_date", "")
+
+        payload = {
+            "title": doc.get("objet", "Avis BOAMP")[:250],
+            "description": doc.get("description", ""),
+            "reference": reference,
+            "publicationDate": f"{pub_date}T00:00:00" if pub_date else None,
+            "expirationDate": f"{exp_date}T23:59:59" if exp_date else None,
+            "promoterId": find_or_create_promoter(doc.get("promoter")),
+            "sourceId": DEFAULT_SOURCE_ID,
+            "avisId": DEFAULT_AVIS_ID,
+            "type": "national",
+            "nature": "public",
+            "isEnabled": True,
+            "images": doc.get("images", []),
+            "specificationsReceivingAddress": doc.get("external_url", ""),
+            "fundingSourceType": "national",
+            "fundingSource": "BOAMP",
+            "batches": [{"title": "Lot unique", "activitiesIds": [], "deposit": 0}],
+            "addresses": [{"countryId": DEFAULT_COUNTRY_ID}]
+        }
+
+        r = requests.post(TENDER_ENDPOINT, json=payload, headers=headers, timeout=20)
+        if r.status_code in (200, 201):
+            collection.update_one(
+                {"reference": reference},
+                {"$set": {"status": "validated", "sent_at": datetime.utcnow().isoformat()}}
+            )
+            return jsonify({"success": True, "message": "Envoyé avec succès"})
+        else:
+            return jsonify({"success": False, "error": r.text[:400]}), r.status_code
+
+    except Exception as e:
+        logger.error(f"Erreur validation {reference} : {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route("/api/delete/<reference>", methods=["DELETE"])
+def api_delete(reference):
+    try:
+        r = collection.delete_one({"reference": reference})
+        return jsonify({"success": r.deleted_count > 0, "message": "Supprimé" if r.deleted_count > 0 else "Non trouvé"})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route("/health")
+def health():
+    return jsonify({"status": "ok", "mongo": mongo_client.server_info().get("ok", 0) == 1})
+
+if __name__ == "__main__":
+    print("═" * 70)
+    print(" BOAMP → appeloffres.net  scraper")
+    print(f" MongoDB : {MONGO_URI}")
+    print(" Interface : http://localhost:5003/")
+    print("═" * 70)
+    app.run(host="0.0.0.0", port=5003, debug=False)

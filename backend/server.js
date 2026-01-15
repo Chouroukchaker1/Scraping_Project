@@ -974,9 +974,10 @@ function startBanquePythonScraper() {
   console.log('🚀 Démarrage du scraper BANQUE MONDIALE...');
   const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
 
-  banquePythonProcess = spawn(pythonCmd, [scriptPath], {
+  banquePythonProcess = spawn(pythonCmd, [scriptPath, '--auto'], {
     cwd: path.dirname(scriptPath),
-    stdio: ['pipe', 'pipe', 'pipe']
+    stdio: ['pipe', 'pipe', 'pipe'],
+    env: { ...process.env, AUTO_START: '1', DOCKER_ENV: '1' }
   });
 
   banquePythonProcess.stdout.on('data', (data) => {

@@ -58,8 +58,8 @@ FILES_ENDPOINT = f"{API_BASE_URL}/files/tender"
 PROMOTER_ENDPOINT = f"{API_BASE_URL}/promoter"
 
 # ✅ PNUD utilise le compte BOAMP qui fonctionne
-EMAIL = "oumayma.dahmani@tunipages.tn"
-PASSWORD = "Ah0F553KKu0A"
+EMAIL = "marwa.aidoudi@tunipages.tn"
+PASSWORD = "lopMP@!#"
 
 DEFAULT_SOURCE_ID_PNUD = 1718  # ✅ "Procurement Notices PNUD Tunisie"
 DEFAULT_AVIS_ID = 1  # ✅ "Avis d'appel d'offres"

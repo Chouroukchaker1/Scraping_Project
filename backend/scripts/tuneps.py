@@ -348,21 +348,53 @@ class OffreBase:
     
     def to_dict(self):
         data = asdict(self)
-        # Convert dates from DD/MM/YYYY to ISO format for PostgreSQL
+        # Convert dates from DD/MM/YYYY HH:MM to ISO format for PostgreSQL
         date_fields = ['publicationDate', 'expirationDate', 'startBiddingDate', 'ouverture_offres']
         for field in date_fields:
             value = data.get(field)
             # Convert "N/A" or empty strings to None
-            if value in ["N/A", "", "N/A "]:
+            if value in ["N/A", "", "N/A ", None]:
                 data[field] = None
-            elif value and isinstance(value, str) and '/' in value:
+            elif value and isinstance(value, str):
                 try:
-                    # Parse DD/MM/YYYY format
-                    dt = datetime.strptime(value.split()[0], '%d/%m/%Y')
-                    # Convert to ISO format
-                    data[field] = dt.isoformat()
-                except (ValueError, IndexError):
-                    # If parsing fails, set to None instead of keeping invalid value
+                    # ✅ Nettoyer la chaîne de date
+                    clean_val = value.strip()
+                    # Convertir 'h' ou 'H' en ':' pour l'heure (ex: 10h30 -> 10:30)
+                    clean_val = clean_val.replace('h', ':').replace('H', ':')
+                    # Remplacer 'à' par espace
+                    clean_val = clean_val.replace(' à ', ' ').replace(' a ', ' ')
+
+                    dt = None
+                    # ✅ Formats avec heure et minutes
+                    date_formats = [
+                        '%d/%m/%Y %H:%M',      # 12/01/2026 10:30
+                        '%d/%m/%Y %H:%M:%S',   # 12/01/2026 10:30:00
+                        '%d-%m-%Y %H:%M',      # 12-01-2026 10:30
+                        '%d/%m/%Y',            # 12/01/2026 (sans heure)
+                        '%d-%m-%Y',            # 12-01-2026 (sans heure)
+                        '%Y-%m-%d %H:%M:%S',   # 2026-01-12 10:30:00 (ISO)
+                        '%Y-%m-%d',            # 2026-01-12 (ISO sans heure)
+                    ]
+
+                    for fmt in date_formats:
+                        try:
+                            dt = datetime.strptime(clean_val, fmt)
+                            break
+                        except ValueError:
+                            continue
+
+                    if dt:
+                        # ✅ Ajouter heure par défaut si pas d'heure définie
+                        if dt.hour == 0 and dt.minute == 0 and ':' not in value:
+                            dt = dt.replace(hour=8, minute=0)  # Heure par défaut 08:00
+                        data[field] = dt.isoformat()
+                    else:
+                        # Si déjà en ISO, garder tel quel
+                        if 'T' in value:
+                            data[field] = value
+                        else:
+                            data[field] = None
+                except Exception:
                     data[field] = None
         return data
 
@@ -415,11 +447,11 @@ class TUNEPSScraper:
         
         # Configuration scraping - OPTIMISÉE POUR LA VITESSE
         self.BASE_URL = "https://www.tuneps.tn/portail/consultations"
-        self.TIMEOUT = 60  # Augmenté à 60s pour éviter les timeouts dans Docker
-        self.WAIT_TIME = 2  # Augmenté à 2s pour stabilité
+        self.TIMEOUT = 30  # Réduit à 30s - plus rapide
+        self.WAIT_TIME = 1  # Réduit à 1s pour vitesse
         self.DELAY_BETWEEN_CONSULTATIONS = (0.1, 0.3)  # Réduit au minimum
         self.DELAY_BETWEEN_PAGES = (0.5, 1)  # Réduit au minimum
-        self.MAX_PAGES = None
+        self.MAX_PAGES = None  # ✅ Toutes les pages - filtrage par date
         self.MAX_RETRIES = 2  # Augmenté à 2 pour gérer les erreurs réseau
         self.DATE_CUTOFF_DAYS = 365  # ✅ Augmenté de 90 à 365 jours pour capturer plus d'offres
         
@@ -573,28 +605,36 @@ class TUNEPSScraper:
         if not self.driver:
             try:
                 options = Options()
+                # ✅ Mode headless moderne
                 options.add_argument("--headless=new")
                 options.add_argument("--no-sandbox")
                 options.add_argument("--disable-dev-shm-usage")
                 options.add_argument("--disable-gpu")
-                options.add_argument("--window-size=1920,3000")
+                options.add_argument("--window-size=1920,1080")
                 options.add_argument(f"--user-agent={self.headers['User-Agent']}")
-                options.add_argument("--disable-dev-shm-usage")
-                options.add_argument("--remote-debugging-port=0")
                 options.add_argument("--disable-blink-features=AutomationControlled")
-                options.add_argument("--disable-extensions")
-                options.add_argument("--disable-plugins")
                 options.add_argument("--ignore-certificate-errors")
                 options.add_argument("--ignore-ssl-errors")
+                # ✅ Options critiques pour Angular SPA dans Docker
                 options.add_argument("--disable-setuid-sandbox")
-                options.add_argument("--disable-software-rasterizer")
-                options.add_argument("--disable-web-security")
-                options.add_argument("--allow-running-insecure-content")
-                options.add_argument("--disable-features=VizDisplayCompositor")
-                # Use normal page load strategy instead of eager for Angular apps
-                # options.page_load_strategy = 'eager'
+                options.add_argument("--disable-extensions")
+                options.add_argument("--disable-infobars")
+                options.add_argument("--disable-notifications")
+                options.add_argument("--disable-popup-blocking")
+                # ✅ Mémoire et performance
+                options.add_argument("--disable-background-timer-throttling")
+                options.add_argument("--disable-backgrounding-occluded-windows")
+                options.add_argument("--disable-renderer-backgrounding")
+                # ✅ Normal page load strategy pour Angular (attendre load complet)
+                options.page_load_strategy = 'normal'
                 options.add_experimental_option("excludeSwitches", ["enable-automation"])
                 options.add_experimental_option('useAutomationExtension', False)
+                # ✅ Prefs pour désactiver les prompts
+                options.add_experimental_option("prefs", {
+                    "profile.default_content_setting_values.notifications": 2,
+                    "credentials_enable_service": False,
+                    "profile.password_manager_enabled": False
+                })
                 
                 # Use system ChromeDriver from environment variable or default path
                 # Try to load from saved path file first
@@ -609,9 +649,9 @@ class TUNEPSScraper:
                     options=options
                 )
                 
-                self.driver.set_page_load_timeout(self.TIMEOUT)
-                self.driver.set_script_timeout(self.TIMEOUT)
-                self.logger.info("Selenium driver initialized/reinitialized")
+                self.driver.set_page_load_timeout(120)  # 2 minutes pour Angular
+                self.driver.set_script_timeout(120)
+                self.logger.info("Selenium driver initialized/reinitialized (timeout 120s)")
                 
             except WebDriverException as e:
                 self.logger.error(f"Failed to initialize driver: {e}")
@@ -768,41 +808,91 @@ class TUNEPSScraper:
             return self.default_promoter_id
     
     def clean_date_str(self, date_str: str) -> str:
+        """Nettoie une chaîne de date en conservant les éléments importants"""
         if not date_str:
             return ""
+        # Supprimer les caractères de contrôle Unicode
         date_str = re.sub(r'[\u200E\u200F\u202A-\u202E]', '', date_str)
-        date_str = re.sub(r'[^\d/\-\s:]+', '', date_str)
+        # ✅ Conserver h, H, :, /, -, chiffres, espaces et à/a pour les dates
+        # Ne pas supprimer le 'h' car il est utilisé pour l'heure (ex: 10h30)
+        date_str = re.sub(r'[^\d/\-\s:hHàa]+', '', date_str)
         return date_str.strip()
-    
+
     def parse_date(self, date_str):
+        """Parse une date et retourne un ISO timestamp avec heure et minutes"""
         if not date_str or date_str == "N/A":
             return None
-        
+
+        original_str = date_str  # Garder l'original pour le log
+
         try:
+            # ✅ D'abord convertir 'h' et 'H' en ':' pour l'heure (ex: 10h30 -> 10:30)
+            date_str = re.sub(r'[hH]', ':', date_str)
+            # Remplacer 'à' ou 'a' isolé par un espace (ex: "12/01/2026 à 10:30")
+            date_str = re.sub(r'\s+[àa]\s+', ' ', date_str)
+            # Nettoyer après conversion
             date_str = self.clean_date_str(date_str)
-            date_str = re.sub(r'h', ':', date_str)
             date_str = re.sub(r'\s+', ' ', date_str).strip()
-            
-            try:
-                dt = datetime.strptime(date_str, '%d/%m/%Y %H:%M')
-            except ValueError:
+
+            self.logger.info(f"DEBUG parse_date: original='{original_str}' -> nettoyé='{date_str}'")
+
+            dt = None
+            # ✅ Formats de date avec heure
+            date_formats_with_time = [
+                '%d/%m/%Y %H:%M',      # 12/01/2026 10:30
+                '%d/%m/%Y %H:%M:%S',   # 12/01/2026 10:30:00
+                '%d-%m-%Y %H:%M',      # 12-01-2026 10:30
+                '%d-%m-%Y %H:%M:%S',   # 12-01-2026 10:30:00
+                '%Y-%m-%d %H:%M',      # 2026-01-12 10:30
+                '%Y-%m-%d %H:%M:%S',   # 2026-01-12 10:30:00
+            ]
+
+            # ✅ Formats de date sans heure
+            date_formats_no_time = [
+                '%d/%m/%Y',            # 12/01/2026
+                '%d-%m-%Y',            # 12-01-2026
+                '%Y-%m-%d',            # 2026-01-12
+            ]
+
+            # Essayer d'abord les formats avec heure
+            for fmt in date_formats_with_time:
                 try:
-                    dt = datetime.strptime(date_str, '%d/%m/%Y')
+                    dt = datetime.strptime(date_str, fmt)
+                    self.logger.info(f"Date parsée avec format '{fmt}': {dt}")
+                    break
                 except ValueError:
-                    dt = parse(date_str, fuzzy=True, tzinfos={None: tz.gettz('Africa/Tunis')})
-            
-            dt = dt.replace(tzinfo=tz.gettz('Africa/Tunis'))
-            
+                    continue
+
+            # Si pas trouvé, essayer les formats sans heure
+            if dt is None:
+                for fmt in date_formats_no_time:
+                    try:
+                        dt = datetime.strptime(date_str, fmt)
+                        self.logger.info(f"Date parsée avec format '{fmt}' (sans heure): {dt}")
+                        break
+                    except ValueError:
+                        continue
+
+            # Fallback: parsing fuzzy
+            if dt is None:
+                dt = parse(date_str, fuzzy=True, dayfirst=True, tzinfos={None: tz.gettz('Africa/Tunis')})
+                self.logger.info(f"Date parsée avec fuzzy parser: {dt}")
+
+            # Ajouter le timezone Tunisie
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=tz.gettz('Africa/Tunis'))
+
+            # ✅ Si pas d'heure extraite (00:00), mettre 08:00 par défaut
             if dt.hour == 0 and dt.minute == 0:
                 dt = dt.replace(hour=8, minute=0)
-                self.logger.info(f"Heure forcee a 08:00 pour date sans heure: {dt.isoformat()}")
-            
+                self.logger.info(f"Heure forcée à 08:00 pour date sans heure: {dt.isoformat()}")
+
             parsed_iso = dt.isoformat()
-            self.logger.info(f"Date parsee: '{date_str}' -> {parsed_iso}")
+            self.logger.info(f"✅ Date finale: '{original_str}' -> {parsed_iso}")
             return parsed_iso
-            
+
         except Exception as e:
-            self.logger.warning(f"Erreur parsing date '{date_str}': {e}")
+            self.logger.warning(f"❌ Erreur parsing date '{original_str}': {e}")
             return None
     
     def map_offre_to_tender_payload(self, offre) -> dict:
@@ -2229,26 +2319,32 @@ class TUNEPSScraper:
             if not date_str or date_str in ["N/A", ""]:
                 return False
 
+            # ✅ Formats supportés incluant DD-MM-YYYY
             date_formats = ["%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%d %m %Y"]
             pub_date = None
 
+            # ✅ Nettoyer la date (prendre seulement la partie date, pas l'heure)
+            date_part = date_str.strip().split()[0]
+
             for fmt in date_formats:
                 try:
-                    pub_date = datetime.strptime(date_str.strip().split()[0], fmt).date()
+                    pub_date = datetime.strptime(date_part, fmt).date()
                     break
                 except ValueError:
                     continue
 
             if not pub_date:
-                self.logger.warning(f"Date pub non parsee: '{date_str}'")
+                self.logger.warning(f"Date pub non parsee: '{date_str}' (date_part: '{date_part}')")
                 return False
 
             # Parse start_date with multiple formats
             start_date = None
             if start_date_str:
+                # ✅ Nettoyer start_date_str
+                start_clean = start_date_str.strip()
                 for fmt in date_formats:
                     try:
-                        start_date = datetime.strptime(start_date_str.strip(), fmt).date()
+                        start_date = datetime.strptime(start_clean, fmt).date()
                         break
                     except ValueError:
                         continue
@@ -2276,6 +2372,9 @@ class TUNEPSScraper:
 
             if start_date and end_date:
                 result = start_date <= pub_date <= end_date
+                # ✅ Log détaillé pour debug
+                if not result:
+                    self.logger.debug(f"Date {pub_date} hors plage [{start_date} - {end_date}]")
                 return result
             elif start_date:
                 result = start_date <= pub_date
@@ -2384,16 +2483,47 @@ class TUNEPSScraper:
                                 break
                     
                     num_consultation = all_texts[0] if len(all_texts) > 0 else ""
-                    
+
+                    # ✅ Extraction améliorée de la date limite avec heure
+                    dernier_delai = ""
+                    if len(all_texts) > 4:
+                        dernier_delai = all_texts[4]
+
+                    # Si la date limite ne contient pas d'heure, essayer d'extraire via JS
+                    if dernier_delai and not any(h in dernier_delai for h in ['h', 'H', ':']):
+                        try:
+                            # Essayer d'extraire la date complète avec l'heure depuis la cellule
+                            date_cell = all_cells[4] if len(all_cells) > 4 else None
+                            if date_cell:
+                                full_date_text = driver.execute_script("""
+                                    var cell = arguments[0];
+                                    // Chercher le texte complet incluant l'heure
+                                    var text = cell.innerText || cell.textContent || '';
+                                    // Aussi vérifier les éléments enfants
+                                    var spans = cell.querySelectorAll('span, div, p');
+                                    spans.forEach(function(el) {
+                                        text += ' ' + (el.innerText || el.textContent || '');
+                                    });
+                                    return text.trim();
+                                """, date_cell)
+                                if full_date_text and any(h in full_date_text for h in ['h', 'H', ':']):
+                                    dernier_delai = full_date_text.strip()
+                        except Exception as e:
+                            pass
+
+                    # ✅ DEBUG: Logger la date limite extraite pour les premières lignes
+                    if idx < 3:
+                        self.logger.info(f"DEBUG Row {idx}: Date Limite brute = '{dernier_delai}' | all_texts = {all_texts}")
+
                     basic_data = {
                         "N° consultation": num_consultation,
                         "Acheteur public": all_texts[1] if len(all_texts) > 1 else "",
                         "Date Publication": all_texts[2] if len(all_texts) > 2 else "",
                         "Objet Consultation": all_texts[3] if len(all_texts) > 3 else "",
-                        "Dernier Delai": all_texts[4] if len(all_texts) > 4 else "",
+                        "Dernier Delai": dernier_delai,
                         "_id1": id1
                     }
-                    
+
                     consultations.append(basic_data)
                     
                 except StaleElementReferenceException:
@@ -2410,14 +2540,23 @@ class TUNEPSScraper:
     
     def click_next_page(self):
         driver = self.driver
-        
+
         try:
+            # ✅ Récupérer la première référence avant le clic pour vérifier le changement
+            first_ref_before = None
+            try:
+                first_row = driver.find_element(By.CSS_SELECTOR, "table tbody tr, mat-row")
+                first_ref_before = first_row.text[:20] if first_row else None
+            except:
+                pass
+
             next_selectors = [
                 ".mat-paginator-navigation-next",
                 "button[aria-label*='suivant']",
-                "button[aria-label*='next']"
+                "button[aria-label*='next']",
+                "button.mat-mdc-paginator-navigation-next"
             ]
-            
+
             next_button = None
             for selector in next_selectors:
                 try:
@@ -2425,25 +2564,36 @@ class TUNEPSScraper:
                         EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
                     )
                     if next_button.get_attribute("disabled"):
+                        self.logger.info("Bouton next désactivé - fin pagination")
                         return False
                     break
                 except:
                     continue
-            
+
             if not next_button:
+                self.logger.info("Bouton next non trouvé")
                 return False
-            
+
             driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", next_button)
-            time.sleep(1)
+            time.sleep(0.5)
             driver.execute_script("arguments[0].click();", next_button)
-            
-            WebDriverWait(driver, self.TIMEOUT).until(
-                EC.presence_of_all_elements_located((By.CSS_SELECTOR, "table tbody tr, mat-row"))
-            )
-            
+
+            # ✅ Attendre que le contenu change (nouvelle première ligne)
+            max_wait = 10
+            for i in range(max_wait):
+                time.sleep(1)
+                try:
+                    first_row = driver.find_element(By.CSS_SELECTOR, "table tbody tr, mat-row")
+                    first_ref_after = first_row.text[:20] if first_row else None
+                    if first_ref_after and first_ref_after != first_ref_before:
+                        self.logger.info(f"Page changée détectée après {i+1}s")
+                        break
+                except:
+                    pass
+
             time.sleep(self.WAIT_TIME)
             return True
-            
+
         except (TimeoutException, NoSuchElementException):
             return False
         except Exception as e:
@@ -2477,19 +2627,61 @@ class TUNEPSScraper:
             all_consultations = []
             all_refs = set()
             empty_pages = 0
+            old_pages = 0  # ✅ Compteur de pages avec dates trop anciennes
             
             self.logger.info(f"Debut scraping TUNEPS ({datetime.now().strftime('%d/%m/%Y %H:%M')}) - Dates: {start_date} a {end_date} - Complete: {extraction_complete}")
             
             try:
                 max_retries_get = 3
+                page_loaded = False
                 for retry_get in range(max_retries_get):
                     try:
+                        self.logger.info(f"Tentative {retry_get+1}/{max_retries_get} de chargement {self.BASE_URL}")
+
+                        # ✅ Avec eager, driver.get() attend DOMContentLoaded
                         self.driver.get(self.BASE_URL)
-                        time.sleep(self.WAIT_TIME)
-                        self.logger.info(f"Page d'accueil chargee (tentative {retry_get+1})")
-                        break
+                        self.logger.info("Page chargée (DOMContentLoaded), attente Angular...")
+
+                        # ✅ Attendre que Angular rende les lignes du tableau avec données
+                        try:
+                            # Attendre qu'il y ait au moins une ligne avec du contenu
+                            WebDriverWait(self.driver, 90).until(
+                                lambda d: len(d.find_elements(By.CSS_SELECTOR, "table tbody tr, mat-row, .mat-row")) > 0
+                            )
+                            rows = self.driver.find_elements(By.CSS_SELECTOR, "table tbody tr, mat-row, .mat-row")
+                            self.logger.info(f"✅ {len(rows)} lignes du tableau détectées")
+                            if len(rows) > 0:
+                                page_loaded = True
+                            else:
+                                # Attendre encore un peu si 0 lignes
+                                self.logger.info("0 lignes, attente supplémentaire...")
+                                time.sleep(5)
+                                rows = self.driver.find_elements(By.CSS_SELECTOR, "table tbody tr, mat-row, .mat-row")
+                                if len(rows) > 0:
+                                    self.logger.info(f"✅ {len(rows)} lignes après attente")
+                                    page_loaded = True
+                        except TimeoutException:
+                            # Fallback: vérifier si la page Angular a au moins démarré
+                            html_len = len(self.driver.page_source)
+                            self.logger.warning(f"Timeout attente tableau. HTML: {html_len} chars")
+                            if html_len > 500000:
+                                self.logger.info("HTML volumineux, attente supplémentaire...")
+                                time.sleep(5)
+                                rows = self.driver.find_elements(By.CSS_SELECTOR, "table tbody tr, mat-row, .mat-row")
+                                if len(rows) > 0:
+                                    self.logger.info(f"✅ {len(rows)} lignes après attente")
+                                    page_loaded = True
+
+                        if page_loaded:
+                            # Attendre un peu pour que Angular finisse le rendu
+                            time.sleep(3)
+                            self.logger.info(f"Page d'accueil chargee (tentative {retry_get+1})")
+                            break
+                        else:
+                            raise TimeoutException("Tableau Angular non trouvé ou vide")
+
                     except TimeoutException as te:
-                        self.logger.warning(f"Timeout sur driver.get(BASE_URL) (tentative {retry_get+1}/{max_retries_get}): {te}")
+                        self.logger.warning(f"Timeout (tentative {retry_get+1}/{max_retries_get}): {te}")
                         if retry_get < max_retries_get - 1:
                             self.logger.info("Reinitialisation driver et retry...")
                             self._init_driver()
@@ -2497,7 +2689,7 @@ class TUNEPSScraper:
                         else:
                             raise te
                     except WebDriverException as wde:
-                        self.logger.error(f"Erreur WebDriver sur get(BASE_URL) (tentative {retry_get+1}): {wde}")
+                        self.logger.error(f"Erreur WebDriver (tentative {retry_get+1}): {wde}")
                         if retry_get < max_retries_get - 1:
                             self._init_driver()
                             time.sleep(5)
@@ -2521,34 +2713,70 @@ class TUNEPSScraper:
 
                     # DEBUG: Log des dates
                     if page == 1 and all_rows:
-                        self.logger.info(f"DEBUG - start_date: {start_date}, end_date: {end_date}")
-                        self.logger.info(f"DEBUG - Exemple date publication: {all_rows[0].get('Date Publication', 'N/A')}")
+                        self.logger.info(f"DEBUG - start_date reçu: '{start_date}', end_date reçu: '{end_date}'")
+                        self.logger.info(f"DEBUG - Exemple date publication extraite: '{all_rows[0].get('Date Publication', 'N/A')}'")
+                        # Log des 3 premières dates pour debug
+                        for i, row in enumerate(all_rows[:3]):
+                            pub_date = row.get('Date Publication', 'N/A')
+                            is_valid = self.is_between_dates(pub_date, start_date, end_date)
+                            self.logger.info(f"DEBUG - Row {i}: pub_date='{pub_date}', in_range={is_valid}")
 
                     # Filtre par date
                     rows_data = [r for r in all_rows if self.is_between_dates(r.get("Date Publication", ""), start_date, end_date)]
                     self.logger.info(f"{len(rows_data)} consultations dans la plage trouvees sur page {page}")
 
-                    # Check if all dates on this page are older than start_date
+                    # ✅ Check if all dates on this page are OLDER (before start_date)
+                    # Le site liste les plus récentes d'abord, donc on arrête quand on dépasse start_date
                     if start_date and len(all_rows) > 0:
-                        all_older = True
-                        for r in all_rows:
-                            pub_date_str = r.get("Date Publication", "")
-                            if pub_date_str and self.is_between_dates(pub_date_str, start_date, end_date):
-                                all_older = False
-                                break
+                        all_before_start = True
+                        date_formats = ["%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%d %m %Y"]
 
-                        if all_older:
-                            self.logger.info(f"Arret: Toutes les consultations de la page {page} sont anterieures a {start_date}")
-                            break
+                        # Parse start_date
+                        start_dt = None
+                        for fmt in date_formats:
+                            try:
+                                start_dt = datetime.strptime(start_date.strip(), fmt).date()
+                                break
+                            except ValueError:
+                                continue
+
+                        if start_dt:
+                            for r in all_rows:
+                                pub_date_str = r.get("Date Publication", "")
+                                if pub_date_str:
+                                    pub_dt = None
+                                    for fmt in date_formats:
+                                        try:
+                                            pub_dt = datetime.strptime(pub_date_str.strip().split()[0], fmt).date()
+                                            break
+                                        except ValueError:
+                                            continue
+
+                                    if pub_dt:
+                                        # Si la date est >= start_date, continuer (pas encore trop vieille)
+                                        if pub_dt >= start_dt:
+                                            all_before_start = False
+                                            break
+
+                            if all_before_start:
+                                old_pages += 1
+                                self.logger.info(f"Page {page}: Toutes les dates sont anterieures a {start_date} ({old_pages}/3)")
+                                # ✅ Arrêter seulement après 3 pages consécutives avec dates trop anciennes
+                                if old_pages >= 3:
+                                    self.logger.info(f"Arret: 3 pages consecutives avec dates anterieures a {start_date}")
+                                    break
+                            else:
+                                old_pages = 0  # Reset si on trouve des dates dans la plage
 
                     if not rows_data:
                         empty_pages += 1
-                        self.logger.info(f"Aucune consultation trouvée sur cette page ({empty_pages}/3)")
-                        if empty_pages >= 3:
-                            self.logger.info("Arret automatique : aucune donnee trouvee.")
+                        self.logger.info(f"Aucune consultation dans la plage sur cette page ({empty_pages}/5)")
+                        # ✅ Augmenté à 5 pages vides consécutives avant d'arrêter
+                        if empty_pages >= 5:
+                            self.logger.info("Arret automatique : 5 pages sans donnees dans la plage.")
                             break
                     else:
-                        empty_pages = 0
+                        empty_pages = 0  # Reset si on trouve des données
 
                     for r in rows_data:
                         id1 = r.get("_id1", "")
@@ -2569,11 +2797,16 @@ class TUNEPSScraper:
                             all_refs.add(key)
                     
                     self.logger.info(f"{len(rows_data)} consultations dans la plage trouvees sur page {page}")
-                    
+
+                    # ✅ Vérifier MAX_PAGES pour extraction rapide
+                    if self.MAX_PAGES and page >= self.MAX_PAGES:
+                        self.logger.info(f"✅ Limite MAX_PAGES ({self.MAX_PAGES}) atteinte - arrêt extraction rapide")
+                        break
+
                     if not self.click_next_page():
                         self.logger.info("Fin de pagination atteinte (pas de bouton next)")
                         break
-                    
+
                     page += 1
                     time.sleep(random.uniform(*self.DELAY_BETWEEN_PAGES))
                 

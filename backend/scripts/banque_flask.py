@@ -17,6 +17,14 @@ from typing import List, Dict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from bs4 import BeautifulSoup
 import urllib.parse
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException
+import base64
 
 # Configuration UTF-8 pour Windows
 if sys.platform == 'win32':
@@ -39,6 +47,14 @@ EMAIL = "mariem.bousalem@tunipages.tn"
 PASSWORD = "L96BhA6ODugl"
 DEFAULT_SOURCE_ID = 1464
 DEFAULT_AVIS_ID = 8
+
+# Configuration Screenshots
+SCREENSHOTS_DIR = os.path.join(os.path.dirname(__file__), 'screenshots_banque')
+os.makedirs(SCREENSHOTS_DIR, exist_ok=True)
+
+# Token API global
+api_token = None
+token_expiration = None
 
 COUNTRIES_MAP = {
     "angola": 9, "botswana": 32, "burundi": 38, "comoros": 51, "congo, dem. rep.": 177,
@@ -902,7 +918,7 @@ def get_pending():
 
 @app.route('/api/validate/<path:reference>', methods=['POST'])
 def validate_tender(reference):
-    """Valide et envoie une offre à l'API"""
+    """Valide et envoie une offre à l'API avec capture screenshot"""
     try:
         if pending_collection is None:
             return jsonify({"success": False, "message": "MongoDB non connecté"}), 500
@@ -911,28 +927,56 @@ def validate_tender(reference):
         tender_doc = pending_collection.find_one({"reference": reference})
         if not tender_doc:
             return jsonify({"success": False, "message": "Offre non trouvée"}), 404
-        
+
         # Se connecter à l'API
         auth_token = login_to_api()
         if not auth_token:
             return jsonify({"success": False, "message": "Échec d'authentification API"}), 401
-        
+
         # Trouver ou créer le promoteur
         promoter_id = find_or_create_promoter(auth_token, tender_doc.get('promoter', 'Banque Mondiale'))
         if not promoter_id:
             return jsonify({"success": False, "message": "Échec création promoteur"}), 500
-        
-        # Préparer le payload
+
+        # ✅ Capturer une screenshot de la page source
+        images = []
+        url_source = tender_doc.get('url_source') or tender_doc.get('cahier_charge') or tender_doc.get('specificationsReceivingAddress')
+
+        if url_source and url_source not in ['URL_NON_DISPO', '', 'N/A']:
+            print(f"📸 Tentative de capture screenshot pour {reference}")
+            print(f"   URL source: {url_source}")
+
+            try:
+                screenshot_path = capture_screenshot_banque(url_source, reference)
+                if screenshot_path:
+                    s3_url = upload_screenshot_to_s3(screenshot_path, reference)
+                    if s3_url:
+                        images.append(s3_url)
+                        print(f"✅ Image ajoutée au payload: {s3_url}")
+                    else:
+                        print(f"⚠️ Upload S3 échoué pour {reference}")
+                else:
+                    print(f"⚠️ Capture screenshot échouée pour {reference}")
+            except Exception as e:
+                print(f"⚠️ Erreur capture/upload screenshot: {e}")
+        else:
+            print(f"⚠️ Pas d'URL source valide pour capture: {url_source}")
+
+        # Préparer le payload avec images
         payload = prepare_tender_payload(tender_doc, promoter_id)
-        
+        payload['images'] = images  # ✅ Ajouter les images capturées
+
+        print(f"📤 Envoi offre {reference} avec {len(images)} image(s)")
+
         # Envoyer à l'API
         headers = {'Authorization': f'Bearer {auth_token}'}
         response = requests.post(TENDER_ENDPOINT, json=payload, headers=headers, timeout=30)
-        
+
         if response.status_code in [200, 201]:
             # Mettre à jour le statut
             tender_doc['status'] = 'validated'
             tender_doc['validationDate'] = datetime.now().isoformat()
+            tender_doc['images'] = images
 
             # Sauvegarder dans la collection principale
             if tenders_collection is not None:
@@ -943,7 +987,7 @@ def validate_tender(reference):
 
             return jsonify({
                 "success": True,
-                "message": "Offre validée et envoyée avec succès"
+                "message": f"Offre validée et envoyée avec succès ({len(images)} image(s))"
             })
         else:
             return jsonify({
@@ -951,13 +995,25 @@ def validate_tender(reference):
                 "message": f"Erreur API: {response.status_code}",
                 "details": response.text[:500]
             }), 500
-            
+
     except Exception as e:
+        print(f"❌ Erreur validation: {e}")
         return jsonify({"success": False, "message": str(e)}), 500
 
+def is_token_valid():
+    """Vérifie si le token est valide et non expiré"""
+    global api_token, token_expiration
+    if not api_token:
+        return False
+    if token_expiration and datetime.now() > token_expiration:
+        return False
+    return True
+
 def login_to_api():
-    """Se connecte à l'API externe"""
+    """Se connecte à l'API externe et stocke le token globalement"""
+    global api_token, token_expiration
     try:
+        print(f"🔐 Tentative de connexion API avec {EMAIL}...")
         response = requests.post(
             LOGIN_ENDPOINT,
             json={"email": EMAIL, "password": PASSWORD},
@@ -966,10 +1022,151 @@ def login_to_api():
         if response.status_code == 200:
             data = response.json()
             # Essayer différentes clés possibles pour le token
-            return data.get('access_token') or data.get('accessToken') or data.get('token')
+            api_token = data.get('access_token') or data.get('accessToken') or data.get('token')
+            if api_token:
+                # Token valide pour 24h
+                token_expiration = datetime.now() + timedelta(hours=24)
+                print(f"✅ Connexion API réussie - Token obtenu")
+                return api_token
+        print(f"❌ Échec connexion API: {response.status_code} - {response.text[:100]}")
     except Exception as e:
         print(f"❌ Erreur login API: {e}")
     return None
+
+def capture_screenshot_banque(url, reference):
+    """Capture une screenshot de la page de détails Banque Mondiale"""
+    screenshot_path = None
+    driver = None
+
+    try:
+        print(f"📸 Capture screenshot pour {reference}...")
+        print(f"   URL: {url}")
+
+        options = Options()
+        options.add_argument("--headless=new")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--window-size=1920,1080")
+        options.add_argument("--disable-web-security")
+        options.add_argument("--allow-running-insecure-content")
+
+        # Chemin Chrome dans Docker
+        chrome_path = "/usr/bin/chromium"
+        driver_path = "/usr/bin/chromedriver"
+
+        if os.path.exists(chrome_path):
+            options.binary_location = chrome_path
+            service = Service(driver_path)
+            driver = webdriver.Chrome(service=service, options=options)
+        else:
+            driver = webdriver.Chrome(options=options)
+
+        driver.set_page_load_timeout(60)
+        driver.get(url)
+
+        # Attendre que la page charge (le contenu Angular)
+        time.sleep(5)
+
+        # Essayer d'attendre le contenu principal
+        try:
+            WebDriverWait(driver, 30).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "body"))
+            )
+            time.sleep(3)
+        except TimeoutException:
+            print(f"⚠️ Timeout chargement page, capture quand même")
+
+        # Faire défiler pour capturer tout le contenu
+        driver.execute_script("window.scrollTo(0, 0);")
+        time.sleep(1)
+
+        # Prendre la screenshot
+        screenshot_path = os.path.join(SCREENSHOTS_DIR, f"{reference}.png")
+        driver.save_screenshot(screenshot_path)
+
+        if os.path.exists(screenshot_path):
+            file_size = os.path.getsize(screenshot_path)
+            print(f"✅ Screenshot capturée: {screenshot_path} ({file_size} bytes)")
+            return screenshot_path
+        else:
+            print(f"❌ Screenshot non créée")
+            return None
+
+    except Exception as e:
+        print(f"❌ Erreur capture screenshot: {e}")
+        return None
+    finally:
+        if driver:
+            try:
+                driver.quit()
+            except:
+                pass
+
+def upload_screenshot_to_s3(file_path, reference):
+    """Upload une screenshot vers S3 via l'API appeloffres.net"""
+    global api_token
+
+    # Vérifier et se connecter si nécessaire
+    if not is_token_valid():
+        print("⚠️ Token invalide, tentative de connexion...")
+        if not login_to_api():
+            print("❌ Impossible d'uploader sans token - LOGIN ÉCHOUÉ")
+            return None
+
+    try:
+        headers = {
+            'Authorization': f'Bearer {api_token}',
+            'User-Agent': 'BanqueMondialeScraper/1.0'
+        }
+
+        if not os.path.exists(file_path):
+            print(f"❌ Fichier introuvable: {file_path}")
+            return None
+
+        file_size = os.path.getsize(file_path)
+        print(f"📤 Upload vers S3: {os.path.basename(file_path)} ({file_size} bytes)")
+
+        with open(file_path, 'rb') as f:
+            files = {'file': (os.path.basename(file_path), f, 'image/png')}
+            data = {'description': f'Screenshot Banque Mondiale {reference}'}
+
+            response = requests.post(FILES_ENDPOINT, headers=headers, files=files, data=data, timeout=60)
+
+            if response.status_code in [200, 201]:
+                api_data = response.json()
+                print(f"✅ Réponse API upload: {response.status_code}")
+
+                s3_url = api_data.get('url') or api_data.get('s3Url') or api_data.get('data', {}).get('url')
+
+                if s3_url:
+                    print(f"✅ Upload S3 réussi: {s3_url}")
+
+                    # Extraire le chemin relatif
+                    relative_match = re.search(r'/tender-s3-prod/(.+?\.(?:png|pdf|jpg))\??', s3_url)
+                    if relative_match:
+                        relative_path = relative_match.group(1)
+                        print(f"📎 Chemin relatif extrait: {relative_path}")
+                        return relative_path
+                    else:
+                        return s3_url
+                else:
+                    print(f"❌ URL S3 non trouvée dans la réponse: {api_data}")
+                    return None
+            else:
+                print(f"❌ ERREUR UPLOAD S3: {response.status_code} - {response.text[:200]}")
+                return None
+    except Exception as e:
+        print(f"❌ Exception upload S3: {e}")
+        return None
+    finally:
+        # Nettoyer le fichier temporaire
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                print(f"🗑️ Fichier temporaire supprimé: {file_path}")
+        except:
+            pass
 
 def find_or_create_promoter(auth_token, promoter_name):
     """Trouve ou crée un promoteur dans l'API"""

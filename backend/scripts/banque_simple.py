@@ -1,23 +1,30 @@
-# banque_simple.py - Scraper Banque Mondiale avec PostgreSQL
-import os
-
-# ✅ CRITICAL: Set encoding BEFORE importing psycopg2 to avoid Windows encoding issues
-os.environ['PGCLIENTENCODING'] = 'WIN1252'
-
-import logging
-import psycopg2
-import requests
 import time
+import requests
+import pandas as pd
+import re
+import json
 from datetime import datetime, timedelta
+from bs4 import BeautifulSoup
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+import psycopg2
 from psycopg2.extras import RealDictCursor
 from flask import Flask, jsonify, request
 from flask_cors import CORS
-from dotenv import load_dotenv
+import http.server
+import socketserver
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import urllib.parse
+import os
+from textwrap import dedent
+import logging
 
-# Load environment variables
-load_dotenv()
-
-# Configuration PostgreSQL
+# ============================== CONFIGURATION ==============================
+# PostgreSQL Configuration
 DB_HOST = os.getenv("DB_HOST", "postgres")
 DB_PORT = os.getenv("DB_PORT", "5432")
 DB_NAME = os.getenv("DB_NAME", "tenders_db")
@@ -25,54 +32,92 @@ DB_USER = os.getenv("DB_USER", "tender_user")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "tender_password_2024")
 TABLE_NAME = "tenders_banque"
 
-# Configuration API AppelOffres
-API_BASE_URL = os.getenv("API_BASE_URL", "https://api.appeloffres-dz.com")
-LOGIN_ENDPOINT = f"{API_BASE_URL}/auth/login"
+API_BASE_URL = "https://be.appeloffres.net/api"
+LOGIN_ENDPOINT = f"{API_BASE_URL}/auth/login/"
 TENDER_ENDPOINT = f"{API_BASE_URL}/tender"
 PROMOTER_ENDPOINT = f"{API_BASE_URL}/promoter"
-EMAIL = os.getenv("API_EMAIL", "maryam@gmail.com")
-API_PASSWORD = os.getenv("API_PASSWORD", "123456789")
+FILES_ENDPOINT = f"{API_BASE_URL}/files/tender"
 
-# IDs par défaut pour l'API
-DEFAULT_SOURCE_ID = 818  # ID pour Banque Mondiale
-DEFAULT_AVIS_ID = 2
-DEFAULT_PAYS_ID = 219  # Tunisie par défaut
-DEFAULT_CURRENCY_ID = 111  # TND par défaut
-DEFAULT_PROMOTER_ID = 180897
+EMAIL = "ines.mtiri@tunipages.tn"
+PASSWORD = "InesMTIRI567@!"
+DEFAULT_SOURCE_ID = 1464
+DEFAULT_AVIS_ID = 8
 
-# Liste des pays africains (pour filtrage)
-AFRICAN_COUNTRIES = {
-    'algeria', 'angola', 'benin', 'botswana', 'burkina faso', 'burundi', 'cabo verde', 'cameroon',
-    'central african republic', 'chad', 'comoros', 'congo', 'democratic republic of congo',
-    'congo, dem. rep.', 'congo, rep.', 'côte d\'ivoire', 'djibouti', 'egypt', 'equatorial guinea',
-    'eritrea', 'eswatini', 'ethiopia', 'gabon', 'gambia', 'ghana', 'guinea', 'guinea-bissau',
-    'kenya', 'lesotho', 'liberia', 'libya', 'madagascar', 'malawi', 'mali', 'mauritania',
-    'mauritius', 'morocco', 'mozambique', 'namibia', 'niger', 'nigeria', 'rwanda',
-    'sao tome and principe', 'senegal', 'seychelles', 'sierra leone', 'somalia', 'south africa',
-    'south sudan', 'sudan', 'tanzania', 'togo', 'tunisia', 'uganda', 'zambia', 'zimbabwe',
-    'gambia, the', 'africa'
+COUNTRIES_MAP = {
+    "angola": 9, "botswana": 32, "burundi": 38, "comoros": 51, "congo, dem. rep.": 177,
+    "eritrea": 66, "eswatini": 67, "ethiopia": 68, "kenya": 106, "lesotho": 113,
+    "madagascar": 123, "malawi": 125, "mauritius": 133, "mozambique": 142,
+    "namibia": 144, "rwanda": 176, "seychelles": 190, "somalia": 195,
+    "south africa": 4, "south sudan": 199, "tanzania": 214, "uganda": 156,
+    "zambia": 229, "zimbabwe": 230, "benin": 26, "burkina faso": 37,
+    "cameroon": 41, "cape verde": 43, "central african republic": 179,
+    "chad": 45, "congo, rep.": 228, "côte d'ivoire": 58, "equatorial guinea": 83,
+    "gabon": 72, "gambia, the": 73, "ghana": 74, "guinea": 82, "guinea-bissau": 84,
+    "liberia": 117, "mali": 127, "mauritania": 134, "niger": 148, "nigeria": 149,
+    "sao tome and principe": 187, "senegal": 188, "sierra leone": 191, "togo": 215
 }
 
-# Configuration logging
+# ============================== TRADUCTIONS ==============================
+TRANSLATION_DICT = {
+    'consultancy': 'Consultance', 'construction': 'Construction', 'supply': 'Fourniture',
+    'services': 'Services', 'project': 'Projet', 'implementation': 'Mise en œuvre',
+    'procurement': 'Acquisition', 'goods': 'Biens', 'works': 'Travaux',
+    'consulting': 'Conseil', 'consultant': 'Consultant', 'consultants': 'Consultants',
+    'advertisement': 'Annonce', 'invitation': 'Invitation', 'bidding': 'Appel d\'offres',
+    'tender': 'Soumission', 'contract': 'Contrat', 'development': 'Développement',
+    'management': 'Gestion', 'technical': 'Technique', 'financial': 'Financier',
+    'economic': 'Économique', 'social': 'Social', 'environmental': 'Environnemental',
+    'assessment': 'Évaluation', 'study': 'Étude', 'design': 'Conception',
+    'engineering': 'Ingénierie', 'supervision': 'Supervision', 'training': 'Formation',
+    'capacity': 'Capacité', 'building': 'Renforcement', 'support': 'Soutien',
+    'assistance': 'Assistance', 'advisory': 'Conseil', 'feasibility': 'Faisabilité',
+    'monitoring': 'Suivi', 'evaluation': 'Évaluation', 'audit': 'Audit',
+    'information': 'Information', 'communication': 'Communication', 'technology': 'Technologie',
+    'system': 'Système', 'equipment': 'Équipement', 'materials': 'Matériaux',
+    'vehicles': 'Véhicules', 'machinery': 'Machinerie', 'instrument': 'Instrument',
+    'laboratory': 'Laboratoire', 'medical': 'Médical', 'health': 'Santé',
+    'education': 'Éducation', 'agriculture': 'Agriculture', 'irrigation': 'Irrigation',
+    'water': 'Eau', 'sanitation': 'Assainissement', 'energy': 'Énergie',
+    'power': 'Électricité', 'transport': 'Transport', 'road': 'Route',
+    'bridge': 'Pont', 'building': 'Bâtiment', 'housing': 'Logement',
+    'urban': 'Urbain', 'rural': 'Rural', 'infrastructure': 'Infrastructure',
+    'facility': 'Installation', 'plant': 'Usine', 'rehabilitation': 'Réhabilitation',
+    'renovation': 'Rénovation', 'maintenance': 'Maintenance', 'operation': 'Exploitation',
+    'service': 'Service', 'provider': 'Fournisseur', 'firm': 'Firme',
+    'company': 'Entreprise', 'corporation': 'Société', 'international': 'International',
+    'national': 'National', 'local': 'Local', 'regional': 'Régional',
+    'global': 'Mondial', 'world': 'Monde', 'bank': 'Banque', 'fund': 'Fonds',
+    'agency': 'Agence', 'ministry': 'Ministère', 'department': 'Département',
+    'authority': 'Autorité', 'institution': 'Institution', 'organization': 'Organisation',
+    'program': 'Programme', 'component': 'Composante', 'activity': 'Activité',
+    'initiative': 'Initiative', 'procurement notice': 'Avis de passation de marchés',
+    'contract award': 'Attribution de contrat', 'expression of interest': 'Appel à manifestation d\'intérêt',
+    'request for proposal': 'Demande de propositions', 'request for quotation': 'Demande de devis',
+    'invitation for bids': 'Invitation à soumissionner'
+}
+
+def translate_to_french(text: str) -> str:
+    """Traduit les termes clés de l'anglais vers le français"""
+    if not text:
+        return text
+    translated = text
+    for eng, fr in TRANSLATION_DICT.items():
+        translated = re.sub(r'\b' + re.escape(eng) + r'\b', fr, translated, flags=re.IGNORECASE)
+    return re.sub(r'\s+', ' ', translated).strip()
+
+# ============================== POSTGRESQL HELPERS ==============================
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ================================================
-# POSTGRESQL FUNCTIONS
-# ================================================
-
 def get_db_connection():
     """Créer une connexion PostgreSQL"""
-    conn = psycopg2.connect(
+    return psycopg2.connect(
         host=DB_HOST,
         port=DB_PORT,
         database=DB_NAME,
         user=DB_USER,
         password=DB_PASSWORD
     )
-    # Set UTF8 encoding after connection for proper data handling
-    conn.set_client_encoding('UTF8')
-    return conn
 
 def get_all_tenders(status=None):
     """Récupère toutes les offres depuis PostgreSQL"""
@@ -89,719 +134,1698 @@ def get_all_tenders(status=None):
         cursor.close()
         conn.close()
 
-def insert_tender(tender_data):
+def insert_tender(data):
     """Insère une offre dans PostgreSQL"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-
-        query = f"""
-            INSERT INTO {TABLE_NAME}
-            (reference, description, description_fr, publication_date, expiration_date,
-             promoter, external_url, country, status, created_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+        cursor.execute(f"""
+            INSERT INTO {TABLE_NAME} (
+                reference, description, description_fr, publication_date, expiration_date,
+                promoter, source_id, avis_id, external_url, montant, nature,
+                country, borrower, status
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (reference) DO NOTHING
-        """
-
-        cursor.execute(query, (
-            tender_data.get('reference'),
-            tender_data.get('description'),
-            tender_data.get('description_fr'),
-            tender_data.get('publication_date'),
-            tender_data.get('expiration_date'),
-            tender_data.get('promoter', 'Banque Mondiale'),
-            tender_data.get('external_url'),
-            tender_data.get('country'),
-            'pending'
+        """, (
+            data.get('reference'),
+            data.get('description'),
+            data.get('description_fr'),
+            data.get('publication_date') or data.get('publicationDate'),
+            data.get('expiration_date') or data.get('expirationDate'),
+            data.get('promoter'),
+            data.get('source_id', DEFAULT_SOURCE_ID),
+            data.get('avis_id', DEFAULT_AVIS_ID),
+            data.get('external_url'),
+            data.get('montant', ''),
+            data.get('nature', 'public'),
+            data.get('country'),
+            data.get('borrower', ''),
+            data.get('status', 'pending')
         ))
-
         conn.commit()
-        inserted = cursor.rowcount > 0
+        return cursor.rowcount > 0
+    except Exception as e:
+        logger.error(f"Erreur insertion: {e}")
+        conn.rollback()
+        return False
+    finally:
         cursor.close()
         conn.close()
-        return inserted
-    except Exception as e:
-        logger.error(f"Erreur insertion tender: {e}")
-        return False
 
-def scrape_worldbank_api(start_date, end_date):
-    """Scrape l'API de la Banque Mondiale pour les marchés publics africains"""
-    logger.info(f"🚀 Début scraping Banque Mondiale: {start_date} à {end_date}")
-
-    # ✅ API URL de la Banque Mondiale pour les AVIS DE MARCHÉS (procurement notices)
-    # Mise à jour vers v2 (v3 n'existe plus - 404)
-    api_url = "https://search.worldbank.org/api/v2/procnotices"
-
-    inserted_count = 0
-    total_fetched = 0
-
-    # Convertir les dates pour le filtrage
+def get_existing_references():
+    """Récupère toutes les références existantes"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
     try:
-        filter_start = datetime.strptime(start_date, '%Y-%m-%d') if start_date else None
-        filter_end = datetime.strptime(end_date, '%Y-%m-%d') if end_date else None
-        logger.info(f"📅 Filtrage: {filter_start} à {filter_end}")
-    except:
-        filter_start = None
-        filter_end = None
-        logger.warning("⚠️ Dates invalides, pas de filtrage par date")
+        cursor.execute(f"SELECT reference FROM {TABLE_NAME}")
+        return {row[0] for row in cursor.fetchall()}
+    finally:
+        cursor.close()
+        conn.close()
 
+def delete_tender(reference):
+    """Supprime une offre"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
     try:
-        # ✅ Headers pour éviter le blocage Cloudflare
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Accept': 'application/json',
-            'Accept-Language': 'en-US,en;q=0.9,fr;q=0.8'
+        cursor.execute(f"DELETE FROM {TABLE_NAME} WHERE reference = %s", (reference,))
+        deleted_count = cursor.rowcount
+        conn.commit()
+        return deleted_count
+    finally:
+        cursor.close()
+        conn.close()
+
+def update_tender_status(reference, status):
+    """Met à jour le status d'une offre"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(f"UPDATE {TABLE_NAME} SET status = %s WHERE reference = %s", (status, reference))
+        conn.commit()
+        return cursor.rowcount
+    finally:
+        cursor.close()
+        conn.close()
+
+# ============================== MODÈLE DE DONNÉES ==============================
+class TenderModel:
+    def __init__(self):
+        self.title = ""
+        self.description = ""
+        self.publicationDate = ""
+        self.startBiddingDate = None
+        self.expirationDate = ""
+        self.openingBidsDate = None
+        self.reference = ""
+        self.specificationsPrice = ""
+        self.offerValidityPeriode = None
+        self.costEstimateMin = None
+        self.costEstimateMax = None
+        self.avisId = DEFAULT_AVIS_ID
+        self.sourceId = DEFAULT_SOURCE_ID
+        self.promoterId = None
+        self.type = "international"
+        self.nature = "public"
+        self.isEnabled = False
+        self.images = []
+        self.specificationsReceivingAddress = ""
+        self.fundingSourceType = "international"
+        self.fundingSource = "Banque Mondiale"
+        self.currencyId = None
+        self.isMultiCurrency = False
+        self.batches = []
+        self.addresses = []
+        self.createdAt = ""
+        self.updatedAt = ""
+        self.extractionDate = ""
+        self.deletedAt = None
+        self.status = "pending"
+        self.full_content = ""
+        self.pays = ""
+        self.source = "Banque Mondiale"
+        self.promoter = "Banque Mondiale"
+        self.pieces_jointes = []
+        self.cahier_charge = ""
+        self.mots_cles_detectes = []
+        self.avis = "Avis d'appel d'offres"
+        self.procedure = "Appel d'offres international"
+        self.type_marche = "Public"
+        self.url_source = ""
+        self.validationDate = None
+        self.projet = ""
+        self.intitule_projet = ""
+        self.reference_offre_emprunteur = ""
+        self.notice_id = ""
+
+    def to_dict(self):
+        return {k: v for k, v in self.__dict__.items()}
+
+# ============================== EXTRACTEUR PRINCIPAL ==============================
+class WorldBankCompleteExtractor:
+    def __init__(self):
+        self.api_url = "https://search.worldbank.org/api/v2/procnotices"
+        self.base_project_url = "https://projects.banquemondiale.org/fr/projects-operations/procurement-detail/"
+        self.headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'application/json, text/plain, */*',
+            'Accept-Language': 'fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7',
+            'Referer': 'https://search.worldbank.org/',
         }
+        self.start_date = None
+        self.end_date = None
+        self.seen_ids = set()
+        self.all_notices = []
+        self.extraction_status = "Prêt"
+        self.progress = 0
+        self.current_step = ""
+        self.results = []
+        self.session = requests.Session()
+        self.session.headers.update(self.headers)
 
-        # Paramètres de recherche (uniquement ceux acceptés par l'API)
-        params = {
-            'format': 'json',
-            'rows': 100,  # Nombre de résultats par page
-            'os': 0  # Offset
-        }
+    def set_date_range(self, start_date_str, end_date_str):
+        """Définit la plage de dates pour l'extraction"""
+        self.start_date = datetime.strptime(start_date_str, '%Y-%m-%d')
+        self.end_date = datetime.strptime(end_date_str, '%Y-%m-%d')
+        print(f"📅 Plage de dates: {self.start_date.strftime('%d/%m/%Y')} au {self.end_date.strftime('%d/%m/%Y')}")
 
-        # Boucle de pagination
-        for page in range(10):  # Limite à 10 pages (1000 résultats max)
-            params['os'] = page * 100
+    def update_status(self, status, progress=None, step=""):
+        """Met à jour le statut de l'extraction"""
+        self.extraction_status = status
+        if progress is not None:
+            self.progress = progress
+        if step:
+            self.current_step = step
+        print(f"[{progress}%] {step}: {status}")
 
-            logger.info(f"📄 Récupération page {page + 1}...")
-
+    # ============================== MÉTHODES D'EXTRACTION ==============================
+   
+    def parse_date(self, date_str):
+        """Parse une date dans différents formats"""
+        if not date_str:
+            return None
+           
+        date_str = str(date_str).strip()
+        formats = [
+            '%d-%b-%Y', '%Y-%m-%d', '%d/%m/%Y', '%B %d, %Y',
+            '%b %d, %Y', '%Y/%m/%d', '%d.%m.%Y', '%m/%d/%Y'
+        ]
+       
+        for fmt in formats:
             try:
-                response = requests.get(api_url, params=params, headers=headers, timeout=30)
+                return datetime.strptime(date_str, fmt)
+            except:
+                continue
+       
+        return None
 
-                if response.status_code != 200:
-                    logger.warning(f"⚠️ API returned status {response.status_code}")
-                    break
+    def is_in_period(self, date_str):
+        """Vérifie si une date est dans la période sélectionnée"""
+        if not date_str:
+            return False
+           
+        dt = self.parse_date(date_str)
+        if not dt:
+            return False
+           
+        return self.start_date <= dt <= self.end_date
 
-                data = response.json()
-                notices = data.get('procnotices', [])
-
-                if not notices:
-                    logger.info("✅ Aucun avis de marché supplémentaire trouvé")
-                    break
-
-                total_fetched += len(notices)
-                logger.info(f"📦 Trouvé {len(notices)} avis de marchés (total: {total_fetched})")
-
-                # Compter les pays africains avant filtrage
-                african_count = 0
-
-                # Traiter chaque avis de marché
-                for record in notices:
-                    try:
-                        # Extraire les informations
-                        notice_id = record.get('id', 'N/A')
-                        project_id = record.get('project_id', '')
-                        notice_type = record.get('notice_type', '')
-                        procurement_method = record.get('procurement_method', '')
-                        description = record.get('description', record.get('procurement_desc', record.get('bid_description', '')))
-                        # ✅ Correction: l'API v2 utilise 'project_ctry_name' au lieu de 'country'
-                        country = record.get('project_ctry_name', record.get('country', '')).strip()
-
-                        # Filtrer uniquement les pays africains
-                        if not country or country.lower() not in AFRICAN_COUNTRIES:
-                            continue
-
-                        african_count += 1
-
-                        # Date de publication
-                        pub_date_str = record.get('noticedate', record.get('publish_date', ''))
-                        pub_date = None
-                        pub_date_obj = None
-
-                        if pub_date_str:
-                            try:
-                                # Essayer différents formats de date
-                                for date_format in ['%d-%b-%Y', '%Y-%m-%d', '%d/%m/%Y', '%Y-%m-%dT%H:%M:%SZ']:
-                                    try:
-                                        pub_date_obj = datetime.strptime(str(pub_date_str).strip(), date_format)
-                                        pub_date = pub_date_obj.strftime('%Y-%m-%d')
-                                        break
-                                    except:
-                                        continue
-                            except:
-                                pub_date = None
-
-                        # Filtrer par date si les dates sont spécifiées
-                        if filter_start and filter_end and pub_date_obj:
-                            if not (filter_start <= pub_date_obj <= filter_end):
-                                continue
-
-                        # Date limite
-                        deadline_str = record.get('deadline', record.get('response_date', ''))
-                        deadline = None
-                        if deadline_str:
-                            try:
-                                for date_format in ['%d-%b-%Y', '%Y-%m-%d', '%d/%m/%Y', '%Y-%m-%dT%H:%M:%SZ']:
-                                    try:
-                                        deadline_obj = datetime.strptime(str(deadline_str).strip(), date_format)
-                                        deadline = deadline_obj.strftime('%Y-%m-%d')
-                                        break
-                                    except:
-                                        continue
-                            except:
-                                deadline = None
-
-                        # Créer une référence unique
-                        reference = f"WB-{project_id}-{notice_id}" if project_id else f"WB-NOTICE-{notice_id}"
-
-                        logger.info(f"🌍 Avis africain trouvé: {country} - {description[:50]} ({pub_date})")
-
-                        # Créer l'offre
-                        tender = {
-                            'reference': reference,
-                            'description': f"{notice_type} - {description}" if notice_type else description,
-                            'description_fr': f"{notice_type} - {description}" if notice_type else description,
-                            'publication_date': pub_date,
-                            'expiration_date': deadline,
-                            'promoter': 'Banque Mondiale',
-                            'external_url': record.get('url', f"https://projects.worldbank.org/en/projects-operations/procurement/{notice_id}"),
-                            'country': country
-                        }
-
-                        # Insérer dans la base
-                        if insert_tender(tender):
-                            inserted_count += 1
-                            logger.info(f"✅ Nouvelle offre: {tender['reference']} - {country}")
-
-                    except Exception as e:
-                        logger.error(f"❌ Erreur traitement record: {e}")
-                        continue
-
-                # Pause entre les pages
-                time.sleep(1)
-
+    def fetch_with_params(self, custom_params, retry_count=3):
+        """Récupère les données de l'API avec gestion des erreurs"""
+        for attempt in range(retry_count):
+            try:
+                params = {'format': 'json', 'apilang': 'en', 'srce': 'both', **custom_params}
+                response = self.session.get(self.api_url, params=params, timeout=30)
+               
+                if response.status_code == 200:
+                    return response.json()
+                elif response.status_code == 500:
+                    print(f"⚠️ Erreur 500 API (tentative {attempt + 1}/{retry_count})")
+                    if attempt < retry_count - 1:
+                        time.sleep(2 + attempt)
+                else:
+                    print(f"⚠️ Erreur API: {response.status_code} (tentative {attempt + 1}/{retry_count})")
+                   
             except Exception as e:
-                logger.error(f"❌ Erreur page {page + 1}: {e}")
+                print(f"⚠️ Exception lors de la requête (tentative {attempt + 1}): {str(e)[:100]}")
+           
+            time.sleep(1)
+       
+        return None
+
+    def extract_promoter_selenium(self, project_url):
+        """Extrait le promoteur/intitulé du projet avec Selenium"""
+        if not project_url or 'NON_DISPO' in project_url or 'URL_NON_DISPO' in project_url:
+            return 'Banque Mondiale'
+           
+        driver = None
+        try:
+            options = Options()
+            options.add_argument("--headless")
+            options.add_argument("--no-sandbox")
+            options.add_argument("--disable-dev-shm-usage")
+            options.add_argument("--disable-gpu")
+            options.add_argument("--window-size=1920,1080")
+            options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+           
+            driver = webdriver.Chrome(options=options)
+            driver.get(project_url)
+           
+            # Attendre que la page charge
+            try:
+                WebDriverWait(driver, 10).until(
+                    EC.presence_of_element_located((By.TAG_NAME, "body"))
+                )
+                time.sleep(3)  # Temps supplémentaire pour Angular
+            except:
+                pass
+               
+            soup = BeautifulSoup(driver.page_source, 'html.parser')
+           
+            # Chercher l'intitulé du projet avec plusieurs stratégies
+            promoter = 'Banque Mondiale'
+           
+            # Stratégie 1: Recherche par XPath
+            try:
+                xpath_query = "//label[contains(text(), 'Intitulé du Projet')]/following-sibling::p[@class='document-info']"
+                element = driver.find_element(By.XPATH, xpath_query)
+                promoter = element.text.strip()
+                if len(promoter) > 10:
+                    print(f"✅ Promoteur trouvé (XPath): {promoter[:80]}")
+                    driver.quit()
+                    return promoter[:200]
+            except:
+                pass
+           
+            # Stratégie 2: Chercher dans le HTML parsé
+            doc_info_elements = soup.find_all('p', class_='document-info')
+            for elem in doc_info_elements:
+                prev_label = elem.find_previous('label')
+                if prev_label and 'intitulé' in prev_label.get_text().lower():
+                    promoter = elem.get_text(strip=True)
+                    if len(promoter) > 10:
+                        print(f"✅ Promoteur trouvé (class): {promoter[:80]}")
+                        driver.quit()
+                        return promoter[:200]
+           
+            # Stratégie 3: Pattern regex
+            page_text = soup.get_text()
+            patterns = [
+                r'Intitulé\s+du\s+Projet\s*[:.\s]*([^\n\r]{15,200})',
+                r'Project\s+Title\s*[:.\s]*([^\n\r]{15,200})',
+            ]
+            for pattern in patterns:
+                matches = re.findall(pattern, page_text, re.IGNORECASE)
+                for match in matches:
+                    clean = re.sub(r'\s+', ' ', match.strip())
+                    if len(clean) > 15 and 'intitulé' not in clean.lower():
+                        print(f"✅ Promoteur trouvé (pattern): {clean[:80]}")
+                        driver.quit()
+                        return clean[:200]
+           
+            # Fallback: titre de la page
+            title = driver.title
+            clean_title = re.sub(r' - Banque.*| - World.*|Procurement.*|Détails.*', '', title).strip()
+            if len(clean_title) > 10:
+                print(f"⚠️ Promoteur (fallback titre): {clean_title[:80]}")
+                driver.quit()
+                return clean_title[:200]
+           
+            driver.quit()
+            return 'Intitulé non trouvé'
+           
+        except Exception as e:
+            print(f"⚠️ Erreur Selenium pour {project_url}: {str(e)[:100]}")
+            if driver:
+                driver.quit()
+            return 'Banque Mondiale'
+
+    def extract_notice_number(self, record):
+        """Extrait le numéro d'avis - Format: OP00XXXXXX"""
+        # Priorité 1: Chercher dans l'URL si elle contient un ID au format OP00XXXXXX
+        url = record.get('url', '')
+        if url:
+            # Chercher le pattern OP suivi de chiffres
+            match = re.search(r'(OP\d+)', url)
+            if match:
+                return match.group(1)
+            # Chercher après procurement-detail/
+            match = re.search(r'procurement-detail/([^/?]+)', url)
+            if match:
+                return match.group(1)
+
+        # Priorité 2: Chercher dans notice_no (souvent au format OP00XXXXXX)
+        notice_no = record.get('notice_no', '')
+        if notice_no:
+            clean = str(notice_no).strip()
+            if clean.startswith('OP') or re.match(r'^[A-Z]{2}\d+', clean):
+                return clean
+
+        # Priorité 3: Chercher dans bid_reference_no
+        bid_ref = record.get('bid_reference_no', '')
+        if bid_ref:
+            clean = str(bid_ref).strip()
+            if clean.startswith('OP') or re.match(r'^[A-Z]{2}\d+', clean):
+                return clean
+
+        # Priorité 4: Utiliser l'ID du record
+        record_id = record.get('id', '')
+        if record_id:
+            clean = str(record_id).strip()
+            # Si c'est déjà au bon format
+            if clean.startswith('OP'):
+                return clean
+            # Sinon créer un ID avec préfixe
+            return f"OP{clean}" if clean.isdigit() else clean
+
+        return 'NON_DISPO'
+
+    def build_complete_url(self, notice_number):
+        """Construit l'URL complète au format banquemondiale.org"""
+        if not notice_number or notice_number == 'NON_DISPO':
+            return 'URL_NON_DISPO'
+        clean = str(notice_number).strip()
+        # Toujours construire avec le bon format - NE PAS utiliser l'URL de l'API
+        # Format correct: https://projects.banquemondiale.org/fr/projects-operations/procurement-detail/OP00XXXXXX
+        if clean.startswith('http'):
+            # Extraire l'ID de l'URL existante
+            match = re.search(r'(OP\d+)', clean)
+            if match:
+                clean = match.group(1)
+            else:
+                match = re.search(r'procurement[-/](?:detail/)?([^/?]+)', clean)
+                if match:
+                    clean = match.group(1)
+        return f"{self.base_project_url}{clean}"
+
+    def calculate_date_limite(self, pub_date):
+        """Calcule la date limite (30 jours après publication)"""
+        if not pub_date:
+            return 'N/A'
+        try:
+            for fmt in ['%d-%b-%Y', '%Y-%m-%d', '%d/%m/%Y']:
+                try:
+                    pd = datetime.strptime(pub_date, fmt)
+                    return (pd + timedelta(days=30)).strftime('%d/%m/%Y')
+                except:
+                    continue
+        except:
+            pass
+        return 'N/A'
+
+    # ============================== STRATÉGIES D'EXTRACTION ==============================
+   
+    def extract_by_date_range(self):
+        """Extraction spécifique par plage de dates"""
+        print("🔍 Recherche par plage de dates...")
+       
+        all_notices_temp = []
+       
+        # Essayer différentes stratégies de recherche
+        search_strategies = [
+            {'qterm': f'noticedate:{self.start_date.strftime("%Y-%m-%d")}'},
+            {'qterm': f'noticedate:{self.start_date.strftime("%Y-%m")}'},
+            {'qterm': f'noticedate:{self.start_date.strftime("%Y")}'},
+            {'qterm': f'noticedate:[{self.start_date.strftime("%Y-%m-%d")} TO {self.end_date.strftime("%Y-%m-%d")}]'},
+            {}
+        ]
+       
+        for strategy_idx, strategy in enumerate(search_strategies, 1):
+            print(f"  🔄 Stratégie {strategy_idx}/5")
+           
+            for page in range(5):  # 5 pages par stratégie
+                offset = page * 200
+                params = {
+                    'os': offset,
+                    'rows': 200,
+                    **strategy
+                }
+               
+                data = self.fetch_with_params(params)
+                if not data or not data.get('procnotices'):
+                    break
+                   
+                notices = data['procnotices']
+                print(f"    📄 Page {page+1}: {len(notices)} avis")
+               
+                for record in notices:
+                    date_str = record.get('noticedate')
+                    if date_str and self.is_in_period(date_str):
+                        cid = f"{record.get('project_id')}_{record.get('id')}"
+                        if cid not in self.seen_ids:
+                            self.seen_ids.add(cid)
+                            all_notices_temp.append(record)
+               
+                time.sleep(0.5)
+       
+        return all_notices_temp
+
+    def extract_all_notices_with_retry(self, max_pages=50):
+        """Extrait tous les avis avec stratégie de retry"""
+        print("🚀 Extraction de TOUS les avis récents...")
+       
+        all_notices_temp = []
+        successful_pages = 0
+       
+        # Commencer à différentes pages pour éviter les erreurs 500
+        start_pages = [0, 100, 200, 300, 400]
+       
+        for start_offset in start_pages:
+            if successful_pages >= 5:
                 break
+               
+            for page in range(10):
+                current_offset = start_offset + (page * 200)
+                print(f"📄 Tentative page avec offset: {current_offset}")
+               
+                params = {
+                    'os': current_offset,
+                    'rows': 200,
+                    'order': 'desc'
+                }
+               
+                data = self.fetch_with_params(params, retry_count=2)
+                if not data or not data.get('procnotices'):
+                    print(f"  ⚠️ Pas de données pour offset {current_offset}")
+                    continue
+                   
+                notices = data['procnotices']
+                print(f"  ✅ {len(notices)} avis récupérés (offset: {current_offset})")
+               
+                for record in notices:
+                    date_str = record.get('noticedate')
+                    if date_str and self.is_in_period(date_str):
+                        cid = f"{record.get('project_id')}_{record.get('id')}"
+                        if cid not in self.seen_ids:
+                            self.seen_ids.add(cid)
+                            all_notices_temp.append(record)
+               
+                successful_pages += 1
+                time.sleep(1)
+       
+        return all_notices_temp
 
-        logger.info(f"✅ Scraping terminé: {inserted_count} nouvelles offres sur {total_fetched} récupérées")
+    def extract_by_countries(self):
+        """Extraction par pays africains"""
+        print("🌍 Extraction par pays africains...")
+       
+        countries = [
+            'Angola', 'Benin', 'Botswana', 'Burkina Faso', 'Burundi', 'Cameroon',
+            'Cape Verde', 'Central African Republic', 'Chad', 'Comoros', 'Congo',
+            'Democratic Republic of Congo', 'Côte d\'Ivoire', 'Djibouti', 'Equatorial Guinea',
+            'Eritrea', 'Eswatini', 'Ethiopia', 'Gabon', 'Gambia', 'Ghana', 'Guinea',
+            'Guinea-Bissau', 'Kenya', 'Lesotho', 'Liberia', 'Madagascar', 'Malawi',
+            'Mali', 'Mauritania', 'Mauritius', 'Mozambique', 'Namibia', 'Niger',
+            'Nigeria', 'Rwanda', 'Sao Tome and Principe', 'Senegal', 'Seychelles',
+            'Sierra Leone', 'Somalia', 'South Africa', 'South Sudan', 'Sudan',
+            'Tanzania', 'Togo', 'Uganda', 'Zambia', 'Zimbabwe'
+        ]
+       
+        all_notices_temp = []
+       
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = []
+            for country in countries:
+                futures.append(executor.submit(self.search_country, country))
+           
+            for future in as_completed(futures):
+                try:
+                    country_notices = future.result()
+                    all_notices_temp.extend(country_notices)
+                except Exception as e:
+                    print(f"⚠️ Erreur pour un pays: {e}")
+       
+        return all_notices_temp
+
+    def search_country(self, country):
+        """Recherche les avis pour un pays spécifique"""
+        country_notices = []
+       
+        for offset in [0, 100, 200]:
+            params = {
+                'os': offset,
+                'rows': 100,
+                'qterm': f'"{country}"',
+                'srt': 'publishdate',
+                'order': 'desc'
+            }
+           
+            data = self.fetch_with_params(params)
+            if not data:
+                break
+               
+            notices = data.get('procnotices', [])
+            for record in notices:
+                date_str = record.get('noticedate')
+                if date_str and self.is_in_period(date_str):
+                    cid = f"{record.get('project_id')}_{record.get('id')}"
+                    if cid not in self.seen_ids:
+                        self.seen_ids.add(cid)
+                        country_notices.append(record)
+           
+            time.sleep(0.5)
+       
+        print(f"  ✅ {country}: {len(country_notices)} avis")
+        return country_notices
+
+    def extract_by_notice_types(self):
+        """Extraction par types d'avis"""
+        print("📋 Extraction par types d'avis...")
+       
+        notice_types = [
+            'Contract Award', 'Invitation for Bids', 'Request for Proposal',
+            'Expression of Interest', 'General Procurement Notice'
+        ]
+       
+        all_notices_temp = []
+       
+        for notice_type in notice_types:
+            print(f"  🔍 Recherche: {notice_type}")
+           
+            for offset in [0, 100]:
+                params = {
+                    'os': offset,
+                    'rows': 100,
+                    'notice_type_exact': notice_type,
+                    'srt': 'publishdate',
+                    'order': 'desc'
+                }
+               
+                data = self.fetch_with_params(params)
+                if not data:
+                    break
+                   
+                notices = data.get('procnotices', [])
+                for record in notices:
+                    date_str = record.get('noticedate')
+                    if date_str and self.is_in_period(date_str):
+                        cid = f"{record.get('project_id')}_{record.get('id')}"
+                        if cid not in self.seen_ids:
+                            self.seen_ids.add(cid)
+                            all_notices_temp.append(record)
+               
+                time.sleep(0.5)
+       
+        return all_notices_temp
+
+    # ============================== ENRICHISSEMENT ==============================
+   
+    def enrich_notice(self, record):
+        """Enrichit un avis avec toutes les informations"""
+        country = record.get('project_ctry_name', '') or record.get('country', 'N/A')
+        notice_number = self.extract_notice_number(record)
+        full_url = self.build_complete_url(notice_number)
+
+        # Utiliser le nom du projet directement depuis l'API (plus rapide que Selenium)
+        promoter_exact = record.get('project_name', '') or record.get('borrower', '') or 'Banque Mondiale'
+        promoter_fr = translate_to_french(promoter_exact)
+       
+        # Déterminer le type d'avis
+        notice_type = record.get('notice_type', '')
+        avis_type = self.determine_avis_type(notice_type)
+       
+        # Déterminer la procédure
+        procedure = self.determine_procedure(notice_type)
+       
         return {
-            'success': True,
-            'inserted': inserted_count,
-            'total_fetched': total_fetched
+            'ID': len(self.all_notices) + 1,
+            'Description': translate_to_french(record.get('bid_description') or record.get('project_name', 'N/A')),
+            'Pays': country,
+            'Date publication': record.get('noticedate', 'N/A'),
+            'Date limite': self.calculate_date_limite(record.get('noticedate', '')),
+            'Type avis': notice_type,
+            'Type avis FR': avis_type,
+            'Procédure': procedure,
+            'Référence': record.get('bid_reference_no', 'N/A') or record.get('id', 'N/A'),
+            'ID Projet': record.get('project_id', 'N/A'),
+            'Intitulé Projet': translate_to_french(record.get('project_name', 'N/A')),
+            'Promoteur': promoter_fr,
+            'URL': full_url,
+            'Langue': record.get('notice_lang_name', 'N/A'),
+            'Source de financement': record.get('fundingsource', 'Banque Mondiale'),
+            'Notice Number': notice_number,
+            'Project Name': record.get('project_name', 'N/A'),
+            'Region': self.get_region(country),
+            'Status': 'pending',
+            'Extraction Date': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         }
 
-    except Exception as e:
-        logger.error(f"❌ Erreur scraping: {e}")
-        return {
-            'success': False,
-            'error': str(e),
-            'inserted': inserted_count,
-            'total_fetched': total_fetched
+    def determine_avis_type(self, notice_type):
+        """Détermine le type d'avis en français"""
+        mapping = {
+            'Contract Award': 'Attribution de contrat',
+            'Invitation for Bids': 'Invitation à soumissionner',
+            'Request for Proposal': 'Demande de propositions',
+            'Expression of Interest': 'Appel à manifestation d\'intérêt',
+            'General Procurement Notice': 'Avis général de passation de marchés',
+            'Procurement Notice': 'Avis de passation de marchés'
         }
+        return mapping.get(notice_type, notice_type)
 
-# ================================================
-# FLASK APP
-# ================================================
+    def determine_procedure(self, notice_type):
+        """Détermine la procédure"""
+        if 'Contract Award' in notice_type:
+            return 'Attribution'
+        elif 'Invitation for Bids' in notice_type:
+            return 'Appel d\'offres international'
+        elif 'Request for Proposal' in notice_type:
+            return 'Demande de propositions'
+        elif 'Expression of Interest' in notice_type:
+            return 'Manifestation d\'intérêt'
+        else:
+            return 'Procédure ordinaire'
 
+    def get_region(self, country):
+        """Détermine la région"""
+        if not country:
+            return 'Unknown'
+        cl = str(country).lower()
+       
+        east_south = ['angola', 'botswana', 'burundi', 'comoros', 'eritrea', 'ethiopia',
+                     'kenya', 'lesotho', 'madagascar', 'malawi', 'mauritius', 'mozambique',
+                     'namibia', 'rwanda', 'seychelles', 'somalia', 'south africa',
+                     'tanzania', 'uganda', 'zambia', 'zimbabwe']
+       
+        west_central = ['benin', 'burkina faso', 'cameroon', 'cape verde', 'chad', 'congo',
+                       'côte d\'ivoire', 'gabon', 'gambia', 'ghana', 'guinea', 'liberia',
+                       'mali', 'mauritania', 'niger', 'nigeria', 'senegal', 'sierra leone', 'togo']
+       
+        if any(c in cl for c in east_south):
+            return 'Afrique de l\'Est et Australe'
+        elif any(c in cl for c in west_central):
+            return 'Afrique de l\'Ouest et Centrale'
+        else:
+            return 'Autre région'
+
+    # ============================== EXTRACTION COMPLÈTE ==============================
+   
+    def execute_complete_extraction(self):
+        """Exécute l'extraction complète avec toutes les stratégies"""
+        if self.start_date is None or self.end_date is None:
+            self.update_status("Erreur: Dates non définies", 0, "Initialisation")
+            return None
+       
+        self.update_status("Démarrage de l'extraction", 5, "Initialisation")
+       
+        # Étape 1: Extraction par plage de dates
+        self.update_status("Extraction par plage de dates", 20, "Étape 1")
+        notices_etape1 = self.extract_by_date_range()
+        print(f"✅ Étape 1: {len(notices_etape1)} avis trouvés")
+       
+        # Étape 2: Extraction avec retry
+        self.update_status("Extraction étendue avec retry", 40, "Étape 2")
+        notices_etape2 = self.extract_all_notices_with_retry()
+        filtered_etape2 = [n for n in notices_etape2
+                          if self.is_in_period(n.get('noticedate', ''))]
+        print(f"✅ Étape 2: {len(filtered_etape2)} avis filtrés")
+       
+        # Étape 3: Extraction par pays
+        self.update_status("Extraction par pays africains", 60, "Étape 3")
+        notices_etape3 = self.extract_by_countries()
+        print(f"✅ Étape 3: {len(notices_etape3)} avis trouvés")
+       
+        # Étape 4: Extraction par types d'avis
+        self.update_status("Extraction par types d'avis", 80, "Étape 4")
+        notices_etape4 = self.extract_by_notice_types()
+        print(f"✅ Étape 4: {len(notices_etape4)} avis trouvés")
+       
+        # Combiner tous les avis
+        all_notices_raw = notices_etape1 + filtered_etape2 + notices_etape3 + notices_etape4
+       
+        # Dédupliquer
+        unique_notices = []
+        seen = set()
+        for notice in all_notices_raw:
+            notice_id = notice.get('id') or notice.get('bid_reference_no', '')
+            if notice_id and notice_id not in seen:
+                seen.add(notice_id)
+                unique_notices.append(notice)
+       
+        # Enrichir les avis
+        self.update_status("Enrichissement des avis", 90, "Enrichissement")
+        for record in unique_notices:
+            enriched = self.enrich_notice(record)
+            self.all_notices.append(enriched)
+       
+        self.update_status(f"{len(self.all_notices)} avis extraits", 95, "Finalisation")
+       
+        return self.save_results()
+
+    def save_results(self):
+        """Sauvegarde les résultats dans Excel et MongoDB"""
+        if not self.all_notices:
+            self.update_status("Aucune donnée à sauvegarder", 100, "Terminé")
+            return None
+       
+        # Créer DataFrame
+        df = pd.DataFrame(self.all_notices)
+       
+        # Trier par date de publication
+        if 'Date publication' in df.columns:
+            try:
+                df['Date_parsed'] = df['Date publication'].apply(self.parse_date)
+                df = df.sort_values('Date_parsed', ascending=False)
+                df = df.drop('Date_parsed', axis=1)
+            except:
+                pass
+       
+        # Nom du fichier
+        start_str = self.start_date.strftime("%d_%m_%Y")
+        end_str = self.end_date.strftime("%d_%m_%Y")
+        filename = f"BM_AVIS_COMPLET_{start_str}_AU_{end_str}.xlsx"
+       
+        # Sauvegarder dans Excel
+        try:
+            df.to_excel(filename, index=False, engine='openpyxl')
+            print(f"✅ Fichier Excel créé: {filename}")
+           
+            # Sauvegarder dans MongoDB
+            self.save_to_mongodb(df)
+           
+            # Préparer les résultats pour l'API
+            self.results = df.to_dict('records')
+           
+            # Afficher les statistiques
+            self.show_statistics(df)
+           
+            self.update_status(f"✅ {len(self.all_notices)} avis extraits et sauvegardés", 100, "Terminé")
+           
+            return df
+           
+        except Exception as e:
+            self.update_status(f"Erreur lors de la sauvegarde: {e}", 100, "Erreur")
+            return None
+
+    def save_to_postgresql(self, df):
+        """Sauvegarde les données dans PostgreSQL"""
+        try:
+            # Convertir le DataFrame en dictionnaires
+            records = df.to_dict('records')
+
+            # Insérer dans PostgreSQL
+            inserted_count = 0
+            for record in records:
+                # Convertir en TenderModel
+                tender = self.map_to_tender_model(record)
+                pending_collection.update_one(
+                    {'reference': tender['reference']},
+                    {'$set': tender},
+                    upsert=True
+                )
+           
+            client.close()
+            print(f"✅ Données sauvegardées dans MongoDB: {len(records)} avis")
+           
+        except Exception as e:
+            print(f"⚠️ Erreur MongoDB: {e}")
+
+    def map_to_tender_model(self, contract_data):
+        """Convertit les données d'avis en TenderModel"""
+        # Déterminer l'ID du pays
+        country = contract_data.get('Pays', '').lower().strip()
+        country_id = COUNTRIES_MAP.get(country, 1)
+       
+        # Dates
+        pub_date = contract_data.get('Date publication', '')
+        exp_date = contract_data.get('Date limite', '')
+       
+        # Parser les dates
+        try:
+            pub_dt = self.parse_date(pub_date)
+            pub_iso = pub_dt.isoformat() if pub_dt else pub_date
+            start_iso = (pub_dt + timedelta(days=1)).isoformat() if pub_dt else None
+            open_iso = pub_dt.isoformat() if pub_dt else None
+        except:
+            pub_iso = pub_date
+            start_iso = None
+            open_iso = None
+       
+        try:
+            exp_dt = self.parse_date(exp_date)
+            exp_iso = exp_dt.isoformat() if exp_dt else exp_date
+        except:
+            exp_iso = exp_date
+       
+        # Créer le modèle
+        tender = TenderModel()
+        tender.title = translate_to_french(contract_data.get('Intitulé Projet', '')[:100])
+        tender.description = translate_to_french(contract_data.get('Description', ''))
+        tender.full_content = tender.description
+        tender.publicationDate = pub_iso
+        tender.startBiddingDate = start_iso
+        tender.expirationDate = exp_iso
+        tender.openingBidsDate = open_iso
+        tender.reference = contract_data.get('Référence', '')
+        tender.specificationsReceivingAddress = contract_data.get('URL', '')
+        tender.promoter = translate_to_french(contract_data.get('Promoteur', 'Banque Mondiale'))
+        tender.batches = [{"activitiesIds": [], "title": tender.description, "deposit": 0}]
+        tender.addresses = [{"countryId": country_id}]
+        tender.pays = country_id
+        tender.cahier_charge = contract_data.get('URL', '')
+        tender.url_source = contract_data.get('URL', '')
+        tender.validationDate = datetime.now().isoformat()
+        tender.projet = translate_to_french(contract_data.get('Intitulé Projet', ''))
+        tender.intitule_projet = translate_to_french(contract_data.get('Intitulé Projet', ''))
+        tender.reference_offre_emprunteur = contract_data.get('Référence', '')
+        tender.notice_id = contract_data.get('Notice Number', '')
+        tender.avis = contract_data.get('Type avis FR', 'Avis d\'appel d\'offres')
+        tender.procedure = contract_data.get('Procédure', 'Appel d\'offres international')
+        tender.extractionDate = datetime.now().isoformat()
+       
+        return tender.to_dict()
+
+    def show_statistics(self, df):
+        """Affiche les statistiques de l'extraction"""
+        print("\n" + "="*60)
+        print("📊 STATISTIQUES DE L'EXTRACTION")
+        print("="*60)
+        print(f"📈 Total d'avis extraits: {len(df)}")
+       
+        if 'Pays' in df.columns:
+            print(f"\n🌍 Distribution par pays:")
+            country_stats = df['Pays'].value_counts()
+            for country, count in country_stats.head(10).items():
+                print(f"   {country}: {count} avis")
+       
+        if 'Type avis' in df.columns:
+            print(f"\n📋 Distribution par type d'avis:")
+            type_stats = df['Type avis'].value_counts()
+            for type_avis, count in type_stats.items():
+                print(f"   {type_avis}: {count} avis")
+       
+        if 'Date publication' in df.columns:
+            print(f"\n📅 Dates des avis trouvés:")
+            unique_dates = df['Date publication'].dropna().unique()
+            for date in unique_dates[:10]:
+                print(f"   {date}")
+       
+        print("\n✅ Extraction terminée avec succès!")
+
+# ============================== SERVEUR FLASK ==============================
 app = Flask(__name__)
 CORS(app, origins=["*"])
 
-@app.route('/api/health', methods=['GET'])
-def health():
-    return jsonify({
-        "status": "healthy",
-        "service": "Banque Mondiale",
-        "database": "PostgreSQL",
-        "table": TABLE_NAME
-    })
+extractor = WorldBankCompleteExtractor()
+auth_token = None
+extraction_thread = None
+
+def get_pending_from_db():
+    """Récupère les offres en attente depuis PostgreSQL"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute(f"""
+            SELECT reference, description, description_fr, publication_date, expiration_date,
+                   promoter, source_id, avis_id, external_url, montant, nature,
+                   country, borrower, status, created_at
+            FROM {TABLE_NAME}
+            WHERE status = 'pending'
+            ORDER BY created_at DESC
+        """)
+        results = cursor.fetchall()
+        cursor.close()
+        conn.close()
+
+        # Convertir en format compatible avec le frontend
+        pending = []
+        for row in results:
+            # Corriger l'URL si elle est au format worldbank.org
+            url = row.get('external_url', '')
+            reference = row.get('reference', '')
+            if url and 'worldbank.org' in url:
+                # Extraire l'ID OP et construire la bonne URL
+                match = re.search(r'(OP\d+)', url) or re.search(r'(OP\d+)', reference)
+                if match:
+                    url = f"https://projects.banquemondiale.org/fr/projects-operations/procurement-detail/{match.group(1)}"
+
+            pending.append({
+                'ID': len(pending) + 1,
+                'Référence': reference,
+                'Description': row.get('description_fr') or row.get('description', ''),
+                'Pays': row.get('country', ''),
+                'Date publication': str(row.get('publication_date', ''))[:10] if row.get('publication_date') else '',
+                'Date limite': str(row.get('expiration_date', ''))[:10] if row.get('expiration_date') else '',
+                'Promoteur': row.get('promoter', 'Banque Mondiale'),
+                'URL': url,
+                'Type avis FR': 'Avis de passation de marchés',
+                'Notice Number': reference,
+                'status': row.get('status', 'pending')
+            })
+        return pending
+    except Exception as e:
+        logger.error(f"Erreur get_pending_from_db: {e}")
+        return []
+
+def get_validated_from_db():
+    """Récupère les offres validées depuis PostgreSQL"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute(f"""
+            SELECT reference, description, description_fr, publication_date, expiration_date,
+                   promoter, source_id, avis_id, external_url, montant, nature,
+                   country, borrower, status, created_at
+            FROM {TABLE_NAME}
+            WHERE status = 'validated'
+            ORDER BY created_at DESC
+        """)
+        results = cursor.fetchall()
+        cursor.close()
+        conn.close()
+
+        validated = []
+        for row in results:
+            # Corriger l'URL si elle est au format worldbank.org
+            url = row.get('external_url', '')
+            reference = row.get('reference', '')
+            if url and 'worldbank.org' in url:
+                # Extraire l'ID OP et construire la bonne URL
+                match = re.search(r'(OP\d+)', url) or re.search(r'(OP\d+)', reference)
+                if match:
+                    url = f"https://projects.banquemondiale.org/fr/projects-operations/procurement-detail/{match.group(1)}"
+
+            validated.append({
+                'ID': len(validated) + 1,
+                'Référence': reference,
+                'Description': row.get('description_fr') or row.get('description', ''),
+                'Pays': row.get('country', ''),
+                'Date publication': str(row.get('publication_date', ''))[:10] if row.get('publication_date') else '',
+                'Date limite': str(row.get('expiration_date', ''))[:10] if row.get('expiration_date') else '',
+                'Promoteur': row.get('promoter', 'Banque Mondiale'),
+                'URL': url,
+                'Type avis FR': 'Avis de passation de marchés',
+                'Notice Number': reference,
+                'status': row.get('status', 'validated')
+            })
+        return validated
+    except Exception as e:
+        logger.error(f"Erreur get_validated_from_db: {e}")
+        return []
 
 @app.route('/api/pending', methods=['GET'])
-def get_pending():
+def api_get_pending():
+    """Route API pour récupérer les offres en attente"""
     try:
         page = int(request.args.get('page', 1))
-        limit = int(request.args.get('limit', 10))
-
-        # ✅ Filtrage par date de publication
-        date_filter = request.args.get('date')  # Format: YYYY-MM-DD ou DD-MM-YYYY ou DD/MM/YYYY
-        start_date = request.args.get('start_date')  # Format: YYYY-MM-DD
-        end_date = request.args.get('end_date')  # Format: YYYY-MM-DD
-
-        all_tenders = get_all_tenders(status="pending")
-
-        # ✅ Appliquer le filtrage par date
-        if date_filter or start_date or end_date:
-            filtered_tenders = []
-            for tender in all_tenders:
-                pub_date_str = tender.get('publication_date')
-                if not pub_date_str:
-                    continue
-
-                try:
-                    # Convertir la date de publication en objet datetime
-                    if isinstance(pub_date_str, str):
-                        for date_format in ['%Y-%m-%d', '%d-%m-%Y', '%d/%m/%Y']:
-                            try:
-                                pub_date = datetime.strptime(pub_date_str, date_format)
-                                break
-                            except:
-                                continue
-                    else:
-                        pub_date = pub_date_str
-
-                    # Filtrer par date exacte
-                    if date_filter:
-                        for date_format in ['%Y-%m-%d', '%d-%m-%Y', '%d/%m/%Y']:
-                            try:
-                                filter_date = datetime.strptime(date_filter, date_format)
-                                if pub_date.date() == filter_date.date():
-                                    filtered_tenders.append(tender)
-                                break
-                            except:
-                                continue
-
-                    # Filtrer par plage de dates
-                    elif start_date and end_date:
-                        start = datetime.strptime(start_date, '%Y-%m-%d')
-                        end = datetime.strptime(end_date, '%Y-%m-%d')
-                        if start.date() <= pub_date.date() <= end.date():
-                            filtered_tenders.append(tender)
-
-                    # Filtrer par date de début uniquement
-                    elif start_date:
-                        start = datetime.strptime(start_date, '%Y-%m-%d')
-                        if pub_date.date() >= start.date():
-                            filtered_tenders.append(tender)
-
-                    # Filtrer par date de fin uniquement
-                    elif end_date:
-                        end = datetime.strptime(end_date, '%Y-%m-%d')
-                        if pub_date.date() <= end.date():
-                            filtered_tenders.append(tender)
-
-                except Exception as e:
-                    logger.warning(f"⚠️ Erreur parsing date {pub_date_str}: {e}")
-                    continue
-
-            all_tenders = filtered_tenders
-
+        limit = int(request.args.get('limit', 1000))
+        pending = get_pending_from_db()
+        # Pagination
         start = (page - 1) * limit
         end = start + limit
-
-        tenders_page = all_tenders[start:end]
-
-        # Mapper pour frontend
-        mapped_tenders = []
-        for tender in tenders_page:
-            mapped = {
-                'reference': tender.get('reference'),
-                'description': tender.get('description'),
-                'description_fr': tender.get('description_fr'),
-                'publicationDate': tender.get('publication_date'),
-                'expirationDate': tender.get('expiration_date'),
-                'promoter': tender.get('promoter'),
-                'external_url': tender.get('external_url'),
-                'montant': tender.get('montant'),
-                'country': tender.get('country'),
-                'status': tender.get('status')
-            }
-            mapped_tenders.append(mapped)
-
+        paginated = pending[start:end]
         return jsonify({
             "success": True,
-            "pending": {
-                "offres": mapped_tenders,
-                "total": len(all_tenders),
-                "page": page,
-                "limit": limit,
-                "totalPages": (len(all_tenders) + limit - 1) // limit
-            }
+            "pending": paginated,
+            "total": len(pending),
+            "page": page,
+            "limit": limit
         })
     except Exception as e:
         logger.error(f"Erreur /api/pending: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
 
 @app.route('/api/validated', methods=['GET'])
-def get_validated():
+def api_get_validated():
+    """Route API pour récupérer les offres validées"""
     try:
         page = int(request.args.get('page', 1))
-        limit = int(request.args.get('limit', 10))
-
-        all_tenders = get_all_tenders(status="validated")
+        limit = int(request.args.get('limit', 1000))
+        validated = get_validated_from_db()
         start = (page - 1) * limit
         end = start + limit
-
-        tenders_page = all_tenders[start:end]
-
+        paginated = validated[start:end]
         return jsonify({
             "success": True,
-            "validated": {
-                "offres": tenders_page,
-                "total": len(all_tenders),
-                "page": page,
-                "limit": limit
-            }
+            "validated": paginated,
+            "total": len(validated),
+            "page": page,
+            "limit": limit
         })
     except Exception as e:
         logger.error(f"Erreur /api/validated: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
 
-@app.route('/api/stats', methods=['GET'])
-def get_stats():
-    try:
-        pending = get_all_tenders(status="pending")
-        validated = get_all_tenders(status="validated")
+@app.route('/api/status', methods=['GET'])
+def api_status():
+    """Route API pour le statut de l'extraction"""
+    return jsonify({
+        'status': extractor.extraction_status,
+        'progress': extractor.progress,
+        'step': extractor.current_step,
+        'contracts_count': len(extractor.all_notices)
+    })
 
-        return jsonify({
-            "success": True,
-            "stats": {
-                "pending_count": len(pending),
-                "validated_count": len(validated),
-                "total_count": len(pending) + len(validated)
+@app.route('/api/results', methods=['GET'])
+def api_results():
+    """Route API pour les résultats"""
+    return jsonify({
+        'results': extractor.results,
+        'total_count': len(extractor.results)
+    })
+
+@app.route('/api/scrape', methods=['POST'])
+def api_scrape():
+    """Route API pour lancer l'extraction"""
+    global extraction_thread
+    try:
+        data = request.get_json() or {}
+        start_date = data.get('startDate', (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d'))
+        end_date = data.get('endDate', datetime.now().strftime('%Y-%m-%d'))
+
+        extractor.set_date_range(start_date, end_date)
+
+        if extraction_thread is None or not extraction_thread.is_alive():
+            extraction_thread = threading.Thread(target=run_extraction)
+            extraction_thread.start()
+            return jsonify({'success': True, 'message': 'Extraction démarrée'})
+        else:
+            return jsonify({'success': False, 'message': 'Extraction déjà en cours'})
+    except Exception as e:
+        logger.error(f"Erreur /api/scrape: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+def run_extraction():
+    """Exécute l'extraction dans un thread séparé"""
+    try:
+        extractor.execute_complete_extraction()
+        # Sauvegarder les résultats dans PostgreSQL
+        for notice in extractor.all_notices:
+            # Construire l'URL correcte au format banquemondiale.org
+            notice_number = notice.get('Notice Number', '')
+            if notice_number:
+                # Extraire l'ID OP du numéro d'avis
+                match = re.search(r'(OP\d+)', notice_number)
+                if match:
+                    op_id = match.group(1)
+                    correct_url = f"https://projects.banquemondiale.org/fr/projects-operations/procurement-detail/{op_id}"
+                else:
+                    correct_url = notice.get('URL', '')
+            else:
+                correct_url = notice.get('URL', '')
+
+            tender_data = {
+                'reference': notice.get('Référence', notice.get('Notice Number', '')),
+                'description': notice.get('Description', ''),
+                'description_fr': notice.get('Description', ''),
+                'publication_date': notice.get('Date publication', ''),
+                'expiration_date': notice.get('Date limite', ''),
+                'promoter': notice.get('Promoteur', 'Banque Mondiale'),
+                'source_id': DEFAULT_SOURCE_ID,
+                'avis_id': DEFAULT_AVIS_ID,
+                'external_url': correct_url,
+                'country': notice.get('Pays', ''),
+                'status': 'pending'
             }
+            insert_tender(tender_data)
+        logger.info(f"✅ Extraction terminée: {len(extractor.all_notices)} avis sauvegardés")
+    except Exception as e:
+        logger.error(f"Erreur extraction: {e}")
+
+@app.route('/api/validate', methods=['POST'])
+def api_validate():
+    """Route API pour valider une offre"""
+    global auth_token
+    try:
+        contract_data = request.get_json()
+        if not contract_data:
+            return jsonify({'success': False, 'error': 'Données manquantes'}), 400
+
+        tender = extractor.map_to_tender_model(contract_data)
+        success = create_tender_api(tender)
+
+        if success:
+            # Mettre à jour le statut dans PostgreSQL
+            reference = contract_data.get('Référence') or contract_data.get('reference', '')
+            update_tender_status(reference, 'validated')
+
+        return jsonify({'success': success})
+    except Exception as e:
+        logger.error(f"Erreur /api/validate: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/delete', methods=['POST'])
+def api_delete():
+    """Route API pour supprimer une offre"""
+    try:
+        data = request.get_json()
+        reference = data.get('reference') or data.get('Référence', '')
+        if reference:
+            deleted = delete_tender(reference)
+            return jsonify({'success': deleted > 0, 'deleted': deleted})
+        return jsonify({'success': False, 'error': 'Référence manquante'}), 400
+    except Exception as e:
+        logger.error(f"Erreur /api/delete: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/health', methods=['GET'])
+def api_health():
+    """Route API pour vérifier la santé du service"""
+    return jsonify({
+        'status': 'healthy',
+        'service': 'banque-mondiale',
+        'version': '1.0'
+    })
+
+@app.route('/api/stats', methods=['GET'])
+def api_stats():
+    """Route API pour les statistiques"""
+    try:
+        pending = get_pending_from_db()
+        validated = get_validated_from_db()
+        return jsonify({
+            'success': True,
+            'pending_count': len(pending),
+            'validated_count': len(validated),
+            'extraction_status': extractor.extraction_status,
+            'extraction_progress': extractor.progress
         })
     except Exception as e:
         logger.error(f"Erreur /api/stats: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify({'success': False, 'error': str(e)}), 500
 
-@app.route('/api/scrape', methods=['POST'])
-def scrape():
-    """Endpoint pour lancer le scraping de la Banque Mondiale"""
+@app.route('/', methods=['GET'])
+def index():
+    """Page d'accueil"""
+    return jsonify({
+        'service': 'Banque Mondiale Scraper',
+        'status': 'running',
+        'endpoints': [
+            '/api/pending',
+            '/api/validated',
+            '/api/scrape',
+            '/api/validate',
+            '/api/delete',
+            '/api/stats',
+            '/api/status'
+        ]
+    })
+
+def login_to_api_global():
+    """Se connecte à l'API"""
+    global auth_token
+    if auth_token:
+        return True
     try:
-        data = request.json or {}
-        start_date = data.get('startDate') or data.get('start_date')
-        end_date = data.get('endDate') or data.get('end_date')
-
-        logger.info(f"📥 Demande de scraping Banque Mondiale: {start_date} -> {end_date}")
-
-        # Lancer le scraping
-        result = scrape_worldbank_api(start_date, end_date)
-
-        if result.get('success'):
-            message = f"✅ Scraping terminé: {result['inserted']} nouvelles offres sur {result['total_fetched']} récupérées"
-            logger.info(message)
-            return jsonify({
-                "success": True,
-                "message": message,
-                "count": result['inserted'],
-                "total_fetched": result['total_fetched']
-            })
-        else:
-            return jsonify({
-                "success": False,
-                "message": f"Erreur scraping: {result.get('error', 'Erreur inconnue')}",
-                "count": result.get('inserted', 0),
-                "total_fetched": result.get('total_fetched', 0)
-            }), 500
-
-    except Exception as e:
-        logger.error(f"Erreur /api/scrape: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
-
-# ================================================
-# API APPELOFFRES FUNCTIONS
-# ================================================
-
-def login_to_appeloffres():
-    """Se connecte à l'API AppelOffres et retourne le token"""
-    try:
-        response = requests.post(
-            LOGIN_ENDPOINT,
-            json={"email": EMAIL, "password": API_PASSWORD},
-            timeout=30
-        )
+        response = requests.post(LOGIN_ENDPOINT,
+                               json={'email': EMAIL, 'password': PASSWORD},
+                               timeout=10)
         if response.status_code == 200:
-            data = response.json()
-            token = data.get('access_token') or data.get('accessToken') or data.get('token')
-            logger.info("✅ Connexion API AppelOffres réussie")
-            return token
-        else:
-            logger.error(f"❌ Échec login API: {response.status_code}")
-            return None
-    except Exception as e:
-        logger.error(f"❌ Erreur login API: {e}")
-        return None
+            result = response.json()
+            if result and isinstance(result, dict):
+                auth_token = result.get('accessToken') or result.get('access_token') or result.get('token')
+                if auth_token:
+                    return True
+        return False
+    except:
+        return False
 
-def get_or_create_promoter(token, promoter_name):
-    """Trouve ou crée un promoteur dans l'API"""
-    if not promoter_name or promoter_name.strip() == '':
-        promoter_name = 'Banque Mondiale'
+def create_tender_api(tender_data):
+    """Crée un appel d'offres dans l'API avec format compatible appeloffres.net"""
+    global auth_token
+    if not login_to_api_global():
+        return False
 
     try:
-        headers = {'Authorization': f'Bearer {token}'}
+        headers = {'Authorization': f'Bearer {auth_token}'}
 
-        # Chercher le promoteur existant
-        response = requests.get(
-            f"{PROMOTER_ENDPOINT}?page=1&itemsPerPage=1000",
-            headers=headers,
-            timeout=30
-        )
-
-        if response.status_code == 200:
-            promoters = response.json()
-            for promoter in promoters:
-                if promoter.get('name', '').lower() == promoter_name.lower():
-                    logger.info(f"✅ Promoteur trouvé: {promoter_name} (ID: {promoter['id']})")
-                    return promoter['id']
-
-        # Créer le promoteur s'il n'existe pas
-        create_response = requests.post(
-            PROMOTER_ENDPOINT,
-            json={
-                "name": promoter_name,
-                "companyName": promoter_name,  # Requis par l'API
-                "address": "International"  # Requis par l'API
-            },
-            headers=headers,
-            timeout=30
-        )
-
-        if create_response.status_code in [200, 201]:
-            promoter_id = create_response.json().get('id')
-            logger.info(f"✅ Promoteur créé: {promoter_name} (ID: {promoter_id})")
-            return promoter_id
-        else:
-            logger.error(f"❌ Échec création promoteur: {create_response.status_code} - {create_response.text[:500]}")
-            # Utiliser l'ID par défaut si création échoue
-            logger.info(f"⚠️ Utilisation du promoteur par défaut (ID: {DEFAULT_PROMOTER_ID})")
-            return DEFAULT_PROMOTER_ID
-
-    except Exception as e:
-        logger.error(f"❌ Erreur get_or_create_promoter: {e}")
-        return DEFAULT_PROMOTER_ID
-
-def create_tender_payload(tender_data, promoter_id):
-    """Crée le payload pour l'API AppelOffres"""
-    try:
-        # Dates
-        publication_date = tender_data.get('publication_date')
-        if publication_date:
-            if isinstance(publication_date, str):
-                pub_dt = datetime.fromisoformat(publication_date.replace('Z', '+00:00'))
-            else:
-                pub_dt = publication_date
-            publication_ts = pub_dt.isoformat()
-        else:
-            publication_ts = datetime.now().isoformat()
-
-        expiration_date = tender_data.get('expiration_date') or tender_data.get('closing_date')
-        if expiration_date:
-            if isinstance(expiration_date, str):
-                exp_dt = datetime.fromisoformat(expiration_date.replace('Z', '+00:00'))
-            else:
-                exp_dt = expiration_date
-            expiration_ts = exp_dt.isoformat()
-        else:
-            # +30 jours par défaut
-            exp_dt = datetime.fromisoformat(publication_ts.replace('Z', '+00:00')) + timedelta(days=30)
-            expiration_ts = exp_dt.isoformat()
-
-        # Description et titre
-        title = tender_data.get('title', '')[:500] or f"Banque Mondiale - {tender_data.get('reference', 'N/A')}"
-        description = tender_data.get('description', '') or tender_data.get('title', '') or "Appel d'offres Banque Mondiale"
-
-        # Country ID
-        country_id = tender_data.get('country_id') or DEFAULT_PAYS_ID
-
-        # Batch unique
-        batches = [{
-            "activitiesIds": [],
-            "title": title[:200],
-            "deposit": "0"
-        }]
-
-        # Addresses
-        addresses = [{"countryId": int(country_id)}]
-
-        # Images (placeholder)
-        images = [{"url": "https://placeholder.com/banque-mondiale.jpg", "description": "Banque Mondiale"}]
-
-        payload = {
-            "title": title,
-            "description": description,
-            "publicationDate": publication_ts,
-            "startBiddingDate": publication_ts,
-            "expirationDate": expiration_ts,
-            "openingBidsDate": expiration_ts,
-            "reference": tender_data.get('reference', 'N/A'),
-            "specificationsPrice": 0,
-            "offerValidityPeriode": None,
-            "avisId": int(DEFAULT_AVIS_ID),
-            "sourceId": int(DEFAULT_SOURCE_ID),
-            "promoterId": int(promoter_id),
-            "type": "international",  # Doit être "national" ou "international", pas "AO"
-            "nature": "public",  # Valeur correcte pour l'API
-            "isEnabled": True,
-            "specificationsReceivingAddress": tender_data.get('url', 'https://projects.worldbank.org'),
-            "fundingSourceType": "international",
-            "fundingSource": "Banque Mondiale",
-            "currencyId": int(DEFAULT_CURRENCY_ID),
-            "isMultiCurrency": False,
-            "batches": batches,
-            "addresses": addresses,
-            "images": images
+        # Reformater le payload pour être compatible avec l'API appeloffres.net
+        # Le champ specificationsReceivingAddress est utilisé pour le lien du cahier de charge
+        api_payload = {
+            'title': tender_data.get('title', ''),
+            'description': tender_data.get('description', ''),
+            'publicationDate': tender_data.get('publicationDate', ''),
+            'startBiddingDate': tender_data.get('startBiddingDate'),
+            'expirationDate': tender_data.get('expirationDate', ''),
+            'openingBidsDate': tender_data.get('openingBidsDate'),
+            'reference': tender_data.get('reference', ''),
+            'avisId': tender_data.get('avisId', DEFAULT_AVIS_ID),
+            'sourceId': tender_data.get('sourceId', DEFAULT_SOURCE_ID),
+            'promoterId': tender_data.get('promoterId'),
+            'type': 'international',
+            'nature': 'public',
+            'isEnabled': True,
+            'images': tender_data.get('images', []),
+            # L'URL du cahier de charge doit être dans specificationsReceivingAddress
+            'specificationsReceivingAddress': tender_data.get('url_source', '') or tender_data.get('specificationsReceivingAddress', ''),
+            'fundingSourceType': 'international',
+            'fundingSource': 'Banque Mondiale',
+            'isMultiCurrency': False,
+            'batches': tender_data.get('batches', [{'activitiesIds': [], 'title': tender_data.get('description', ''), 'deposit': '0'}]),
+            'addresses': tender_data.get('addresses', [{'countryId': 1}]),
+            'specificationsPrice': '0',
+            'costEstimateMin': None,
+            'costEstimateMax': None,
         }
 
-        return payload
+        logger.info(f"📤 Envoi API Banque Mondiale: {tender_data.get('reference')}")
+        logger.info(f"🔗 URL cahier charge: {api_payload.get('specificationsReceivingAddress', 'NON DÉFINI')}")
 
-    except Exception as e:
-        logger.error(f"❌ Erreur create_tender_payload: {e}")
-        raise
-
-@app.route('/api/validate/<reference>', methods=['POST'])
-def validate_tender(reference):
-    """Valide une offre et l'envoie à l'API AppelOffres"""
-    try:
-        # 1. Récupérer l'offre depuis la base
-        conn = get_db_connection()
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-        cursor.execute(f"SELECT * FROM {TABLE_NAME} WHERE reference = %s", (reference,))
-        tender_data = cursor.fetchone()
-
-        if not tender_data:
-            cursor.close()
-            conn.close()
-            return jsonify({"success": False, "message": "Offre non trouvée"}), 404
-
-        tender_dict = dict(tender_data)
-
-        # 2. Se connecter à l'API AppelOffres
-        token = login_to_appeloffres()
-        if not token:
-            cursor.close()
-            conn.close()
-            return jsonify({"success": False, "message": "❌ Échec connexion à l'API AppelOffres"}), 500
-
-        # 3. Obtenir ou créer le promoteur
-        promoter_name = tender_dict.get('promoter') or 'Banque Mondiale'
-        promoter_id = get_or_create_promoter(token, promoter_name)
-
-        # 4. Créer le payload
-        payload = create_tender_payload(tender_dict, promoter_id)
-        logger.info(f"📤 Envoi de l'offre {reference} vers l'API AppelOffres...")
-
-        # 5. Envoyer à l'API
-        headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
-        response = requests.post(TENDER_ENDPOINT, json=payload, headers=headers, timeout=30)
+        response = requests.post(TENDER_ENDPOINT,
+                               json=api_payload,
+                               headers=headers,
+                               timeout=30)
 
         if response.status_code in [200, 201]:
-            api_data = response.json()
-            api_id = api_data.get('id')
+            # Mettre à jour le statut dans PostgreSQL
+            try:
+                conn = get_db_connection()
+                cursor = conn.cursor()
+                cursor.execute(
+                    f"UPDATE {TABLE_NAME} SET status = 'validated' WHERE reference = %s",
+                    (tender_data.get('reference'),)
+                )
+                conn.commit()
+                cursor.close()
+                conn.close()
+            except Exception as db_err:
+                logger.error(f"⚠️ Erreur mise à jour DB: {db_err}")
 
-            # 6. Mettre à jour en base (status = validated + api_id)
-            cursor.execute(
-                f"UPDATE {TABLE_NAME} SET status = 'validated', validation_date = NOW(), api_id = %s WHERE reference = %s",
-                (api_id, reference)
-            )
-            conn.commit()
-            cursor.close()
-            conn.close()
-
-            logger.info(f"✅ Offre {reference} validée et envoyée à l'API (ID: {api_id})")
-            return jsonify({
-                "success": True,
-                "message": f"Offre {reference} validée et postée avec succès !",
-                "api_id": api_id
-            })
+            logger.info(f"✅ Envoi API réussi pour {tender_data.get('reference')}")
+            return True
         else:
-            # L'envoi API a échoué, mais on peut quand même valider en base
-            cursor.execute(
-                f"UPDATE {TABLE_NAME} SET status = 'validated', validation_date = NOW() WHERE reference = %s",
-                (reference,)
-            )
-            conn.commit()
-            cursor.close()
-            conn.close()
-
-            error_detail = response.text[:500]
-            logger.error(f"❌ Offre {reference} validée en base mais échec envoi API: {response.status_code}")
-            logger.error(f"❌ Détail erreur API: {error_detail}")
-            return jsonify({
-                "success": False,
-                "message": f"Offre validée en base mais échec API: {response.status_code}",
-                "api_error": error_detail
-            }), 500
+            logger.error(f"❌ Erreur API: {response.status_code} - {response.text[:500]}")
+            return False
 
     except Exception as e:
-        logger.error(f"Erreur validation {reference}: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({"success": False, "error": str(e)}), 500
+        logger.error(f"❌ Exception: {e}")
+        return False
 
-@app.route('/api/update/<reference>', methods=['POST'])
-def update_tender(reference):
-    """Met à jour le country_id d'une offre"""
-    try:
-        data = request.json or {}
-        country_id = data.get('country_id')
+# Ancienne interface HTML (pour compatibilité)
+def get_html():
+    """Retourne l'interface HTML"""
+    return dedent("""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <title>Extracteur Complet Banque Mondiale</title>
+            <style>
+                * { margin: 0; padding: 0; box-sizing: border-box; }
+                body {
+                    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    min-height: 100vh;
+                    padding: 20px;
+                }
+                .container {
+                    max-width: 1400px;
+                    margin: 0 auto;
+                    background: white;
+                    border-radius: 15px;
+                    box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+                    overflow: hidden;
+                }
+                .header {
+                    background: linear-gradient(135deg, #2c3e50 0%, #3498db 100%);
+                    color: white;
+                    padding: 30px;
+                    text-align: center;
+                }
+                .header h1 {
+                    font-size: 2.5rem;
+                    margin-bottom: 10px;
+                }
+                .header p {
+                    font-size: 1.1rem;
+                    opacity: 0.9;
+                }
+                .content {
+                    padding: 30px;
+                }
+                .panel {
+                    background: #f8f9fa;
+                    border-radius: 10px;
+                    padding: 25px;
+                    margin-bottom: 30px;
+                }
+                .btn {
+                    background: linear-gradient(135deg, #3498db 0%, #2980b9 100%);
+                    color: white;
+                    border: none;
+                    padding: 12px 30px;
+                    border-radius: 25px;
+                    font-size: 1.1rem;
+                    cursor: pointer;
+                    font-weight: 600;
+                    transition: all 0.3s;
+                }
+                .btn:hover {
+                    transform: translateY(-2px);
+                    box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+                }
+                .btn:disabled {
+                    background: #95a5a6;
+                    cursor: not-allowed;
+                }
+                .btn-validate {
+                    background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
+                    padding: 8px 16px;
+                    font-size: 0.9rem;
+                }
+                .btn-validate.success {
+                    background: linear-gradient(135deg, #27ae60 0%, #229954 100%);
+                }
+                .progress-container {
+                    background: #e9ecef;
+                    border-radius: 10px;
+                    height: 20px;
+                    margin: 20px 0;
+                    overflow: hidden;
+                }
+                .progress-bar {
+                    background: linear-gradient(135deg, #3498db 0%, #2980b9 100%);
+                    height: 100%;
+                    width: 0%;
+                    transition: width 0.3s;
+                    border-radius: 10px;
+                }
+                .status-grid {
+                    display: grid;
+                    grid-template-columns: 1fr 1fr;
+                    gap: 20px;
+                    margin-top: 20px;
+                }
+                .status-item {
+                    background: #fff;
+                    padding: 15px;
+                    border-radius: 8px;
+                    border-left: 4px solid #3498db;
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                }
+                table {
+                    width: 100%;
+                    border-collapse: collapse;
+                    margin-top: 20px;
+                }
+                th {
+                    background: #34495e;
+                    color: white;
+                    padding: 12px;
+                    text-align: left;
+                    font-weight: 600;
+                }
+                td {
+                    padding: 12px;
+                    border-bottom: 1px solid #e9ecef;
+                    vertical-align: top;
+                }
+                tr:hover {
+                    background: #f8f9fa;
+                }
+                input[type="date"] {
+                    padding: 8px;
+                    border: 1px solid #ddd;
+                    border-radius: 5px;
+                    width: 200px;
+                    margin-right: 10px;
+                }
+                .notice {
+                    background: #d4edda;
+                    border: 1px solid #c3e6cb;
+                    padding: 15px;
+                    border-radius: 8px;
+                    margin-bottom: 20px;
+                    color: #155724;
+                }
+                .features {
+                    display: grid;
+                    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+                    gap: 15px;
+                    margin-top: 20px;
+                }
+                .feature {
+                    background: white;
+                    padding: 15px;
+                    border-radius: 8px;
+                    border-left: 4px solid #3498db;
+                }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1>🌍 Extracteur Complet Banque Mondiale</h1>
+                    <p>Extraction multi-stratégies avec Selenium + MongoDB + API</p>
+                </div>
+               
+                <div class="content">
+                    <div class="notice">
+                        <strong>🚀 Fonctionnalités:</strong><br>
+                        ✅ 4 stratégies d'extraction combinées<br>
+                        ✅ Selenium pour extraction précise du promoteur<br>
+                        ✅ Traduction automatique en français<br>
+                        ✅ Sauvegarde Excel + MongoDB<br>
+                        ✅ Interface web avec progression en temps réel<br>
+                        ✅ Validation vers API externe
+                    </div>
+                   
+                    <div class="panel">
+                        <h2>📊 Paramètres d'extraction</h2>
+                        <div style="margin: 15px 0;">
+                            <label><strong>Plage de dates :</strong></label>
+                            <div style="display: flex; align-items: center; gap: 10px; margin-top: 10px;">
+                                <input type="date" id="startDateInput" value="2025-12-01">
+                                <span>au</span>
+                                <input type="date" id="endDateInput" value="2025-12-10">
+                            </div>
+                        </div>
+                        <button id="startBtn" class="btn">🚀 Démarrer l'extraction complète</button>
+                    </div>
+                   
+                    <div class="panel">
+                        <h2>📈 Statut de l'extraction</h2>
+                        <div class="progress-container">
+                            <div id="progressBar" class="progress-bar"></div>
+                        </div>
+                        <div class="status-grid">
+                            <div class="status-item">
+                                <div style="font-weight: 600;">Statut</div>
+                                <div id="statusText" style="font-size: 1.1rem; color: #3498db;">Prêt</div>
+                            </div>
+                            <div class="status-item">
+                                <div style="font-weight: 600;">Progression</div>
+                                <div id="progressText" style="font-size: 1.1rem; color: #3498db;">0%</div>
+                            </div>
+                            <div class="status-item">
+                                <div style="font-weight: 600;">Étape</div>
+                                <div id="stepText" style="font-size: 1.1rem; color: #3498db;">-</div>
+                            </div>
+                            <div class="status-item">
+                                <div style="font-weight: 600;">Avis extraits</div>
+                                <div id="contractsCount" style="font-size: 1.1rem; color: #3498db;">0</div>
+                            </div>
+                        </div>
+                    </div>
+                   
+                    <div class="panel">
+                        <h2>📋 Résultats</h2>
+                        <div id="resultsContainer">
+                            <p>En attente de l'extraction...</p>
+                            <div id="resultsContent" style="display: none;">
+                                <table id="contractsTable">
+                                    <thead>
+                                        <tr>
+                                            <th>ID</th>
+                                            <th>Description</th>
+                                            <th>Pays</th>
+                                            <th>Date</th>
+                                            <th>Type</th>
+                                            <th>Promoteur</th>
+                                            <th>URL</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="contractsBody"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+           
+            <script>
+                let statusInterval;
+               
+                function startExtraction() {
+                    const btn = document.getElementById('startBtn');
+                    btn.disabled = true;
+                    btn.innerHTML = '⏳ Extraction en cours...';
+                   
+                    statusInterval = setInterval(updateStatus, 1000);
+                   
+                    fetch('/start', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            startDate: document.getElementById('startDateInput').value,
+                            endDate: document.getElementById('endDateInput').value
+                        })
+                    });
+                }
+               
+                function updateStatus() {
+                    fetch('/status')
+                        .then(response => response.json())
+                        .then(data => {
+                            document.getElementById('statusText').textContent = data.status;
+                            document.getElementById('progressText').textContent = data.progress + '%';
+                            document.getElementById('stepText').textContent = data.step;
+                            document.getElementById('contractsCount').textContent = data.contracts_count;
+                            document.getElementById('progressBar').style.width = data.progress + '%';
+                           
+                            if (data.progress === 100) {
+                                clearInterval(statusInterval);
+                                document.getElementById('startBtn').disabled = false;
+                                document.getElementById('startBtn').innerHTML = '✅ Extraction terminée';
+                                loadResults();
+                            }
+                        });
+                }
+               
+                function loadResults() {
+                    fetch('/results')
+                        .then(response => response.json())
+                        .then(data => {
+                            document.getElementById('resultsContent').style.display = 'block';
+                            const tbody = document.getElementById('contractsBody');
+                            tbody.innerHTML = '';
+                           
+                            data.results.forEach(contract => {
+                                const row = tbody.insertRow();
+                                row.innerHTML = `
+                                    <td>${contract.ID}</td>
+                                    <td title="${contract.Description}">${contract.Description.substring(0, 60)}...</td>
+                                    <td>${contract.Pays}</td>
+                                    <td>${contract['Date publication']}</td>
+                                    <td>${contract['Type avis FR']}</td>
+                                    <td title="${contract.Promoteur}" style="background: #e8f5e9; font-weight: bold;">
+                                        ${contract.Promoteur.substring(0, 40)}...
+                                    </td>
+                                    <td><a href="${contract.URL}" target="_blank" style="color: #3498db;">🔗 Lien</a></td>
+                                    <td>
+                                        <button class="btn-validate" onclick="validateContract(${JSON.stringify(contract).replace(/"/g, '&quot;')})">
+                                            Valider
+                                        </button>
+                                    </td>
+                                `;
+                            });
+                        });
+                }
+               
+                function validateContract(contract) {
+                    const button = event.target;
+                    button.disabled = true;
+                    button.innerHTML = '⏳';
+                   
+                    fetch('/validate', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(contract)
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            button.classList.add('success');
+                            button.innerHTML = '✅ Validé';
+                        } else {
+                            button.innerHTML = '❌ Erreur';
+                        }
+                    });
+                }
+               
+                document.getElementById('startBtn').addEventListener('click', startExtraction);
+            </script>
+        </body>
+        </html>
+        """)
 
-        if country_id is None:
-            return jsonify({"success": False, "error": "country_id requis"}), 400
+def main():
+    """Fonction principale"""
+    PORT = 5010  # Port pour le proxy backend
+   
+    print("="*70)
+    print("🌍 EXTRACTEUR COMPLET BANQUE MONDIALE")
+    print("="*70)
+    print("Fonctionnalités:")
+    print("✅ 4 stratégies d'extraction combinées")
+    print("✅ Selenium pour extraction précise du promoteur")
+    print("✅ Traduction automatique en français")
+    print("✅ Sauvegarde Excel + MongoDB")
+    print("✅ Interface web avec progression en temps réel")
+    print("✅ Validation vers API externe")
+    print("✅ API Flask compatible avec le frontend")
+    print("="*70)
+    print(f"\n📊 Serveur Flask démarré sur: http://localhost:{PORT}")
+    print("\n📋 Endpoints disponibles:")
+    print("   - GET  /api/pending   : Offres en attente")
+    print("   - GET  /api/validated : Offres validées")
+    print("   - POST /api/scrape    : Lancer l'extraction")
+    print("   - POST /api/validate  : Valider une offre")
+    print("   - GET  /api/stats     : Statistiques")
+    print("="*70)
 
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute(f"UPDATE {TABLE_NAME} SET country_id = %s WHERE reference = %s", (country_id, reference))
-        conn.commit()
-        cursor.close()
-        conn.close()
+    # Démarrer le serveur Flask
+    app.run(host='0.0.0.0', port=PORT, debug=False, threaded=True)
 
-        logger.info(f"📝 Offre {reference} mise à jour: country_id={country_id}")
-        return jsonify({"success": True, "message": "Pays mis à jour avec succès"})
-    except Exception as e:
-        logger.error(f"Erreur update {reference}: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+# ============================== MODE DIRECT ==============================
+def extraction_directe():
+    """Fonction pour lancer une extraction directe sans interface web"""
+    print("="*70)
+    print("MODE D'EXTRACTION DIRECTE")
+    print("="*70)
+   
+    # Demander les dates
+    while True:
+        try:
+            début = input("Date début (YYYY-MM-DD, ex: 2025-12-01): ").strip()
+            fin = input("Date fin (YYYY-MM-DD, ex: 2025-12-10): ").strip()
+           
+            # Validation
+            datetime.strptime(début, '%Y-%m-%d')
+            datetime.strptime(fin, '%Y-%m-%d')
+           
+            start_dt = datetime.strptime(début, '%Y-%m-%d')
+            end_dt = datetime.strptime(fin, '%Y-%m-%d')
+           
+            if start_dt > end_dt:
+                print("⚠️ La date de début doit être antérieure à la date de fin.")
+                continue
+               
+            break
+        except ValueError:
+            print("⚠️ Format de date invalide. Utilisez YYYY-MM-DD (ex: 2025-01-01)")
+   
+    # Lancer l'extraction
+    extractor = WorldBankCompleteExtractor()
+    extractor.set_date_range(début, fin)
+   
+    start_time = time.time()
+    result = extractor.execute_complete_extraction()
+    end_time = time.time()
+   
+    if result is not None:
+        print(f"\n✅ Extraction terminée en {end_time - start_time:.1f} secondes")
+        print(f"📊 {len(extractor.all_notices)} avis extraits")
+       
+        # Télécharger le fichier (pour Google Colab)
+        try:
+            from google.colab import files
+            filename = f"BM_AVIS_COMPLET_{début.replace('-', '_')}_AU_{fin.replace('-', '_')}.xlsx"
+            files.download(filename)
+        except:
+            pass
+    else:
+        print("\n❌ Aucun avis trouvé pour cette période.")
 
-@app.route('/api/delete/<reference>', methods=['DELETE'])
-def delete_tender(reference):
-    """Supprime une offre"""
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute(f"DELETE FROM {TABLE_NAME} WHERE reference = %s", (reference,))
-        conn.commit()
-        cursor.close()
-        conn.close()
+# ============================== EXÉCUTION ==============================
+if __name__ == "__main__":
+    import sys
 
-        logger.info(f"🗑️ Offre {reference} supprimée")
-        return jsonify({"success": True, "message": f"Offre {reference} supprimée avec succès"})
-    except Exception as e:
-        logger.error(f"Erreur suppression {reference}: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+    # Mode automatique pour Docker - démarrage direct du serveur Flask
+    if len(sys.argv) > 1 and sys.argv[1] == "--auto":
+        main()
+    elif os.getenv("DOCKER_ENV") or os.getenv("AUTO_START"):
+        # En environnement Docker, démarrer directement le serveur
+        main()
+    else:
+        print("="*70)
+        print("CHOIX DU MODE D'EXTRACTION")
+        print("="*70)
+        print("1. Interface web complète (recommandé)")
+        print("2. Extraction directe (sans interface)")
+        print("="*70)
 
-@app.route('/api/clear_pending', methods=['DELETE'])
-def clear_pending():
-    """Supprime toutes les offres pending"""
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute(f"SELECT COUNT(*) FROM {TABLE_NAME} WHERE status = 'pending'")
-        count = cursor.fetchone()[0]
-        cursor.execute(f"DELETE FROM {TABLE_NAME} WHERE status = 'pending'")
-        conn.commit()
-        cursor.close()
-        conn.close()
+        try:
+            choix = input("Votre choix (1 ou 2): ").strip()
 
-        logger.info(f"🗑️ {count} offres pending supprimées")
-        return jsonify({"success": True, "message": f"{count} offres supprimées", "deleted_count": count})
-    except Exception as e:
-        logger.error(f"Erreur clear_pending: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
-
-@app.route('/api/post_pending', methods=['POST'])
-def post_pending():
-    """Poste toutes les offres pending vers l'API (TODO: implémenter)"""
-    try:
-        pending = get_all_tenders(status="pending")
-
-        # TODO: Implémenter l'envoi vers l'API réelle
-        logger.info(f"📤 Tentative de post de {len(pending)} offres")
-
-        return jsonify({
-            "success": True,
-            "posted": 0,
-            "failed": 0,
-            "remaining": len(pending),
-            "message": "Fonctionnalité de post à implémenter"
-        })
-    except Exception as e:
-        logger.error(f"Erreur post_pending: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
-
-if __name__ == '__main__':
-    logger.info("=" * 80)
-    logger.info("🚀 SCRAPER BANQUE MONDIALE")
-    logger.info(f"📂 Database: PostgreSQL - {DB_NAME} (Table: {TABLE_NAME})")
-    logger.info("=" * 80)
-
-    app.run(host='0.0.0.0', port=5010, debug=False)
+            if choix == "1":
+                main()
+            elif choix == "2":
+                extraction_directe()
+            else:
+                print("Choix invalide. Lancement de l'interface web par défaut...")
+                main()
+        except EOFError:
+            # Si pas d'entrée disponible (Docker, etc.), démarrer le serveur
+            print("Mode non-interactif détecté. Lancement du serveur web...")
+            main()
